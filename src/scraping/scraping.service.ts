@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { CrawlRequestDto, ExtractRequestDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from './interfaces/scraping.types';
 import { CustomProvider } from './providers/custom.provider';
-import { FirecrawlProvider } from './providers/firecrawl.provider';
+import { PlaywrightProvider } from './providers/playwright.provider';
 
 @Injectable()
 export class ScrapingService {
@@ -15,17 +15,17 @@ export class ScrapingService {
   );
 
   constructor(
-    private readonly firecrawlProvider: FirecrawlProvider,
+    private readonly playwrightProvider: PlaywrightProvider,
     private readonly customProvider: CustomProvider,
   ) {
     this.providers = {
-      [this.firecrawlProvider.name]: this.firecrawlProvider,
+      [this.playwrightProvider.name]: this.playwrightProvider,
       [this.customProvider.name]: this.customProvider,
     };
   }
 
   scrape(payload: ScrapeRequestDto, providerOverride?: string) {
-    return this.runTask('scrape', payload, providerOverride);
+    return this.runTask('scrape', { url: payload.url }, providerOverride);
   }
 
   crawl(payload: CrawlRequestDto, providerOverride?: string) {
@@ -64,7 +64,7 @@ export class ScrapingService {
 
     const sourceUrl = typeof payload.url === 'string' ? payload.url : undefined;
     if (!sourceUrl) {
-      return this.firecrawlProvider;
+      return this.playwrightProvider;
     }
 
     const hostname = safeHostname(sourceUrl);
@@ -72,7 +72,7 @@ export class ScrapingService {
       return this.customProvider;
     }
 
-    return this.firecrawlProvider;
+    return this.playwrightProvider;
   }
 }
 

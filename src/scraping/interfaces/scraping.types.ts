@@ -1,6 +1,6 @@
 export type ScrapingTask = 'scrape' | 'crawl' | 'extract';
 
-export type ProviderName = 'firecrawl' | 'custom';
+export type ProviderName = 'playwright' | 'custom';
 
 export type ScrapingOperationPayload = Record<string, unknown>;
 
@@ -10,9 +10,17 @@ export interface ProductRecord {
   currency?: string;
   brand?: string;
   sku?: string;
+  category?: string;
+  description?: string;
   availability?: string;
   stock?: string;
   sourceUrl?: string;
+  imageUrl?: string;
+  imagePath?: string;
+  compatibleVehicles?: string[];
+  compatibleBrands?: string[];
+  shippingInfo?: string[];
+  attributes?: Record<string, string>;
   extractedAt: string;
   provider: ProviderName;
 }

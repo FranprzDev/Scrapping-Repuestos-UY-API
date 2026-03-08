@@ -1,0 +1,267 @@
+{
+  "site": "https://www.chaparei.com/",
+  "runAt": "2026-03-08T10:22:48.757Z",
+  "total": 20,
+  "products": [
+    {
+      "productName": "GUARDABARRO DELT. IZQ.",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/guardabarro-delt-izq-c0205580/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_18759.jpg",
+      "compatibleBrands": [
+        "CITROEN"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.636Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\guardabarro-delt-izq-2affddab.jpg"
+    },
+    {
+      "productName": "GUARDABARRO DELT. DER.",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/guardabarro-delt-der-c0205680/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_18760.jpg",
+      "compatibleBrands": [
+        "CITROEN"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.636Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\guardabarro-delt-der-2c35e2c1.jpg"
+    },
+    {
+      "productName": "PARAGOLPE DELT. CON PRIMER",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/paragolpe-delt-con-primer-c2201781/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_66312.jpg",
+      "compatibleBrands": [
+        "CITROEN"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.636Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\paragolpe-delt-con-primer-65c4baeb.jpg"
+    },
+    {
+      "productName": "PARAGOLPE DELT. NEGRO TEXTURADO",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/paragolpe-delt-negro-texturado-c2202691/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_18831.jpg",
+      "compatibleBrands": [
+        "PEUGEOT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\paragolpe-delt-negro-texturado-5c0baba6.jpg"
+    },
+    {
+      "productName": "FARO TRASERO IZQ. -TYC-",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/espejos-e-iluminacion/faro-trasero-izq-tyc-c7600551/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19083.jpg",
+      "compatibleBrands": [
+        "PEUGEOT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\faro-trasero-izq-tyc-255f689a.jpg"
+    },
+    {
+      "productName": "ESPOLON",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/espolon-e0103780/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19149.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\espolon-53c6ce65.jpg"
+    },
+    {
+      "productName": "FRENTE INFERIOR PLASTICO (APOYA RADIADOR)",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/frente-inferior-plastico-apoya-radiador-e0402580/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19244.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\frente-inferior-plastico-apoya-radiador-88669421.jpg"
+    },
+    {
+      "productName": "PARAGOLPE DELT. NEGRO LISO C/CARETA",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/paragolpe-delt-negro-liso-c-careta-e2200891/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19359.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\paragolpe-delt-negro-liso-c-careta-bf481d86.jpg"
+    },
+    {
+      "productName": "PARAGOLPE DELT. NEGRO LISO",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/paragolpe-delt-negro-liso-e2205181/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_66362.png",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\paragolpe-delt-negro-liso-6e4d0c4e.png"
+    },
+    {
+      "productName": "PARAGOLPE DELT. NEGRO LISO",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/paragolpe-delt-negro-liso-e2205281/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19387.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\paragolpe-delt-negro-liso-c44a7861.jpg"
+    },
+    {
+      "productName": "SPOILER SUP. + INF. PARAGOLPE DELT.",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/spoiler-sup-inf-paragolpe-delt-e2205581/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_65394.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\spoiler-sup-inf-paragolpe-delt-ba68206.jpg"
+    },
+    {
+      "productName": "SPOILER SUP. PARAGOLPE DELT.",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/spoiler-sup-paragolpe-delt-e2205791/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19392.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\spoiler-sup-paragolpe-delt-c5b8db7b.jpg"
+    },
+    {
+      "productName": "SPOILER INF. PARAGOLPE DELT.",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/spoiler-inf-paragolpe-delt-e2205881/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_65254.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\spoiler-inf-paragolpe-delt-cfece449.jpg"
+    },
+    {
+      "productName": "CARETA NEGRA 2017-20",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/accesorios-y-paragolpes/careta-negra-2017-20-e3403680/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19588.jpg",
+      "compatibleBrands": [
+        "FORD"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\careta-negra-2017-20-2e250664.jpg"
+    },
+    {
+      "productName": "FARO CAMINERO IZQ./DER. (H16) -TYC-",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/espejos-e-iluminacion/faro-caminero-izq-der-h16-tyc-e7400251/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19845.jpg",
+      "compatibleBrands": [
+        "SUZUKI"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\faro-caminero-izq-der-h16-tyc-c5da0f28.jpg"
+    },
+    {
+      "productName": "ESPOLON",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/espolon-f0102230/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19960.jpg",
+      "compatibleBrands": [
+        "FIAT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\espolon-fde38622.jpg"
+    },
+    {
+      "productName": "ESPOLON",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/espolon-f0102880/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19967.jpg",
+      "compatibleBrands": [
+        "FIAT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\espolon-fe462aa9.jpg"
+    },
+    {
+      "productName": "ESPOLON",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/espolon-f0103680/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_64953.jpg",
+      "compatibleBrands": [
+        "FIAT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\espolon-da493eb0.jpg"
+    },
+    {
+      "productName": "GUARDABARRO DELT. IZQ. S/AGUJERO",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/guardabarro-delt-izq-s-agujero-f0202530/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_19998.jpg",
+      "compatibleBrands": [
+        "FIAT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\guardabarro-delt-izq-s-agujero-372cc07.jpg"
+    },
+    {
+      "productName": "GUARDABARRO DELT. DER. C/AGUJERO",
+      "price": "0,00",
+      "availability": "in_stock",
+      "sourceUrl": "https://www.chaparei.com/catalogo/carroceria/guardabarro-delt-der-c-agujero-f0202830/",
+      "imageUrl": "https://www.chaparei.com/imgs/productos/productos31_20001.jpg",
+      "compatibleBrands": [
+        "FIAT"
+      ],
+      "extractedAt": "2026-03-08T10:22:48.637Z",
+      "provider": "playwright",
+      "imagePath": "C:\\Users\\NG By ROG\\Desktop\\Scrapping-Repuestos-UY-API\\output\\images\\chaparei.com\\guardabarro-delt-der-c-agujero-4f64fca.jpg"
+    }
+  ]
+}

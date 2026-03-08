@@ -13,7 +13,7 @@ import {
   Min,
 } from 'class-validator';
 
-export const FIRECRAWL_FORMATS = ['markdown', 'html', 'rawHtml', 'links', 'screenshot'] as const;
+export const SCRAPE_FORMATS = ['html', 'links', 'products'] as const;
 
 export class ScrapeRequestDto {
   @IsUrl({ require_tld: true })
@@ -22,8 +22,8 @@ export class ScrapeRequestDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(5)
-  @IsIn(FIRECRAWL_FORMATS, { each: true })
-  formats?: (typeof FIRECRAWL_FORMATS)[number][];
+  @IsIn(SCRAPE_FORMATS, { each: true })
+  formats?: (typeof SCRAPE_FORMATS)[number][];
 
   @IsOptional()
   @IsBoolean()
@@ -74,8 +74,8 @@ export class DomainProviderConfigDto {
   async?: boolean;
 
   @IsOptional()
-  @IsIn(['firecrawl', 'custom'])
-  provider?: 'firecrawl' | 'custom';
+  @IsIn(['playwright', 'custom'])
+  provider?: 'playwright' | 'custom';
 }
 
 export class JobIdParamDto {

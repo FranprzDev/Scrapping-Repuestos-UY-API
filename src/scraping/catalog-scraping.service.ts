@@ -1,38 +1,16 @@
+import { ArchiveStoreService } from './archive/archive-store.service';
 import { Injectable } from '@nestjs/common';
-import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES } from './dto/catalog-request.dto';
-import { ProductRecord, ScrapingOperationPayload } from './interfaces/scraping.types';
+import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
+import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
 import { InventoryStoreService } from './inventory/inventory-store.service';
 import { ScrapingService } from './scraping.service';
-
-const PRODUCT_EXTRACTION_SCHEMA = {
-  type: 'object',
-  properties: {
-    products: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          price: { type: 'string' },
-          currency: { type: 'string' },
-          sku: { type: 'string' },
-          brand: { type: 'string' },
-          stock: { type: 'string' },
-          availability: { type: 'string' },
-          productUrl: { type: 'string' },
-        },
-        required: ['name', 'price'],
-      },
-    },
-  },
-  required: ['products'],
-};
 
 @Injectable()
 export class CatalogScrapingService {
   constructor(
     private readonly scrapingService: ScrapingService,
     private readonly inventoryStoreService: InventoryStoreService,
+    private readonly archiveStoreService: ArchiveStoreService,
   ) {}
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
@@ -46,10 +24,8 @@ export class CatalogScrapingService {
         const crawlPayload: ScrapingOperationPayload = {
           url,
           limit: maxPagesPerSite,
-          scrapeOptions: {
-            formats: ['markdown', 'links'],
-            onlyMainContent: true,
-          },
+          formats: ['links', 'products'],
+          onlyMainContent: true,
         };
 
         const crawled = await this.scrapingService.runTask('crawl', crawlPayload);
@@ -57,10 +33,6 @@ export class CatalogScrapingService {
 
         const extractPayload: ScrapingOperationPayload = {
           urls: targetUrls,
-          prompt:
-            'Extrae todos los repuestos con precio visible y si existe stock/disponibilidad. Devuelve items únicos con URL de producto, nombre, precio, moneda, marca y SKU.',
-          schema: PRODUCT_EXTRACTION_SCHEMA,
-          enableWebSearch: false,
           maxItems: maxProductsPerSite,
           url,
         };
@@ -68,7 +40,8 @@ export class CatalogScrapingService {
         const extracted = await this.scrapingService.runTask('extract', extractPayload);
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const mergedProducts = mergeProducts(extracted.normalizedProducts, extractedProducts);
-        const inventory = this.inventoryStoreService.upsertSiteProducts(url, mergedProducts, runAt);
+        const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
+        const inventory = this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
 
         return {
           site: url,
@@ -82,6 +55,10 @@ export class CatalogScrapingService {
             requestedAt: extracted.requestedAt,
             normalizedProducts: mergedProducts,
           },
+          archive: {
+            outputPath: archived.outputPath,
+            imagesSaved: archived.imagesSaved,
+          },
           inventory,
         };
       }),
@@ -89,11 +66,21 @@ export class CatalogScrapingService {
 
     return {
       requestedAt: runAt,
-      strategy: 'crawl + extract por dominio (Firecrawl-first)',
+      strategy: 'descubrimiento completo + extract manual con Playwright',
       sitesProcessed: urls.length,
       inventorySize: this.inventoryStoreService.getAll().length,
       results,
     };
+  }
+
+  async scrapeSingleSiteAndReturnInventory(request: SingleSiteCatalogScrapeRequestDto) {
+    await this.scrapeCatalogWithPrices({
+      urls: [request.url],
+      maxPagesPerSite: request.maxPages,
+      maxProductsPerSite: request.maxProducts,
+    });
+
+    return this.getCurrentInventory(request.url);
   }
 
   startScrappingUy(request: CatalogScrapeRequestDto) {
@@ -124,12 +111,12 @@ export class CatalogScrapingService {
     const urls = request?.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
 
     return {
-      strategy: 'hybrid-firecrawl-first',
+      strategy: 'playwright-dom-scraping',
       steps: [
-        '1) Crawl por dominio para descubrir URLs de catálogo/producto.',
-        '2) Extract en lote con schema estricto para devolver repuestos con precio.',
+        '1) Descubrir URLs por sitemap si existe; si no, crawl por categorias, paginacion y detalle.',
+        '2) Extract directo del DOM y JSON-LD para devolver productos con precio e imagen.',
         '3) Upsert en inventario: si llega stock/disponibilidad se actualiza; si no llega, se conserva el dato guardado.',
-        '4) Fallback por dominio y reintentos si cobertura es baja.',
+        '4) Fallback heuristico sobre tarjetas, anchors y pagina de detalle.',
       ],
       sites: urls,
       totalSites: urls.length,
@@ -139,6 +126,7 @@ export class CatalogScrapingService {
 
 function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number): string[] {
   const links = new Set<string>();
+  const fallback = safeParseUrl(fallbackUrl);
 
   const visit = (value: unknown) => {
     if (!value) {
@@ -146,8 +134,9 @@ function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number):
     }
 
     if (typeof value === 'string') {
-      if (value.startsWith('http://') || value.startsWith('https://')) {
-        links.add(value);
+      const normalized = normalizeCandidateUrl(value, fallbackUrl);
+      if (normalized) {
+        links.add(normalized);
       }
       return;
     }
@@ -164,7 +153,7 @@ function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number):
 
   visit(raw);
 
-  const selected = Array.from(links).slice(0, maxPages);
+  const selected = prioritizeUrls(Array.from(links), fallback, maxPages);
   if (selected.length === 0) {
     selected.push(fallbackUrl);
   }
@@ -172,7 +161,74 @@ function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number):
   return selected;
 }
 
-function collectExtractedProducts(raw: unknown, provider: 'firecrawl' | 'custom', sourceUrl: string): ProductRecord[] {
+function safeParseUrl(value: string): URL | undefined {
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeCandidateUrl(candidate: string, baseUrl: string): string | undefined {
+  const value = candidate.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const lowered = value.toLowerCase();
+  if (
+    lowered.startsWith('mailto:') ||
+    lowered.startsWith('tel:') ||
+    lowered.startsWith('javascript:') ||
+    lowered.startsWith('#')
+  ) {
+    return undefined;
+  }
+
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function prioritizeUrls(urls: string[], fallback: URL | undefined, maxPages: number): string[] {
+  const sameHost = urls.filter((url) => isSameHost(url, fallback));
+  const preferred = sameHost.filter((url) => isCatalogLike(url));
+  const regular = sameHost.filter((url) => !isCatalogLike(url));
+  const ranked = [...preferred, ...regular];
+
+  if (ranked.length >= maxPages) {
+    return ranked.slice(0, maxPages);
+  }
+
+  const offDomain = urls.filter((url) => !isSameHost(url, fallback));
+  return [...ranked, ...offDomain].slice(0, maxPages);
+}
+
+function isSameHost(candidateUrl: string, fallback: URL | undefined): boolean {
+  if (!fallback) {
+    return true;
+  }
+
+  try {
+    return new URL(candidateUrl).hostname === fallback.hostname;
+  } catch {
+    return false;
+  }
+}
+
+function isCatalogLike(candidateUrl: string): boolean {
+  const lowered = candidateUrl.toLowerCase();
+  if (/\.(jpg|jpeg|png|gif|svg|webp|css|js|pdf)(\?|#|$)/.test(lowered)) {
+    return false;
+  }
+
+  const hints = ['producto', 'productos', 'repuesto', 'repuestos', 'catalog', 'categoria', 'shop', 'tienda'];
+  return hints.some((hint) => lowered.includes(hint));
+}
+
+function collectExtractedProducts(raw: unknown, provider: ProviderName, sourceUrl: string): ProductRecord[] {
   const candidates: ProductRecord[] = [];
 
   const visit = (value: unknown) => {
@@ -197,7 +253,7 @@ function collectExtractedProducts(raw: unknown, provider: 'firecrawl' | 'custom'
         }
 
         const item = product as Record<string, unknown>;
-        const name = asString(item.name);
+        const name = asString(item.name) ?? asString(item.productName);
         const price = asString(item.price);
 
         if (!name || !price) {
@@ -212,7 +268,9 @@ function collectExtractedProducts(raw: unknown, provider: 'firecrawl' | 'custom'
           sku: asString(item.sku),
           stock: asString(item.stock),
           availability: asString(item.availability),
-          sourceUrl: asString(item.productUrl) ?? sourceUrl,
+          sourceUrl: asString(item.productUrl) ?? asString(item.sourceUrl) ?? sourceUrl,
+          imageUrl: asString(item.imageUrl),
+          imagePath: asString(item.imagePath),
           extractedAt: new Date().toISOString(),
           provider,
         });
