@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { chromium, type Browser, type Page } from 'playwright';
 import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from '../interfaces/scraping.types';
 
@@ -14,6 +14,7 @@ type DiscoveredPage = {
 @Injectable()
 export class PlaywrightProvider implements ScrapingProvider {
   readonly name = 'playwright' as const;
+  private readonly logger = new Logger(PlaywrightProvider.name);
 
   async run(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<ProviderResult> {
     const sourceUrl = typeof payload.url === 'string' ? payload.url : undefined;
@@ -144,7 +145,15 @@ export class PlaywrightProvider implements ScrapingProvider {
         break;
       }
 
-      const pageData = await this.visitPage(browser, url, payload);
+      let pageData: { title: string; links: string[]; products: ProductRecord[] } | undefined;
+
+      try {
+        pageData = await this.visitPage(browser, url, payload);
+      } catch (error) {
+        this.logger.warn(`No se pudo extraer ${url}: ${formatError(error)}`);
+        continue;
+      }
+
       pages.push({
         url,
         title: pageData.title,
@@ -178,7 +187,7 @@ export class PlaywrightProvider implements ScrapingProvider {
       const waitFor = clampNumber(payload.waitFor, 0, 15000, 1500);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
       await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
-      if (waitFor > 0) {
+      if (waitFor > 0 && !page.isClosed()) {
         await page.waitForTimeout(waitFor);
       }
 
@@ -188,9 +197,17 @@ export class PlaywrightProvider implements ScrapingProvider {
         products: await extractProducts(page, url, this.name),
       };
     } finally {
-      await context.close();
+      await context.close().catch(() => undefined);
     }
   }
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 async function extractLinks(page: Page, baseUrl: string): Promise<string[]> {

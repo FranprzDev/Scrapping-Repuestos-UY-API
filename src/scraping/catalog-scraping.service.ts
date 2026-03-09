@@ -19,8 +19,10 @@ export class CatalogScrapingService {
     const maxProductsPerSite = request.maxProductsPerSite ?? 150;
     const runAt = new Date().toISOString();
 
-    const results = await Promise.all(
-      urls.map(async (url) => {
+    const results = [];
+
+    for (const url of urls) {
+      try {
         const crawlPayload: ScrapingOperationPayload = {
           url,
           limit: maxPagesPerSite,
@@ -43,8 +45,9 @@ export class CatalogScrapingService {
         const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
         const inventory = this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
 
-        return {
+        results.push({
           site: url,
+          status: 'success',
           pagesUsedForExtract: targetUrls.length,
           crawl: {
             provider: crawled.provider,
@@ -60,9 +63,15 @@ export class CatalogScrapingService {
             imagesSaved: archived.imagesSaved,
           },
           inventory,
-        };
-      }),
-    );
+        });
+      } catch (error) {
+        results.push({
+          site: url,
+          status: 'error',
+          message: formatSiteError(error),
+        });
+      }
+    }
 
     return {
       requestedAt: runAt,
@@ -122,6 +131,14 @@ export class CatalogScrapingService {
       totalSites: urls.length,
     };
   }
+}
+
+function formatSiteError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number): string[] {
