@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { CrawlRequestDto, ExtractRequestDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from './interfaces/scraping.types';
 import { CustomProvider } from './providers/custom.provider';
+import { DomainProvider } from './providers/domain.provider';
 import { PlaywrightProvider } from './providers/playwright.provider';
 
 @Injectable()
@@ -15,10 +16,12 @@ export class ScrapingService {
   );
 
   constructor(
+    private readonly domainProvider: DomainProvider,
     private readonly playwrightProvider: PlaywrightProvider,
     private readonly customProvider: CustomProvider,
   ) {
     this.providers = {
+      [this.domainProvider.name]: this.domainProvider,
       [this.playwrightProvider.name]: this.playwrightProvider,
       [this.customProvider.name]: this.customProvider,
     };
@@ -64,7 +67,7 @@ export class ScrapingService {
 
     const sourceUrl = typeof payload.url === 'string' ? payload.url : undefined;
     if (!sourceUrl) {
-      return this.playwrightProvider;
+      return this.domainProvider;
     }
 
     const hostname = safeHostname(sourceUrl);
@@ -72,7 +75,7 @@ export class ScrapingService {
       return this.customProvider;
     }
 
-    return this.playwrightProvider;
+    return this.domainProvider;
   }
 }
 

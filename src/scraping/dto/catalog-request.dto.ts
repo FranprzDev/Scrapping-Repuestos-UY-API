@@ -1,6 +1,8 @@
 import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsUrl, Max, Min } from 'class-validator';
 
 export const DEFAULT_CATALOG_SITES = [
+  'https://taxitor.uy/',
+  'https://acesur.uy/escritorio/ofertas/INTERNET',
   'https://www.chaparei.com/',
   'https://www.selvir.com.uy/productos/',
 ] as const;

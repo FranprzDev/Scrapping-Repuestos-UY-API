@@ -1,46 +1,53 @@
 # Scrapping-Repuestos-UY-API
 
-API en NestJS para scraping de catálogos de repuestos con estrategia **híbrida**:
-- `FirecrawlProvider` como proveedor principal.
-- `CustomProvider` como fallback por dominio o override manual.
+API en NestJS para scraping de catalogos de repuestos con arquitectura hibrida por dominio.
 
-## Objetivo puntual (repuestos + precio)
+## Alcance actual
 
-El servicio está preparado para correr una estrategia sobre estos sitios:
+El alcance funcional de esta fase esta limitado a estos sitios:
 
-- https://acesur.uy/escritorio/home
-- https://www.chaparei.com/
-- http://www.centrorepuestos.com.uy
-- https://www.selvir.com.uy/productos/
-- https://www.feyvi.com.uy/
-- https://repuestos.uy/
-- https://www.tnrepuestos.com.uy/inicio
-- https://www.todobaterias.com.uy/
-- https://www.familcar.com
-- https://repuestosavenida.com.uy/
-- https://www.multishop.com.uy/
-- https://www.garage1600.com.uy/
-- https://taxitor.uy/
-- https://viatons.com.uy/
+- [Taxitor](https://taxitor.uy/)
+- [Acesur](https://acesur.uy/escritorio/ofertas/INTERNET)
+- [Chaparei](https://www.chaparei.com/)
+- [Selvir](https://www.selvir.com.uy/productos/)
 
-## Cómo lo haría (estrategia recomendada)
+`centrorepuestos.com.uy` fue removido del alcance.
+`feyvi.com.uy` quedo pausado fuera del flujo por defecto.
 
-1. **Crawl por dominio** para descubrir páginas relevantes de productos/categorías.
-2. **Extract con schema** para quedarnos con productos que tengan precio visible.
-3. **Normalización** en formato común (`name`, `price`, `currency`, `brand`, `sku`, `productUrl`).
-4. **Reintentos por dominio** si cobertura es baja.
+## Arquitectura actual
 
-Esto ya está modelado en el endpoint batch de catálogo.
+La estrategia ya no es Playwright-first.
+
+El pipeline actual funciona asi:
+
+1. Descubrimiento por dominio.
+2. Extraccion por `HTTP + parseo HTML/JSON-LD` o por API nativa cuando existe.
+3. Filtro central de calidad y disponibilidad.
+4. Fallback a Playwright solo cuando el sitio no expone datos suficientes por HTTP.
+5. Archivo JSON en disco + inventario temporal en memoria.
+
+### Estrategias por sitio
+
+- `acesur.uy`: API directa paginada sobre `app_obtener_productos.php`.
+- `taxitor.uy`: HTML server-rendered.
+- `chaparei.com`: HTML server-rendered.
+- `selvir.com.uy`: HTML + JSON-LD.
+
+## Reglas de negocio activas
+
+- Solo se devuelven productos con precio usable.
+- Productos con precio `0` o `0,00` se descartan.
+- Productos marcados como `agotado`, `sin stock`, `out of stock` o equivalente se descartan.
+- Se rechazan paginas 404, nombres basura y URLs que no parezcan de producto.
+- El archivo de salida y el inventario solo reciben productos aprobados por el quality gate.
 
 ## Requisitos
 
 - Node.js 18+
-- API key de Firecrawl
 
-## Configuración
+## Instalacion
 
 ```bash
-cp .env.example .env
 npm install
 npm run start:dev
 ```
@@ -48,83 +55,74 @@ npm run start:dev
 ## Variables de entorno
 
 - `PORT=3000`
-- `FIRECRAWL_API_KEY=fc-...`
-- `FIRECRAWL_API_BASE_URL=https://api.firecrawl.dev/v1` (opcional)
-- `CUSTOM_PROVIDER_DOMAINS=dominio1.com,dominio2.com` (opcional)
+- `CUSTOM_PROVIDER_DOMAINS=dominio1.com,dominio2.com` opcional
 
 ## Endpoints
 
 ### Health
+
 - `GET /health`
 
-### Scrape
+### Scrape individual
+
 - `POST /scraping/scrape`
-- Query opcional:
-  - `provider=firecrawl|custom`
-  - `async=true|false`
-
-### Crawl
 - `POST /scraping/crawl`
-- Query opcional:
-  - `provider=firecrawl|custom`
-  - `async=true|false`
-
-### Extract
 - `POST /scraping/extract`
-- Query opcional:
-  - `provider=firecrawl|custom`
-  - `async=true|false`
 
-### Batch catálogo (repuestos con precio)
+Query opcional:
 
-#### Ver plan de ejecución
+- `provider=domain|playwright|custom`
+- `async=true|false`
+
+### Batch catalogo
+
 - `GET /scraping/catalog/plan`
-
-#### Ejecutar sobre la lista por defecto
 - `POST /scraping/catalog/run`
-- `POST /start-scrapping-uy` (alias directo para correr todos los sitios UY de una sola vez)
+- `POST /start-scrapping-uy`
 
-El proceso hace **upsert de inventario**:
-- si encuentra stock/disponibilidad nuevo, lo actualiza,
-- si no llega stock en el último scrape, conserva el stock guardado previamente.
-
-Body opcional para customizar límites:
+Body opcional:
 
 ```json
 {
+  "urls": [
+    "https://acesur.uy/escritorio/ofertas/INTERNET",
+    "https://taxitor.uy/"
+  ],
   "maxPagesPerSite": 30,
   "maxProductsPerSite": 150
 }
 ```
 
-Body opcional para subset de sitios:
+### Inventario temporal
 
-```json
-{
-  "urls": [
-    "https://repuestos.uy/",
-    "https://www.todobaterias.com.uy/"
-  ],
-  "maxPagesPerSite": 20,
-  "maxProductsPerSite": 100
-}
-```
+- `GET /scraping/inventory`
+- `GET /scraping/inventory?site=https://taxitor.uy/`
 
-### Estado de job asíncrono
+### Jobs asincronos
+
 - `GET /scraping/jobs/:id`
 
-### Inventario persistido en memoria
-- `GET /scraping/inventory`
-- `GET /scraping/inventory?site=https://repuestos.uy/`
+## Salida
 
-## Respuesta unificada
+Los endpoints sync devuelven:
 
-Los endpoints sync devuelven `provider`, `task`, `requestedAt`, `raw` y `normalizedProducts`.
+- `provider`
+- `task`
+- `requestedAt`
+- `raw`
+- `normalizedProducts`
 
-`normalizedProducts` es la base para tu caso de uso (repuestos + precio), aunque conviene enriquecerla por dominio para mejorar precisión.
+Los catalogos archivados se escriben en:
 
-## Notas importantes
+- `output/catalog/<hostname>.json`
 
-- La normalización actual es heurística; para producción conviene reglas por sitio.
-- La cola es en memoria (MVP). Para producción usar Redis/BullMQ.
-- Revisar siempre Términos de Uso/robots/políticas legales de cada dominio antes de scraping intensivo.
+Las imagenes descargadas se escriben en:
+
+- `output/images/<hostname>/`
+
+## Estado de esta fase
+
+- Persistencia real en DB: pendiente.
+- Cola externa: pendiente.
+- Observabilidad y hardening operativo: pendiente.
+- El sistema sigue en estado de preproduccion operativa hasta terminar esas fases.

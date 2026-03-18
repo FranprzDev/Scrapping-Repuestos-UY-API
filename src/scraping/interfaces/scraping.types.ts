@@ -1,8 +1,18 @@
 export type ScrapingTask = 'scrape' | 'crawl' | 'extract';
 
-export type ProviderName = 'playwright' | 'custom';
+export type ProviderName = 'domain' | 'playwright' | 'custom';
 
 export type ScrapingOperationPayload = Record<string, unknown>;
+
+export interface SiteMetadataRecord {
+  site: string;
+  shipping: string[];
+  pickups: string[];
+  contact: string[];
+  faq: string[];
+  policies: string[];
+  discoveredAt: string;
+}
 
 export interface ProductRecord {
   productName?: string;
@@ -21,6 +31,7 @@ export interface ProductRecord {
   compatibleBrands?: string[];
   shippingInfo?: string[];
   attributes?: Record<string, string>;
+  qualityWarnings?: string[];
   extractedAt: string;
   provider: ProviderName;
 }

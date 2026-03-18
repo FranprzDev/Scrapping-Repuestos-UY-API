@@ -2,6 +2,8 @@ import { ArchiveStoreService } from './archive/archive-store.service';
 import { Injectable } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
+import { findDomainRule } from './domain/domain-rules';
+import { qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
 import { ScrapingService } from './scraping.service';
 
@@ -41,7 +43,8 @@ export class CatalogScrapingService {
 
         const extracted = await this.scrapingService.runTask('extract', extractPayload);
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
-        const mergedProducts = mergeProducts(extracted.normalizedProducts, extractedProducts);
+        const rule = findDomainRule(url);
+        const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
         const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
         const inventory = this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
 
@@ -75,7 +78,7 @@ export class CatalogScrapingService {
 
     return {
       requestedAt: runAt,
-      strategy: 'descubrimiento completo + extract manual con Playwright',
+      strategy: 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)',
       sitesProcessed: urls.length,
       inventorySize: this.inventoryStoreService.getAll().length,
       results,
@@ -120,12 +123,13 @@ export class CatalogScrapingService {
     const urls = request?.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
 
     return {
-      strategy: 'playwright-dom-scraping',
+      strategy: 'domain-hybrid-scraping',
       steps: [
-        '1) Descubrir URLs por sitemap si existe; si no, crawl por categorias, paginacion y detalle.',
-        '2) Extract directo del DOM y JSON-LD para devolver productos con precio e imagen.',
-        '3) Upsert en inventario: si llega stock/disponibilidad se actualiza; si no llega, se conserva el dato guardado.',
-        '4) Fallback heuristico sobre tarjetas, anchors y pagina de detalle.',
+        '1) Descubrir URLs por dominio y, si existe endpoint nativo, priorizar API directa.',
+        '2) Extraer por HTTP + HTML/JSON-LD y normalizar a un modelo comun.',
+        '3) Filtrar productos agotados, sin precio usable, con nombre basura o URL no valida.',
+        '4) Usar Playwright solo como fallback cuando el sitio no expone suficientes datos por HTTP.',
+        '5) Archivar e insertar en inventario solo productos aprobados por quality gate.',
       ],
       sites: urls,
       totalSites: urls.length,
@@ -142,6 +146,16 @@ function formatSiteError(error: unknown): string {
 }
 
 function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number): string[] {
+  if (typeof raw === 'object' && raw && Array.isArray((raw as { discoveredUrls?: unknown[] }).discoveredUrls)) {
+    const discovered = (raw as { discoveredUrls: unknown[] }).discoveredUrls
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .slice(0, maxPages);
+
+    if (discovered.length > 0) {
+      return discovered;
+    }
+  }
+
   const links = new Set<string>();
   const fallback = safeParseUrl(fallbackUrl);
 

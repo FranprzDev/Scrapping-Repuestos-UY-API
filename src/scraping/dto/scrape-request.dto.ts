@@ -74,8 +74,8 @@ export class DomainProviderConfigDto {
   async?: boolean;
 
   @IsOptional()
-  @IsIn(['playwright', 'custom'])
-  provider?: 'playwright' | 'custom';
+  @IsIn(['domain', 'playwright', 'custom'])
+  provider?: 'domain' | 'playwright' | 'custom';
 }
 
 export class JobIdParamDto {
