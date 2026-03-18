@@ -1,5 +1,5 @@
 import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
-import { CatalogScrapeRequestDto } from './dto/catalog-request.dto';
+import { CatalogScrapeRequestDto, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { JobQueueService } from './jobs/job.queue';
 import { CatalogScrapingService } from './catalog-scraping.service';
@@ -58,7 +58,6 @@ export class ScrapingController {
     return this.scrapingService.extract(payload, config.provider);
   }
 
-
   @Get('scraping/catalog/plan')
   getCatalogPlan() {
     return this.catalogScrapingService.buildExecutionPlan();
@@ -67,6 +66,11 @@ export class ScrapingController {
   @Post('scraping/catalog/run')
   runCatalog(@Body() payload: CatalogScrapeRequestDto) {
     return this.catalogScrapingService.scrapeCatalogWithPrices(payload);
+  }
+
+  @Post('scraping/quick-run')
+  quickRunSingleSite(@Body() payload: SingleSiteCatalogScrapeRequestDto) {
+    return this.catalogScrapingService.scrapeSingleSiteAndReturnInventory(payload);
   }
 
   @Post('start-scrapping-uy')
