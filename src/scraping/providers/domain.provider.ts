@@ -11,6 +11,7 @@ import { PlaywrightProvider } from './playwright.provider';
 export class DomainProvider implements ScrapingProvider {
   readonly name = 'domain' as const;
   private readonly logger = new Logger(DomainProvider.name);
+  private readonly extractConcurrency = clampNumber(Number(process.env.DOMAIN_EXTRACT_CONCURRENCY), 1, 10, 4);
 
   constructor(private readonly playwrightProvider: PlaywrightProvider) {}
 
@@ -146,14 +147,7 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
-    const pages: Array<{ url: string; method: string; productCount: number }> = [];
-    const collected: ProductRecord[] = [];
-
-    for (const url of urls) {
-      if (collected.length >= maxItems) {
-        break;
-      }
-
+    const processed = await mapWithConcurrency(urls, this.extractConcurrency, async (url) => {
       let usableProducts: ProductRecord[] = [];
       let method = 'http';
 
@@ -170,14 +164,18 @@ export class DomainProvider implements ScrapingProvider {
         method = 'playwright-fallback';
       }
 
-      pages.push({
-        url,
-        method,
-        productCount: usableProducts.length,
-      });
+      return {
+        page: {
+          url,
+          method,
+          productCount: usableProducts.length,
+        },
+        products: usableProducts,
+      };
+    });
 
-      collected.push(...usableProducts);
-    }
+    const pages = processed.map((item) => item.page);
+    const collected = processed.flatMap((item) => item.products).slice(0, maxItems);
 
     return {
       urls,
@@ -279,4 +277,25 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const safeConcurrency = Math.max(1, Math.min(concurrency, 20));
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(safeConcurrency, items.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) {
+        return;
+      }
+
+      results[index] = await worker(items[index]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 }

@@ -1,7 +1,7 @@
 import {
   ArrayMaxSize,
-  IsArray,
   IsBoolean,
+  IsArray,
   IsIn,
   IsInt,
   IsObject,
@@ -70,8 +70,8 @@ export class ExtractRequestDto {
 
 export class DomainProviderConfigDto {
   @IsOptional()
-  @IsBoolean()
-  async?: boolean;
+  @IsIn(['true', 'false'])
+  async?: 'true' | 'false';
 
   @IsOptional()
   @IsIn(['domain', 'playwright', 'custom'])

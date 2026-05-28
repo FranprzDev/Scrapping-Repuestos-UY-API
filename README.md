@@ -56,6 +56,10 @@ npm run start:dev
 
 - `PORT=3000`
 - `CUSTOM_PROVIDER_DOMAINS=dominio1.com,dominio2.com` opcional
+- `DOMAIN_EXTRACT_CONCURRENCY=4` concurrencia interna de extract por dominio
+- `AUTO_SCRAPE_ENABLED=false` activa scheduler automatico
+- `SCRAPE_CRON=0 0 3 * * *` cron (segundos minutos horas dia mes diaSemana)
+- `SCRAPE_TIMEZONE=America/Argentina/Buenos_Aires` timezone del cron
 
 ## Endpoints
 
@@ -76,7 +80,6 @@ Query opcional:
 
 ### Batch catalogo
 
-- `GET /scraping/catalog/plan`
 - `POST /scraping/catalog/run`
 - `POST /start-scrapping-uy`
 
@@ -101,6 +104,23 @@ Body opcional:
 ### Jobs asincronos
 
 - `GET /scraping/jobs/:id`
+
+## Automatizacion diaria (cada 24h)
+
+Este proyecto usa `@nestjs/schedule` para ejecutar scraping automatico.
+
+1. Configura en `.env`:
+   - `AUTO_SCRAPE_ENABLED=true`
+   - `SCRAPE_CRON=0 0 3 * * *` (03:00 todos los dias)
+   - `SCRAPE_TIMEZONE=America/Argentina/Buenos_Aires`
+2. Levanta la app normalmente (`docker compose up -d --build`).
+3. La corrida diaria dispara internamente `scraping/catalog/run` para todos los sitios por defecto.
+
+Para disparo manual desde consola:
+
+```bash
+npm run scrape:daily
+```
 
 ## Salida
 

@@ -1,5 +1,5 @@
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import { URL } from 'node:url';
 import { Readable } from 'node:stream';
@@ -11,6 +11,21 @@ export interface HttpResponseData {
   headers: Record<string, string | string[] | undefined>;
   body: string;
 }
+
+const HTTP_AGENT = new HttpAgent({
+  keepAlive: true,
+  maxSockets: 100,
+  maxFreeSockets: 20,
+  timeout: 60000,
+});
+
+const HTTPS_AGENT = new HttpsAgent({
+  keepAlive: true,
+  maxSockets: 100,
+  maxFreeSockets: 20,
+  timeout: 60000,
+  rejectUnauthorized: false,
+});
 
 export async function fetchHtml(url: string, redirects = 5): Promise<HttpResponseData> {
   const target = new URL(url);
@@ -40,6 +55,7 @@ async function requestUrl(target: URL, redirects: number): Promise<HttpResponseD
           'accept-encoding': 'gzip, deflate, br',
           connection: 'keep-alive',
         },
+        agent: target.protocol === 'https:' ? HTTPS_AGENT : HTTP_AGENT,
         rejectUnauthorized: false,
       },
       (res) => {

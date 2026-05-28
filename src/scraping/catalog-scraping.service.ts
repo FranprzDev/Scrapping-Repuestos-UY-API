@@ -1,29 +1,38 @@
 import { ArchiveStoreService } from './archive/archive-store.service';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
 import { findDomainRule } from './domain/domain-rules';
 import { qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
+import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class CatalogScrapingService {
+  private readonly logger = new Logger(CatalogScrapingService.name);
+
   constructor(
     private readonly scrapingService: ScrapingService,
     private readonly inventoryStoreService: InventoryStoreService,
     private readonly archiveStoreService: ArchiveStoreService,
+    private readonly postgresService: PostgresService,
   ) {}
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
     const urls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
     const maxPagesPerSite = request.maxPagesPerSite ?? 30;
     const maxProductsPerSite = request.maxProductsPerSite ?? 150;
+    const siteConcurrency = request.siteConcurrency ?? 2;
     const runAt = new Date().toISOString();
+    const runId = randomUUID();
+    const startedAt = Date.now();
+    this.logger.log(`[run:${runId}] started sites=${urls.length} siteConcurrency=${siteConcurrency}`);
 
-    const results = [];
-
-    for (const url of urls) {
+    const results = await runWithConcurrency(urls, siteConcurrency, async (url) => {
+      const siteStartedAt = Date.now();
+      this.logger.log(`[run:${runId}] site_started site=${url}`);
       try {
         const crawlPayload: ScrapingOperationPayload = {
           url,
@@ -46,9 +55,12 @@ export class CatalogScrapingService {
         const rule = findDomainRule(url);
         const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
         const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
-        const inventory = this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
+        const inventory = await this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
+        this.logger.log(
+          `[run:${runId}] site_done site=${url} status=success products=${mergedProducts.length} durationMs=${Date.now() - siteStartedAt}`,
+        );
 
-        results.push({
+        return {
           site: url,
           status: 'success',
           pagesUsedForExtract: targetUrls.length,
@@ -66,21 +78,31 @@ export class CatalogScrapingService {
             imagesSaved: archived.imagesSaved,
           },
           inventory,
-        });
+        };
       } catch (error) {
-        results.push({
+        this.logger.warn(
+          `[run:${runId}] site_done site=${url} status=error durationMs=${Date.now() - siteStartedAt} message=${formatSiteError(error)}`,
+        );
+        return {
           site: url,
           status: 'error',
           message: formatSiteError(error),
-        });
+        };
       }
-    }
+    });
+
+    const inventorySize = await this.inventoryStoreService.countAll();
+    const strategy = 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)';
+
+    await this.saveRun(runId, runAt, strategy, urls.length, inventorySize, results);
+    this.logger.log(`[run:${runId}] completed sites=${urls.length} inventorySize=${inventorySize} durationMs=${Date.now() - startedAt}`);
 
     return {
+      runId,
       requestedAt: runAt,
-      strategy: 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)',
+      strategy,
       sitesProcessed: urls.length,
-      inventorySize: this.inventoryStoreService.getAll().length,
+      inventorySize,
       results,
     };
   }
@@ -92,7 +114,7 @@ export class CatalogScrapingService {
       maxProductsPerSite: request.maxProducts,
     });
 
-    return this.getCurrentInventory(request.url);
+    return await this.getCurrentInventory(request.url);
   }
 
   startScrappingUy(request: CatalogScrapeRequestDto) {
@@ -102,16 +124,17 @@ export class CatalogScrapingService {
     });
   }
 
-  getCurrentInventory(site?: string) {
+  async getCurrentInventory(site?: string) {
     if (site) {
+      const products = await this.inventoryStoreService.getBySite(site);
       return {
         site,
-        total: this.inventoryStoreService.getBySite(site).length,
-        products: this.inventoryStoreService.getBySite(site),
+        total: products.length,
+        products,
       };
     }
 
-    const products = this.inventoryStoreService.getAll();
+    const products = await this.inventoryStoreService.getAll();
 
     return {
       total: products.length,
@@ -119,22 +142,143 @@ export class CatalogScrapingService {
     };
   }
 
-  buildExecutionPlan(request?: CatalogScrapeRequestDto) {
-    const urls = request?.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
+  async listRuns(limit = 20) {
+    const safeLimit = Math.max(1, Math.min(limit, 100));
+    const runs = await this.postgresService.query<{
+      id: string;
+      requested_at: string;
+      strategy: string;
+      sites_processed: number;
+      inventory_size: number;
+      summary: { results?: unknown[] };
+    }>(
+      `
+      SELECT id, requested_at, strategy, sites_processed, inventory_size, summary
+      FROM scraping_runs
+      ORDER BY requested_at DESC
+      LIMIT $1
+      `,
+      [safeLimit],
+    );
 
     return {
-      strategy: 'domain-hybrid-scraping',
-      steps: [
-        '1) Descubrir URLs por dominio y, si existe endpoint nativo, priorizar API directa.',
-        '2) Extraer por HTTP + HTML/JSON-LD y normalizar a un modelo comun.',
-        '3) Filtrar productos agotados, sin precio usable, con nombre basura o URL no valida.',
-        '4) Usar Playwright solo como fallback cuando el sitio no expone suficientes datos por HTTP.',
-        '5) Archivar e insertar en inventario solo productos aprobados por quality gate.',
-      ],
-      sites: urls,
-      totalSites: urls.length,
+      total: runs.rows.length,
+      runs: runs.rows.map((row) => ({
+        runId: row.id,
+        requestedAt: row.requested_at,
+        strategy: row.strategy,
+        sitesProcessed: row.sites_processed,
+        inventorySize: row.inventory_size,
+        resultsCount: Array.isArray(row.summary?.results) ? row.summary.results.length : 0,
+      })),
     };
   }
+
+  async getRunById(runId: string) {
+    const run = await this.postgresService.query<{
+      id: string;
+      requested_at: string;
+      strategy: string;
+      sites_processed: number;
+      inventory_size: number;
+      summary: { results?: unknown[] };
+    }>(
+      `
+      SELECT id, requested_at, strategy, sites_processed, inventory_size, summary
+      FROM scraping_runs
+      WHERE id = $1::uuid
+      `,
+      [runId],
+    );
+
+    const [runRow] = run.rows;
+    if (!runRow) {
+      return undefined;
+    }
+
+    const sites = await this.postgresService.query<{
+      site: string;
+      status: string;
+      payload: Record<string, unknown>;
+    }>(
+      `
+      SELECT site, status, payload
+      FROM scraping_run_sites
+      WHERE run_id = $1::uuid
+      ORDER BY site ASC
+      `,
+      [runId],
+    );
+
+    return {
+      runId: runRow.id,
+      requestedAt: runRow.requested_at,
+      strategy: runRow.strategy,
+      sitesProcessed: runRow.sites_processed,
+      inventorySize: runRow.inventory_size,
+      summary: runRow.summary,
+      sites: sites.rows.map((site) => ({
+        site: site.site,
+        status: site.status,
+        payload: site.payload,
+      })),
+    };
+  }
+
+  private async saveRun(
+    runId: string,
+    runAt: string,
+    strategy: string,
+    sitesProcessed: number,
+    inventorySize: number,
+    results: unknown[],
+  ) {
+    await this.postgresService.ensureCatalogTables();
+    await this.postgresService.query(
+      `
+      INSERT INTO scraping_runs (id, requested_at, strategy, sites_processed, inventory_size, summary)
+      VALUES ($1::uuid, $2::timestamptz, $3, $4, $5, $6::jsonb)
+      `,
+      [runId, runAt, strategy, sitesProcessed, inventorySize, JSON.stringify({ results })],
+    );
+
+    for (const item of results) {
+      const record = item as Record<string, unknown>;
+      const site = typeof record.site === 'string' ? record.site : 'unknown';
+      const status = typeof record.status === 'string' ? record.status : 'unknown';
+      await this.postgresService.query(
+        `
+        INSERT INTO scraping_run_sites (run_id, site, status, payload)
+        VALUES ($1::uuid, $2, $3, $4::jsonb)
+        ON CONFLICT (run_id, site) DO UPDATE
+        SET status = EXCLUDED.status,
+            payload = EXCLUDED.payload
+        `,
+        [runId, site, status, JSON.stringify(record)],
+      );
+    }
+  }
+}
+
+async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 20));
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) {
+        return;
+      }
+
+      results[index] = await worker(items[index]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 }
 
 function formatSiteError(error: unknown): string {
