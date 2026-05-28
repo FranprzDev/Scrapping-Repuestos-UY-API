@@ -58,11 +58,6 @@ export class ScrapingController {
     return this.scrapingService.extract(payload, config.provider);
   }
 
-  @Get('scraping/catalog/plan')
-  getCatalogPlan() {
-    return this.catalogScrapingService.buildExecutionPlan();
-  }
-
   @Post('scraping/catalog/run')
   runCatalog(@Body() payload: CatalogScrapeRequestDto) {
     return this.catalogScrapingService.scrapeCatalogWithPrices(payload);

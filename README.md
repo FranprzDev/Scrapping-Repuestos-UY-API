@@ -76,7 +76,6 @@ Query opcional:
 
 ### Batch catalogo
 
-- `GET /scraping/catalog/plan`
 - `POST /scraping/catalog/run`
 - `POST /start-scrapping-uy`
 

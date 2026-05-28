@@ -119,22 +119,6 @@ export class CatalogScrapingService {
     };
   }
 
-  buildExecutionPlan(request?: CatalogScrapeRequestDto) {
-    const urls = request?.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
-
-    return {
-      strategy: 'domain-hybrid-scraping',
-      steps: [
-        '1) Descubrir URLs por dominio y, si existe endpoint nativo, priorizar API directa.',
-        '2) Extraer por HTTP + HTML/JSON-LD y normalizar a un modelo comun.',
-        '3) Filtrar productos agotados, sin precio usable, con nombre basura o URL no valida.',
-        '4) Usar Playwright solo como fallback cuando el sitio no expone suficientes datos por HTTP.',
-        '5) Archivar e insertar en inventario solo productos aprobados por quality gate.',
-      ],
-      sites: urls,
-      totalSites: urls.length,
-    };
-  }
 }
 
 function formatSiteError(error: unknown): string {
