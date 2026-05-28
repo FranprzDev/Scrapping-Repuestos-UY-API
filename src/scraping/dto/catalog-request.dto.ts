@@ -25,6 +25,12 @@ export class CatalogScrapeRequestDto {
   @Min(1)
   @Max(20000)
   maxProductsPerSite?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  siteConcurrency?: number;
 }
 
 export class SingleSiteCatalogScrapeRequestDto {

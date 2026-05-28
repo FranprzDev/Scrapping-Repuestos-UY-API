@@ -5,7 +5,9 @@ import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfa
 import { findDomainRule } from './domain/domain-rules';
 import { qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
+import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class CatalogScrapingService {
@@ -13,17 +15,18 @@ export class CatalogScrapingService {
     private readonly scrapingService: ScrapingService,
     private readonly inventoryStoreService: InventoryStoreService,
     private readonly archiveStoreService: ArchiveStoreService,
+    private readonly postgresService: PostgresService,
   ) {}
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
     const urls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
     const maxPagesPerSite = request.maxPagesPerSite ?? 30;
     const maxProductsPerSite = request.maxProductsPerSite ?? 150;
+    const siteConcurrency = request.siteConcurrency ?? 2;
     const runAt = new Date().toISOString();
+    const runId = randomUUID();
 
-    const results = [];
-
-    for (const url of urls) {
+    const results = await runWithConcurrency(urls, siteConcurrency, async (url) => {
       try {
         const crawlPayload: ScrapingOperationPayload = {
           url,
@@ -46,9 +49,9 @@ export class CatalogScrapingService {
         const rule = findDomainRule(url);
         const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
         const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
-        const inventory = this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
+        const inventory = await this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
 
-        results.push({
+        return {
           site: url,
           status: 'success',
           pagesUsedForExtract: targetUrls.length,
@@ -66,21 +69,27 @@ export class CatalogScrapingService {
             imagesSaved: archived.imagesSaved,
           },
           inventory,
-        });
+        };
       } catch (error) {
-        results.push({
+        return {
           site: url,
           status: 'error',
           message: formatSiteError(error),
-        });
+        };
       }
-    }
+    });
+
+    const inventorySize = (await this.inventoryStoreService.getAll()).length;
+    const strategy = 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)';
+
+    await this.saveRun(runId, runAt, strategy, urls.length, inventorySize, results);
 
     return {
+      runId,
       requestedAt: runAt,
-      strategy: 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)',
+      strategy,
       sitesProcessed: urls.length,
-      inventorySize: this.inventoryStoreService.getAll().length,
+      inventorySize,
       results,
     };
   }
@@ -92,7 +101,7 @@ export class CatalogScrapingService {
       maxProductsPerSite: request.maxProducts,
     });
 
-    return this.getCurrentInventory(request.url);
+    return await this.getCurrentInventory(request.url);
   }
 
   startScrappingUy(request: CatalogScrapeRequestDto) {
@@ -102,16 +111,17 @@ export class CatalogScrapingService {
     });
   }
 
-  getCurrentInventory(site?: string) {
+  async getCurrentInventory(site?: string) {
     if (site) {
+      const products = await this.inventoryStoreService.getBySite(site);
       return {
         site,
-        total: this.inventoryStoreService.getBySite(site).length,
-        products: this.inventoryStoreService.getBySite(site),
+        total: products.length,
+        products,
       };
     }
 
-    const products = this.inventoryStoreService.getAll();
+    const products = await this.inventoryStoreService.getAll();
 
     return {
       total: products.length,
@@ -119,6 +129,60 @@ export class CatalogScrapingService {
     };
   }
 
+  private async saveRun(
+    runId: string,
+    runAt: string,
+    strategy: string,
+    sitesProcessed: number,
+    inventorySize: number,
+    results: unknown[],
+  ) {
+    await this.postgresService.ensureCatalogTables();
+    await this.postgresService.query(
+      `
+      INSERT INTO scraping_runs (id, requested_at, strategy, sites_processed, inventory_size, summary)
+      VALUES ($1::uuid, $2::timestamptz, $3, $4, $5, $6::jsonb)
+      `,
+      [runId, runAt, strategy, sitesProcessed, inventorySize, JSON.stringify({ results })],
+    );
+
+    for (const item of results) {
+      const record = item as Record<string, unknown>;
+      const site = typeof record.site === 'string' ? record.site : 'unknown';
+      const status = typeof record.status === 'string' ? record.status : 'unknown';
+      await this.postgresService.query(
+        `
+        INSERT INTO scraping_run_sites (run_id, site, status, payload)
+        VALUES ($1::uuid, $2, $3, $4::jsonb)
+        ON CONFLICT (run_id, site) DO UPDATE
+        SET status = EXCLUDED.status,
+            payload = EXCLUDED.payload
+        `,
+        [runId, site, status, JSON.stringify(record)],
+      );
+    }
+  }
+}
+
+async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 20));
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) {
+        return;
+      }
+
+      results[index] = await worker(items[index]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 }
 
 function formatSiteError(error: unknown): string {
