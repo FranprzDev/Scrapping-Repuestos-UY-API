@@ -68,8 +68,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       [id, task, JSON.stringify(payload)],
     );
 
+    const [row] = inserted.rows;
     this.tick();
-    return mapRowToJob(inserted.rows[0]);
+    return mapRowToJob(row);
   }
 
   async findById(id: string): Promise<ScrapingJob | undefined> {
@@ -82,11 +83,12 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       [id],
     );
 
-    if (query.rows.length === 0) {
+    const [row] = query.rows;
+    if (!row) {
       return undefined;
     }
 
-    return mapRowToJob(query.rows[0]);
+    return mapRowToJob(row);
   }
 
   private startPolling() {
@@ -167,7 +169,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
         return undefined;
       }
 
-      const row = selected.rows[0];
+      const [selectedRow] = selected.rows;
       const updated = await this.postgresService.query<ScrapingJobRow>(
         `
         UPDATE scraping_jobs
@@ -176,11 +178,12 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
         WHERE id = $1
         RETURNING id, task, payload, status, provider, result, error, created_at, updated_at
         `,
-        [row.id],
+        [selectedRow.id],
       );
 
       await this.postgresService.query('COMMIT');
-      return mapRowToJob(updated.rows[0]);
+      const [updatedRow] = updated.rows;
+      return mapRowToJob(updatedRow);
     } catch (error) {
       await this.postgresService.query('ROLLBACK');
       throw error;

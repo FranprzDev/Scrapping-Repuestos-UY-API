@@ -21,6 +21,8 @@ type InventoryRow = {
 
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
+  private readonly upsertChunkSize = 100;
+
   constructor(private readonly postgresService: PostgresService) {}
 
   async onModuleInit(): Promise<void> {
@@ -31,16 +33,28 @@ export class InventoryStoreService implements OnModuleInit {
     let created = 0;
     let updated = 0;
 
-    for (const product of products) {
-      const key = buildProductKey(site, product);
-      if (!key) {
-        continue;
-      }
+    const payload = products
+      .map((product) => {
+        const key = buildProductKey(site, product);
+        if (!key) {
+          return undefined;
+        }
 
-      const row = await this.postgresService.query<{ created: boolean }>(
+        return {
+          id: key,
+          site,
+          product: JSON.stringify(product),
+        };
+      })
+      .filter((item): item is { id: string; site: string; product: string } => Boolean(item));
+
+    for (let index = 0; index < payload.length; index += this.upsertChunkSize) {
+      const chunk = payload.slice(index, index + this.upsertChunkSize);
+      const upserted = await this.postgresService.query<{ created: boolean }>(
         `
         INSERT INTO scraping_inventory (id, site, product, created_at, updated_at, last_seen_at)
-        VALUES ($1, $2, $3::jsonb, $4::timestamptz, $4::timestamptz, $4::timestamptz)
+        SELECT item.id, item.site, item.product::jsonb, $1::timestamptz, $1::timestamptz, $1::timestamptz
+        FROM unnest($2::text[], $3::text[], $4::text[]) AS item(id, site, product)
         ON CONFLICT (id)
         DO UPDATE SET
           site = EXCLUDED.site,
@@ -49,17 +63,19 @@ export class InventoryStoreService implements OnModuleInit {
           last_seen_at = EXCLUDED.last_seen_at
         RETURNING (xmax = 0) AS created
         `,
-        [key, site, JSON.stringify(product), runAt],
+        [runAt, chunk.map((item) => item.id), chunk.map((item) => item.site), chunk.map((item) => item.product)],
       );
 
-      if (row.rows[0]?.created) {
-        created += 1;
-      } else {
-        updated += 1;
+      for (const row of upserted.rows) {
+        if (row.created) {
+          created += 1;
+        } else {
+          updated += 1;
+        }
       }
     }
 
-    const totalForSite = (await this.getBySite(site)).length;
+    const totalForSite = await this.countBySite(site);
     return { created, updated, totalForSite };
   }
 
@@ -85,6 +101,19 @@ export class InventoryStoreService implements OnModuleInit {
       [site],
     );
     return rows.rows.map(mapInventoryRow);
+  }
+
+  async countAll(): Promise<number> {
+    const result = await this.postgresService.query<{ total: string }>('SELECT COUNT(*)::text AS total FROM scraping_inventory');
+    return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async countBySite(site: string): Promise<number> {
+    const result = await this.postgresService.query<{ total: string }>(
+      'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE site = $1',
+      [site],
+    );
+    return Number(result.rows[0]?.total ?? 0);
   }
 }
 

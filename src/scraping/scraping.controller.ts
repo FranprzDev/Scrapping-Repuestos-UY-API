@@ -78,6 +78,23 @@ export class ScrapingController {
     return this.catalogScrapingService.getCurrentInventory(site);
   }
 
+  @Get('scraping/runs')
+  listRuns(@Query('limit') limit?: string) {
+    const parsed = Number(limit);
+    const normalized = Number.isFinite(parsed) ? parsed : undefined;
+    return this.catalogScrapingService.listRuns(normalized);
+  }
+
+  @Get('scraping/runs/:runId')
+  async getRunById(@Param('runId') runId: string) {
+    const run = await this.catalogScrapingService.getRunById(runId);
+    if (!run) {
+      throw new NotFoundException('Run no encontrado');
+    }
+
+    return run;
+  }
+
   @Get('scraping/jobs/:id')
   async getJob(@Param() params: JobIdParamDto) {
     const job = await this.jobQueueService.findById(params.id);
