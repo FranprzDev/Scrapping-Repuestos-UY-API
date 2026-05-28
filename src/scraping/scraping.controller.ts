@@ -23,8 +23,8 @@ export class ScrapingController {
   }
 
   @Post('scraping/scrape')
-  scrape(@Body() payload: ScrapeRequestDto, @Query() config: DomainProviderConfigDto) {
-    if (config.async) {
+  async scrape(@Body() payload: ScrapeRequestDto, @Query() config: DomainProviderConfigDto) {
+    if (config.async === 'true') {
       return this.jobQueueService.enqueue('scrape', {
         ...payload,
         providerOverride: config.provider,
@@ -35,8 +35,8 @@ export class ScrapingController {
   }
 
   @Post('scraping/crawl')
-  crawl(@Body() payload: CrawlRequestDto, @Query() config: DomainProviderConfigDto) {
-    if (config.async) {
+  async crawl(@Body() payload: CrawlRequestDto, @Query() config: DomainProviderConfigDto) {
+    if (config.async === 'true') {
       return this.jobQueueService.enqueue('crawl', {
         ...payload,
         providerOverride: config.provider,
@@ -47,8 +47,8 @@ export class ScrapingController {
   }
 
   @Post('scraping/extract')
-  extract(@Body() payload: ExtractRequestDto, @Query() config: DomainProviderConfigDto) {
-    if (config.async) {
+  async extract(@Body() payload: ExtractRequestDto, @Query() config: DomainProviderConfigDto) {
+    if (config.async === 'true') {
       return this.jobQueueService.enqueue('extract', {
         ...payload,
         providerOverride: config.provider,
@@ -79,8 +79,8 @@ export class ScrapingController {
   }
 
   @Get('scraping/jobs/:id')
-  getJob(@Param() params: JobIdParamDto) {
-    const job = this.jobQueueService.findById(params.id);
+  async getJob(@Param() params: JobIdParamDto) {
+    const job = await this.jobQueueService.findById(params.id);
 
     if (!job) {
       throw new NotFoundException('Job no encontrado');
