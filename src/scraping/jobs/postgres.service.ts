@@ -6,7 +6,7 @@ export class PostgresService implements OnModuleDestroy {
   private readonly pool: Pool;
 
   constructor() {
-    const connectionString = process.env.DATABASE_URL;
+    const connectionString = resolveConnectionString();
     if (!connectionString) {
       throw new Error('DATABASE_URL no configurada');
     }
@@ -77,4 +77,17 @@ export class PostgresService implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
   }
+}
+
+function resolveConnectionString(): string | undefined {
+  const configured = process.env.DATABASE_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  if ((process.env.NODE_ENV ?? 'development') !== 'production') {
+    return 'postgresql://postgres:postgres@localhost:5433/repuestos_uy';
+  }
+
+  return undefined;
 }

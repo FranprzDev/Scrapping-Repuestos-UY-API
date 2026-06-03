@@ -1,5 +1,5 @@
 import { ArchiveStoreService } from './archive/archive-store.service';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
 import { findDomainRule } from './domain/domain-rules';
@@ -14,9 +14,13 @@ export class CatalogScrapingService {
   private readonly logger = new Logger(CatalogScrapingService.name);
 
   constructor(
+    @Inject(ScrapingService)
     private readonly scrapingService: ScrapingService,
+    @Inject(InventoryStoreService)
     private readonly inventoryStoreService: InventoryStoreService,
+    @Inject(ArchiveStoreService)
     private readonly archiveStoreService: ArchiveStoreService,
+    @Inject(PostgresService)
     private readonly postgresService: PostgresService,
   ) {}
 
@@ -42,7 +46,7 @@ export class CatalogScrapingService {
         };
 
         const crawled = await this.scrapingService.runTask('crawl', crawlPayload);
-        const targetUrls = collectTargetUrls(crawled.raw, url, maxPagesPerSite);
+        const targetUrls = collectTargetUrls(crawled.raw, url, maxProductsPerSite);
 
         const extractPayload: ScrapingOperationPayload = {
           urls: targetUrls,
@@ -289,11 +293,11 @@ function formatSiteError(error: unknown): string {
   return String(error);
 }
 
-function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number): string[] {
+function collectTargetUrls(raw: unknown, fallbackUrl: string, maxProducts: number): string[] {
   if (typeof raw === 'object' && raw && Array.isArray((raw as { discoveredUrls?: unknown[] }).discoveredUrls)) {
     const discovered = (raw as { discoveredUrls: unknown[] }).discoveredUrls
       .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      .slice(0, maxPages);
+      .slice(0, maxProducts);
 
     if (discovered.length > 0) {
       return discovered;
@@ -328,7 +332,7 @@ function collectTargetUrls(raw: unknown, fallbackUrl: string, maxPages: number):
 
   visit(raw);
 
-  const selected = prioritizeUrls(Array.from(links), fallback, maxPages);
+  const selected = prioritizeUrls(Array.from(links), fallback, maxProducts);
   if (selected.length === 0) {
     selected.push(fallbackUrl);
   }

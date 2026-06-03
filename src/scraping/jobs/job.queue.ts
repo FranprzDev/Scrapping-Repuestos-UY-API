@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ProviderResult, ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
 import { ScrapingService } from '../scraping.service';
@@ -40,7 +40,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private shuttingDown = false;
 
   constructor(
+    @Inject(ScrapingService)
     private readonly scrapingService: ScrapingService,
+    @Inject(PostgresService)
     private readonly postgresService: PostgresService,
   ) {}
 
