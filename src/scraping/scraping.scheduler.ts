@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { CatalogScrapingService } from './catalog-scraping.service';
 
@@ -7,7 +7,7 @@ export class ScrapingSchedulerService {
   private readonly logger = new Logger(ScrapingSchedulerService.name);
   private isRunning = false;
 
-  constructor(private readonly catalogScrapingService: CatalogScrapingService) {}
+  constructor(@Inject(CatalogScrapingService) private readonly catalogScrapingService: CatalogScrapingService) {}
 
   @Cron(process.env.SCRAPE_CRON ?? '0 0 3 * * *', {
     name: 'daily-catalog-scrape',

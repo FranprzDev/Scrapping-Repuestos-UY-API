@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { PostgresService } from '../jobs/postgres.service';
 
@@ -23,7 +23,7 @@ type InventoryRow = {
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
 
-  constructor(private readonly postgresService: PostgresService) {}
+  constructor(@Inject(PostgresService) private readonly postgresService: PostgresService) {}
 
   async onModuleInit(): Promise<void> {
     await this.postgresService.ensureCatalogTables();

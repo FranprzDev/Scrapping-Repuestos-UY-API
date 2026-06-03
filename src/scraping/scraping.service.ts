@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { CrawlRequestDto, ExtractRequestDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from './interfaces/scraping.types';
 import { CustomProvider } from './providers/custom.provider';
@@ -16,8 +16,11 @@ export class ScrapingService {
   );
 
   constructor(
+    @Inject(DomainProvider)
     private readonly domainProvider: DomainProvider,
+    @Inject(PlaywrightProvider)
     private readonly playwrightProvider: PlaywrightProvider,
+    @Inject(CustomProvider)
     private readonly customProvider: CustomProvider,
   ) {
     this.providers = {

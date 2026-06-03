@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from '../interfaces/scraping.types';
 import { extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
@@ -13,7 +13,7 @@ export class DomainProvider implements ScrapingProvider {
   private readonly logger = new Logger(DomainProvider.name);
   private readonly extractConcurrency = clampNumber(Number(process.env.DOMAIN_EXTRACT_CONCURRENCY), 1, 10, 4);
 
-  constructor(private readonly playwrightProvider: PlaywrightProvider) {}
+  constructor(@Inject(PlaywrightProvider) private readonly playwrightProvider: PlaywrightProvider) {}
 
   async run(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<ProviderResult> {
     const sourceUrl = typeof payload.url === 'string' ? payload.url : undefined;
@@ -115,7 +115,7 @@ export class DomainProvider implements ScrapingProvider {
     return {
       seedUrl: sourceUrl,
       pages,
-      discoveredUrls: Array.from(discoveredProducts).slice(0, limit),
+      discoveredUrls: Array.from(discoveredProducts).slice(0, limit * 10),
       discoveryMethod: 'domain-http',
     };
   }
