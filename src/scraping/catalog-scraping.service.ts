@@ -111,6 +111,12 @@ export class CatalogScrapingService {
     };
   }
 
+  refreshCatalogInventory() {
+    return this.scrapeCatalogWithPrices({
+      urls: [...DEFAULT_CATALOG_SITES],
+    });
+  }
+
   async scrapeSingleSiteAndReturnInventory(request: SingleSiteCatalogScrapeRequestDto) {
     await this.scrapeCatalogWithPrices({
       urls: [request.url],
@@ -122,10 +128,8 @@ export class CatalogScrapingService {
   }
 
   startScrappingUy(request: CatalogScrapeRequestDto) {
-    return this.scrapeCatalogWithPrices({
-      ...request,
-      urls: request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES],
-    });
+    void request;
+    return this.refreshCatalogInventory();
   }
 
   async getCurrentInventory(site?: string) {
