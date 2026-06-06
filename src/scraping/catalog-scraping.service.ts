@@ -443,7 +443,7 @@ function collectExtractedProducts(raw: unknown, provider: ProviderName, sourceUr
         const name = asString(item.name) ?? asString(item.productName);
         const price = asString(item.price);
 
-        if (!name || !price) {
+        if (!name) {
           continue;
         }
 

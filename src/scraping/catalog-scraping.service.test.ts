@@ -61,3 +61,84 @@ test('getRunById expone trace y payload de sitios', async () => {
   });
   assert.equal(run?.summary.results?.length, 1);
 });
+
+test('preserva productos sin precio en la extraccion del servicio', async () => {
+  const savedCatalogs: Array<{ site: string; products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }> }> = [];
+  const inventoryUpserts: Array<Array<{ productName?: string; price?: string }>> = [];
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string) {
+        if (task === 'crawl') {
+          return {
+            provider: 'http',
+            requestedAt: '2026-06-06T00:00:00.000Z',
+            raw: { discoveredUrls: ['https://example.com/producto/1'] },
+            normalizedProducts: [],
+          };
+        }
+
+        return {
+          provider: 'http',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: {
+            products: [
+              {
+                name: 'Producto sin precio',
+                productUrl: 'https://example.com/producto/1',
+                brand: 'Marca',
+              },
+            ],
+          },
+          normalizedProducts: [],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts(_site: string, products: Array<{ productName?: string; price?: string }>) {
+        inventoryUpserts.push(products);
+        return { created: products.length, updated: 0, totalForSite: products.length };
+      },
+      async countAll() {
+        return 1;
+      },
+      async countBySite() {
+        return 1;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(site: string, products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }>) {
+        savedCatalogs.push({ site, products });
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  const run = await service.scrapeCatalogWithPrices({
+    urls: ['https://example.com'],
+    maxPagesPerSite: 10,
+    maxProductsPerSite: 10,
+    siteConcurrency: 1,
+  });
+
+  assert.equal(run.inventorySize, 1);
+  assert.equal(savedCatalogs.length, 1);
+  assert.equal(savedCatalogs[0]?.site, 'https://example.com');
+  assert.equal(savedCatalogs[0]?.products[0]?.productName, 'Producto sin precio');
+  assert.equal(savedCatalogs[0]?.products[0]?.price, undefined);
+  assert.ok(savedCatalogs[0]?.products[0]?.qualityWarnings?.includes('missing_price'));
+  assert.equal(inventoryUpserts.length, 1);
+  assert.equal(inventoryUpserts[0]?.[0]?.productName, 'Producto sin precio');
+});
