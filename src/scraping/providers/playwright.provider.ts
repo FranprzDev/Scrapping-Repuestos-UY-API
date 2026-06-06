@@ -69,7 +69,7 @@ export class PlaywrightProvider implements ScrapingProvider {
       return { seedUrl: undefined, pages: [], discoveredUrls: [] };
     }
 
-    const limit = clampNumber(payload.limit, 1, 5000, 30);
+    const limit = clampNumber(payload.limit, 1, 1000000, 30);
     const includePaths = asStringArray(payload.includePaths);
     const excludePaths = asStringArray(payload.excludePaths);
     const sitemapUrls = await discoverUrlsFromSitemaps(seedUrl, limit, includePaths, excludePaths);
@@ -136,7 +136,7 @@ export class PlaywrightProvider implements ScrapingProvider {
       ...asStringArray(payload.urls),
       ...(asString(payload.url) ? [asString(payload.url)!] : []),
     ]);
-    const maxItems = clampNumber(payload.maxItems, 1, 20000, 150);
+    const maxItems = clampNumber(payload.maxItems, 1, 1000000, 150);
     const pages = [];
     const products: ProductRecord[] = [];
 
@@ -319,15 +319,14 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
       }
       return records;
     };
-    const isDetailPage = /\/product\/|\/producto\/|\/catalogo\/[^/]+\/[^/]+/i.test(new URL(url).pathname);
     const linkedCards = Array.from(document.querySelectorAll('a[href]'))
       .map((anchor) => {
         const href = anchor.getAttribute('href') ?? '';
-        if (!/product-page|\/product\/|\/producto\/|\/catalogo\//i.test(href)) return undefined;
+        if (/contacto|carrito|login|checkout|terminos|privacidad|inicio|home|menu/i.test(href)) return undefined;
         const container = findContainer(anchor);
         const productName = normalizeName(anchor.textContent) || pickName(container);
+        if (!productName || ignoredNameRegex.test(productName)) return undefined;
         const price = pickPrice(container);
-        if (!productName || !price || ignoredNameRegex.test(productName)) return undefined;
         const compatibleBrands = Array.from(
           new Set((text(container.textContent).match(/(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd)/gi) ?? []).map((value) => value.trim())),
         );
@@ -359,9 +358,9 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
       .filter((line) => /env[ií]o|retiro|pickup|delivery|despacho/i.test(line))
       .slice(0, 5);
     const pageHeading = normalizeName(document.querySelector('h1')?.textContent);
-    const pagePrice = bodyText.match(priceRegex)?.[0] ?? '';
+    const pagePrice = bodyText.match(priceRegex)?.[0];
     const detailedRecord =
-      pageHeading && pagePrice
+      pageHeading
         ? [
             {
               productName: pageHeading,
@@ -382,7 +381,7 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
             },
           ]
         : [];
-    return isDetailPage ? [...collectStructuredData(), ...detailedRecord] : [...collectStructuredData(), ...linkedCards, ...detailedRecord];
+    return [...collectStructuredData(), ...linkedCards, ...detailedRecord];
   }, pageUrl);
 
   return dedupeProducts(
@@ -400,14 +399,14 @@ function normalizeExtractedProduct(
   const productName = cleanText(asString(product.productName));
   const rawPrice = cleanText(asString(product.price));
 
-  if (!productName || !rawPrice) {
+  if (!productName) {
     return undefined;
   }
 
   return {
     productName,
-    price: normalizePrice(rawPrice),
-    currency: inferCurrency(rawPrice, asString(product.currency)),
+    price: rawPrice ? normalizePrice(rawPrice) : undefined,
+    currency: rawPrice ? inferCurrency(rawPrice, asString(product.currency)) : asString(product.currency)?.toUpperCase(),
     brand: cleanText(asString(product.brand)),
     sku: cleanText(asString(product.sku)),
     category: cleanText(asString(product.category)),
@@ -490,14 +489,24 @@ function prioritizeLinks(urls: string[], origin?: string, includePaths: string[]
 }
 
 function shouldQueueForCrawl(url: string): boolean {
-  return !/product-page|\/product\/|\/producto\/|\/catalogo\/[^/]+\/[^/]+/i.test(url);
+  const lowered = url.toLowerCase();
+  if (/\.(jpg|jpeg|png|gif|svg|webp|pdf|css|js)(\?|#|$)/i.test(lowered)) {
+    return false;
+  }
+
+  if (/contacto|carrito|login|checkout|terminos|privacidad|faq|sitemap|rss|search|buscar|home|inicio/i.test(lowered)) {
+    return false;
+  }
+
+  return /producto|productos|repuesto|repuestos|catalog|categoria|category|shop|tienda|oferta|outlet|articulo|articulos|detalle/i.test(lowered);
 }
 
 function scoreUrl(url: string): number {
+  const lowered = url.toLowerCase();
   let score = 0;
-  if (/product-page|\/product\/|\/producto\/|\/catalogo\/[^/]+\/[^/]+/i.test(url)) score += 7;
-  if (/product-category|\/shop\/|\/productos\/|\/catalogo\//i.test(url)) score += 4;
-  if (/ofertas|outlet|destacados/i.test(url)) score += 2;
+  if (/producto|repuesto|articulo|detalle|product|catalog|shop/i.test(lowered)) score += 4;
+  if (/categoria|category|productos|ofertas|outlet|tienda/i.test(lowered)) score += 3;
+  if (/\/\d+($|\/|\?)/.test(lowered) || /[a-z]-[a-z0-9]{4,}/i.test(lowered)) score += 1;
   return score;
 }
 

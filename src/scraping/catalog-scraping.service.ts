@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
 import { findDomainRule } from './domain/domain-rules';
-import { qualityGate } from './domain/product-quality';
+import { countQualityWarnings, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
@@ -26,8 +26,8 @@ export class CatalogScrapingService {
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
     const urls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
-    const maxPagesPerSite = request.maxPagesPerSite ?? 30;
-    const maxProductsPerSite = request.maxProductsPerSite ?? 150;
+    const maxPagesPerSite = request.maxPagesPerSite ?? 1000000;
+    const maxProductsPerSite = request.maxProductsPerSite ?? 1000000;
     const siteConcurrency = request.siteConcurrency ?? 2;
     const runAt = new Date().toISOString();
     const runId = randomUUID();
@@ -58,7 +58,8 @@ export class CatalogScrapingService {
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const rule = findDomainRule(url);
         const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
-        const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt);
+        const trace = buildSiteTrace(crawled.raw, extracted.raw, extractedProducts, mergedProducts);
+        const archived = await this.archiveStoreService.saveSiteCatalog(url, mergedProducts, runAt, trace);
         const inventory = await this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
         this.logger.log(
           `[run:${runId}] site_done site=${url} status=success products=${mergedProducts.length} durationMs=${Date.now() - siteStartedAt}`,
@@ -76,11 +77,13 @@ export class CatalogScrapingService {
             provider: extracted.provider,
             requestedAt: extracted.requestedAt,
             normalizedProducts: mergedProducts,
+            warnings: countQualityWarnings(mergedProducts),
           },
           archive: {
             outputPath: archived.outputPath,
             imagesSaved: archived.imagesSaved,
           },
+          trace,
           inventory,
         };
       } catch (error) {
@@ -228,6 +231,7 @@ export class CatalogScrapingService {
       sites: sites.rows.map((site) => ({
         site: site.site,
         status: site.status,
+        trace: typeof site.payload.trace === 'object' ? site.payload.trace : undefined,
         payload: site.payload,
       })),
     };
@@ -497,4 +501,27 @@ function mergeProducts(base: ProductRecord[], incoming: ProductRecord[]): Produc
   }
 
   return Array.from(merged.values());
+}
+
+function buildSiteTrace(
+  crawlRaw: unknown,
+  extractRaw: unknown,
+  extractedProducts: ProductRecord[],
+  mergedProducts: ProductRecord[],
+) {
+  const crawl = crawlRaw as { pages?: unknown[]; discoveredUrls?: unknown[]; discoveryMethod?: string } | undefined;
+  const extract = extractRaw as { pages?: unknown[]; urls?: unknown[] } | undefined;
+  return {
+    crawl: {
+      discoveryMethod: crawl?.discoveryMethod ?? 'unknown',
+      pagesDiscovered: Array.isArray(crawl?.pages) ? crawl?.pages.length : 0,
+      urlsDiscovered: Array.isArray(crawl?.discoveredUrls) ? crawl?.discoveredUrls.length : 0,
+    },
+    extract: {
+      pagesProcessed: Array.isArray(extract?.pages) ? extract?.pages.length : 0,
+      urlsRequested: Array.isArray(extract?.urls) ? extract?.urls.length : 0,
+      rawProducts: extractedProducts.length,
+      mergedProducts: mergedProducts.length,
+    },
+  };
 }
