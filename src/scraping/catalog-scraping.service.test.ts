@@ -142,3 +142,78 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
   assert.equal(inventoryUpserts.length, 1);
   assert.equal(inventoryUpserts[0]?.[0]?.productName, 'Producto sin precio');
 });
+
+test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
+  let extractPayloadUrls: string[] = [];
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string, payload: { urls?: string[] }) {
+        if (task === 'crawl') {
+          return {
+            provider: 'http',
+            requestedAt: '2026-06-06T00:00:00.000Z',
+            raw: {
+              discoveredUrls: [
+                'https://example.com/producto/1',
+                'https://example.com/producto/2',
+                'https://example.com/producto/3',
+              ],
+            },
+            normalizedProducts: [],
+          };
+        }
+
+        extractPayloadUrls = payload.urls ?? [];
+
+        return {
+          provider: 'http',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: { products: [] },
+          normalizedProducts: [],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 0;
+      },
+      async countBySite() {
+        return 0;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(site: string, products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }>) {
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  await service.scrapeCatalogWithPrices({
+    urls: ['https://example.com'],
+    maxPagesPerSite: 10,
+    maxProductsPerSite: 1,
+    siteConcurrency: 1,
+  });
+
+  assert.deepEqual(extractPayloadUrls, [
+    'https://example.com/producto/1',
+    'https://example.com/producto/2',
+    'https://example.com/producto/3',
+  ]);
+});

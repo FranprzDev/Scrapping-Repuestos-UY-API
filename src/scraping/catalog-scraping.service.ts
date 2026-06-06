@@ -46,7 +46,7 @@ export class CatalogScrapingService {
         };
 
         const crawled = await this.scrapingService.runTask('crawl', crawlPayload);
-        const targetUrls = collectTargetUrls(crawled.raw, url, maxProductsPerSite);
+        const targetUrls = collectTargetUrls(crawled.raw, url);
 
         const extractPayload: ScrapingOperationPayload = {
           urls: targetUrls,
@@ -301,11 +301,10 @@ function formatSiteError(error: unknown): string {
   return String(error);
 }
 
-function collectTargetUrls(raw: unknown, fallbackUrl: string, maxProducts: number): string[] {
+function collectTargetUrls(raw: unknown, fallbackUrl: string): string[] {
   if (typeof raw === 'object' && raw && Array.isArray((raw as { discoveredUrls?: unknown[] }).discoveredUrls)) {
     const discovered = (raw as { discoveredUrls: unknown[] }).discoveredUrls
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      .slice(0, maxProducts);
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
     if (discovered.length > 0) {
       return discovered;
@@ -340,7 +339,7 @@ function collectTargetUrls(raw: unknown, fallbackUrl: string, maxProducts: numbe
 
   visit(raw);
 
-  const selected = prioritizeUrls(Array.from(links), fallback, maxProducts);
+  const selected = prioritizeUrls(Array.from(links), fallback);
   if (selected.length === 0) {
     selected.push(fallbackUrl);
   }
@@ -379,18 +378,13 @@ function normalizeCandidateUrl(candidate: string, baseUrl: string): string | und
   }
 }
 
-function prioritizeUrls(urls: string[], fallback: URL | undefined, maxPages: number): string[] {
+function prioritizeUrls(urls: string[], fallback: URL | undefined): string[] {
   const sameHost = urls.filter((url) => isSameHost(url, fallback));
   const preferred = sameHost.filter((url) => isCatalogLike(url));
   const regular = sameHost.filter((url) => !isCatalogLike(url));
   const ranked = [...preferred, ...regular];
-
-  if (ranked.length >= maxPages) {
-    return ranked.slice(0, maxPages);
-  }
-
   const offDomain = urls.filter((url) => !isSameHost(url, fallback));
-  return [...ranked, ...offDomain].slice(0, maxPages);
+  return [...ranked, ...offDomain];
 }
 
 function isSameHost(candidateUrl: string, fallback: URL | undefined): boolean {

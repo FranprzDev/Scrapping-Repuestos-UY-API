@@ -1,5 +1,4 @@
 import {
-  ArrayMaxSize,
   IsBoolean,
   IsArray,
   IsIn,
@@ -21,7 +20,6 @@ export class ScrapeRequestDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(5)
   @IsIn(SCRAPE_FORMATS, { each: true })
   formats?: (typeof SCRAPE_FORMATS)[number][];
 
@@ -45,13 +43,11 @@ export class CrawlRequestDto extends ScrapeRequestDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(25)
   @IsString({ each: true })
   includePaths?: string[];
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(25)
   @IsString({ each: true })
   excludePaths?: string[];
 }

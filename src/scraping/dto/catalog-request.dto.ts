@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsUrl, Max, Min } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsUrl, Max, Min } from 'class-validator';
 
 export const DEFAULT_CATALOG_SITES = [
   'https://taxitor.uy/articulos/filtro/1/-/-/',
@@ -10,7 +10,6 @@ export const DEFAULT_CATALOG_SITES = [
 export class CatalogScrapeRequestDto {
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(25)
   @IsUrl({}, { each: true })
   urls?: string[];
 
