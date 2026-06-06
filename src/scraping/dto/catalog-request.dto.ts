@@ -1,35 +1,31 @@
-import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsUrl, Max, Min } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsUrl, Min } from 'class-validator';
 
 export const DEFAULT_CATALOG_SITES = [
-  'https://taxitor.uy/',
+  'https://taxitor.uy/articulos/filtro/1/-/-/',
   'https://acesur.uy/escritorio/ofertas/INTERNET',
-  'https://www.chaparei.com/',
-  'https://www.selvir.com.uy/productos/',
+  'https://www.chaparei.com/productos/?m=171',
+  'https://www.selvir.com.uy/product-category/carroceria/',
 ] as const;
 
 export class CatalogScrapeRequestDto {
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(25)
   @IsUrl({}, { each: true })
   urls?: string[];
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(5000)
   maxPagesPerSite?: number;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(20000)
   maxProductsPerSite?: number;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(20)
   siteConcurrency?: number;
 }
 
@@ -40,12 +36,10 @@ export class SingleSiteCatalogScrapeRequestDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(5000)
   maxPages?: number;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(20000)
   maxProducts?: number;
 }

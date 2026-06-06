@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { findDomainRule } from './domain-rules';
-import { extractProductsFromHtml } from './domain-html';
-import { dedupeProducts, isSellableProduct, qualityGate } from './product-quality';
+import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
+import { countQualityWarnings, dedupeProducts, isSellableProduct, qualityGate } from './product-quality';
 
-test('descarta productos agotados en cards tipo Chaparei', () => {
+test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
 
@@ -18,7 +18,9 @@ test('descarta productos agotados en cards tipo Chaparei', () => {
   `;
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+  assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
 });
 
 test('acepta productos con carrito en detalle tipo Taxitor', () => {
@@ -72,7 +74,7 @@ test('acepta detalle de Chaparei con boton comprar y agotado oculto', () => {
   assert.equal(products[0].availability, 'in_stock');
 });
 
-test('rechaza productos con precio cero aunque tengan stock positivo', () => {
+test('preserva productos con precio cero y los marca con warning', () => {
   const rule = findDomainRule('https://www.chaparei.com/catalogo/demo/');
   assert.ok(rule);
 
@@ -88,7 +90,44 @@ test('rechaza productos con precio cero aunque tengan stock positivo', () => {
     },
   ], rule);
 
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.ok(products[0].qualityWarnings?.includes('invalid_price'));
+  assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
+});
+
+test('preserva productos sin precio cuando el sitio expone solo el nombre', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const html = `
+    <article>
+      <a href="/productos/productos.php?c=4488&m=171">KIT PARAGOLPE KWID</a>
+      <div>Agregando detalles</div>
+      <button>Comprar</button>
+    </article>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'KIT PARAGOLPE KWID');
+  assert.equal(products[0].price, undefined);
+  assert.ok(products[0].qualityWarnings?.includes('missing_price'));
+});
+
+test('descubre productos Chaparei por heuristica semantica aunque el href no sea exacto', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const html = `
+    <article>
+      <a href="/detalle/ficha-123">GUARDABARRO DELT. IZQ.</a>
+      <div>$U 6.149,00</div>
+      <button>Comprar</button>
+    </article>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.chaparei.com/productos/?m=171', rule);
+  assert.equal(links.productLinks.length, 1);
 });
 
 test('acepta productos JSON-LD con disponibilidad positiva', () => {
@@ -161,4 +200,30 @@ test('deduplica por sourceUrl y sku sin perder datos utiles', () => {
 
   assert.equal(products.length, 1);
   assert.equal(products[0].description, 'Detalle');
+});
+
+test('resume warnings de calidad por tipo', () => {
+  const counts = countQualityWarnings([
+    {
+      productName: 'A',
+      price: '100',
+      sourceUrl: 'https://example.com/a',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+      qualityWarnings: ['missing_price', 'not_sellable'],
+    },
+    {
+      productName: 'B',
+      price: '200',
+      sourceUrl: 'https://example.com/b',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+      qualityWarnings: ['not_sellable'],
+    },
+  ]);
+
+  assert.deepEqual(counts, {
+    missing_price: 1,
+    not_sellable: 2,
+  });
 });

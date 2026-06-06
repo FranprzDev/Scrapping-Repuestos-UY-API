@@ -21,7 +21,19 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
       return;
     }
 
+    const card = findCardContainer(anchor);
+    const cardText = cleanText(card.text) ?? '';
+    if (isSemanticProductLink(href, cardText, rule)) {
+      productLinks.add(href);
+      return;
+    }
+
     if (rule.categoryUrlPatterns.some((pattern) => pattern.test(href))) {
+      categoryLinks.add(href);
+      return;
+    }
+
+    if (isSemanticCategoryLink(href, cardText)) {
       categoryLinks.add(href);
     }
   });
@@ -35,7 +47,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
 export function extractProductsFromHtml(html: string, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const root = parse(html);
   const candidates: ProductRecord[] = [];
-  const isDetailPage = rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl));
+  const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   candidates.push(...extractJsonLdProducts(root, pageUrl, provider));
 
@@ -68,12 +80,12 @@ function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: Pro
         }
 
         const offer = Array.isArray(node.offers) ? node.offers[0] : node.offers;
-        const rawPrice = cleanText(asString(offer?.price) ?? asString(node.price));
         const productName = cleanText(asString(node.name));
-        if (!productName || !rawPrice) {
+        if (!productName) {
           continue;
         }
 
+        const rawPrice = cleanText(asString(offer?.price) ?? asString(node.price));
         const availabilityText = cleanText(asString(offer?.availability));
         products.push({
           productName,
@@ -107,16 +119,17 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
 
   root.querySelectorAll('a[href]').forEach((anchor) => {
     const href = normalizeUrl(anchor.getAttribute('href'), pageUrl);
-    if (!href || !rule.productUrlPatterns.some((pattern) => pattern.test(href)) || seen.has(href)) {
+    if (!href || seen.has(href)) {
+      return;
+    }
+
+    const card = findCardContainer(anchor);
+    const cardText = cleanText(card.text) ?? '';
+    if (!isSemanticProductLink(href, cardText, rule)) {
       return;
     }
 
     seen.add(href);
-    const card = findCardContainer(anchor);
-    const cardText = cleanText(card.text) ?? '';
-    if (resolveAvailability(cardText, rule) === 'out_of_stock') {
-      return;
-    }
 
     const productName = firstNonEmpty([
       cleanText(anchor.text),
@@ -124,7 +137,7 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
     ]);
     const rawPrice = extractPriceFromNode(card);
-    if (!productName || !rawPrice) {
+    if (!productName) {
       return;
     }
 
@@ -136,7 +149,12 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       description: cleanText(firstElementText(card, ['p'])),
       imageUrl: normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
       sourceUrl: href,
-      availability: resolveAvailability(cardText, rule) === 'in_stock' ? 'in_stock' : undefined,
+      availability:
+        resolveAvailability(cardText, rule) === 'in_stock'
+          ? 'in_stock'
+          : resolveAvailability(cardText, rule) === 'out_of_stock'
+            ? 'out_of_stock'
+            : undefined,
       extractedAt: new Date().toISOString(),
       provider,
     });
@@ -146,23 +164,22 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
 }
 
 function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
-  if (!rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl))) {
+  if (!isLikelyDetailPage(root, pageUrl, rule)) {
     return undefined;
   }
 
   const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
   const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
-  if (!title || !rawPrice) {
+  if (!title) {
     return undefined;
   }
 
   const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
-  const availabilityText = collectAvailabilityText(root);
-  const availability = resolveDetailAvailability(root, availabilityText, rule);
-
-  if (availability === 'out_of_stock') {
+  if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
     return undefined;
   }
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
 
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? ['body']));
 
@@ -176,7 +193,16 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
       normalizeUrl(firstNonEmpty(attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')), pageUrl)
       ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
     sourceUrl: pageUrl,
-    availability: availability === 'in_stock' ? 'in_stock' : resolveAvailability(pageText, rule) === 'in_stock' ? 'in_stock' : undefined,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability(pageText, rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability(pageText, rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
     extractedAt: new Date().toISOString(),
     provider,
   };
@@ -353,4 +379,60 @@ function firstElementText(root: HTMLElement, selectors: string[]): string | unde
 function firstAttributeValue(root: HTMLElement, selectors: string[], attribute: string): string | undefined {
   const element = selectors.flatMap((selector) => queryAll(root, selector))[0];
   return element?.getAttribute(attribute);
+}
+
+function isSemanticProductLink(href: string, cardText: string, rule: DomainRule): boolean {
+  if (rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+    return true;
+  }
+
+  const loweredHref = href.toLowerCase();
+  const loweredText = normalizeComparableText(cardText);
+  const hasNameSignal = /[a-z0-9]{3,}/i.test(loweredText);
+  const hasProductSignal =
+    /comprar|agregar al carrito|consultar|iva inc|en stock|agotado|sku|c[oó]d|precio|producto|repuesto|articulo|ficha/i.test(
+      loweredText,
+    );
+  const excluded = /contacto|faq|mi-cuenta|carrito|login|checkout|terminos|privacidad/i.test(loweredHref);
+
+  return !excluded && hasNameSignal && (hasProductSignal || /\/(?:producto|productos|repuesto|repuestos|catalogo|product|shop|articulo|articulos|detalle)\b/i.test(loweredHref));
+}
+
+function isSemanticCategoryLink(href: string, cardText: string): boolean {
+  const loweredHref = href.toLowerCase();
+  const loweredText = normalizeComparableText(cardText);
+  const hasCategorySignal = /productos|catalogo|categoria|shop|ofertas|outlet|familia|marca|linea/i.test(
+    `${loweredHref} ${loweredText}`,
+  );
+  const looksLikeProduct = Boolean(normalizePriceValue(cardText)) || /comprar|agregar al carrito|consultar|sku|c[oó]d/i.test(loweredText);
+
+  return hasCategorySignal && !looksLikeProduct;
+}
+
+function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule): boolean {
+  if (rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl))) {
+    return true;
+  }
+
+  const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
+  const price = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
+  if (!title) {
+    return false;
+  }
+
+  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  const availabilityText = collectAvailabilityText(root);
+  const signals = `${pageText} ${availabilityText}`;
+  return Boolean(price) || /comprar|agregar al carrito|consultar|en stock|agotado|sin stock|disponible|iva inc|producto|repuesto|articulo|ficha/i.test(
+    normalizeComparableText(signals),
+  );
+}
+
+function normalizeComparableText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

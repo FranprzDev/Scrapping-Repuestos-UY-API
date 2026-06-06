@@ -7,7 +7,7 @@ import { ProductRecord } from '../interfaces/scraping.types';
 export class ArchiveStoreService {
   private readonly outputRoot = path.join(process.cwd(), 'output');
 
-  async saveSiteCatalog(site: string, products: ProductRecord[], runAt: string) {
+  async saveSiteCatalog(site: string, products: ProductRecord[], runAt: string, trace?: Record<string, unknown>) {
     const hostname = safeHostname(site) ?? 'unknown-site';
     const catalogDir = path.join(this.outputRoot, 'catalog');
     const imageDir = path.join(this.outputRoot, 'images', hostname);
@@ -34,6 +34,7 @@ export class ArchiveStoreService {
       site,
       runAt,
       total: productsWithImages.length,
+      trace,
       products: productsWithImages,
     };
 

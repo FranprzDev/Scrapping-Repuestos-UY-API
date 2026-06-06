@@ -1,4 +1,4 @@
-export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
+﻿export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
 
 export interface DomainRule {
   id: string;
@@ -52,11 +52,20 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['chaparei.com', 'www.chaparei.com'],
     seedUrls: ['https://www.chaparei.com/productos/?m=171'],
     preferredMethod: 'http',
-    productUrlPatterns: [/\/catalogo\/.+-[a-z]\d{7}\/?$/i],
-    categoryUrlPatterns: [/\/productos\/\?m=/i, /\/catalogo\//i, /\/ofertas/i, /\/outlet/i],
+    productUrlPatterns: [
+      /\/productos\/(?:productos\.php)?\?(?=.*\bc=\d+)(?=.*\bm=\d+)/i,
+      /\/catalogo\//i,
+    ],
+    categoryUrlPatterns: [
+      /\/productos\/(?:productos\.php)?\?(?=.*\bm=\d+)(?!.*\bc=\d+)/i,
+      /\/productos\/?$/i,
+      /\/catalogo\//i,
+      /\/ofertas/i,
+      /\/outlet/i,
+    ],
     excludeUrlPatterns: [/\/mi-cuenta/i, /\/faq/i, /\/contacto/i, /mercadolibre/i],
-    positiveAvailabilityTexts: ['comprar', 'agregar', 'iva inc.'],
-    negativeAvailabilityTexts: ['agotado', 'sin stock', 'consultar'],
+    positiveAvailabilityTexts: ['comprar', 'agregar', 'iva inc.', 'en stock', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'consultar', 'no disponible'],
     detailSelectors: {
       title: ['h1', 'h2'],
       price: ['#precio_ent_actual', '[itemprop="price"]', '.precio_cont_mas .entero', '.prod_preciomas .entero', '[class*="price"]', '[class*="precio"]'],
@@ -109,3 +118,4 @@ export function getSeedUrls(url: string, rule?: DomainRule): string[] {
   rule?.seedUrls?.forEach((seed) => seeds.add(seed));
   return Array.from(seeds);
 }
+
