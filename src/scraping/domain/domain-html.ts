@@ -180,6 +180,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   }
   const availabilityText = collectAvailabilityText(root);
   const availability = resolveDetailAvailability(root, availabilityText, rule);
+  const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
 
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? ['body']));
 
@@ -187,6 +188,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     productName: title,
     price: normalizePriceValue(rawPrice),
     currency: inferCurrency(rawPrice),
+    brand: extractBrandFromText(brandText),
     sku: cleanText(skuText?.match(/(?:sku|c[oó]d\.?)[:#\s-]*([\w.-]+)/i)?.[1]),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
@@ -313,6 +315,23 @@ function extractSku(text: string): string | undefined {
   return cleanText(text.match(/(?:sku|c[oó]d\.?)[:#\s-]*([\w.-]+)/i)?.[1]);
 }
 
+function extractBrandFromText(value: string | undefined): string | undefined {
+  const text = cleanText(value);
+  if (!text) {
+    return undefined;
+  }
+
+  const candidate = text
+    .split(/\s*[-|/]\s*/)
+    .map((part) => cleanText(part))
+    .find((part) => Boolean(part));
+
+  if (!candidate || candidate.length > 40) {
+    return undefined;
+  }
+
+  return candidate;
+}
 function collectAvailabilityText(root: HTMLElement): string {
   const sections = [
     '.opcionescarrito',

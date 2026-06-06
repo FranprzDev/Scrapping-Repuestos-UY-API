@@ -19,6 +19,13 @@ type InventoryRow = {
   last_seen_at: string;
 };
 
+export interface InventoryQueryFilters {
+  site?: string;
+  search?: string;
+  priceState?: string;
+  availability?: string;
+}
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -80,25 +87,18 @@ export class InventoryStoreService implements OnModuleInit {
   }
 
   async getAll(): Promise<StoredProduct[]> {
-    const rows = await this.postgresService.query<InventoryRow>(
-      `
-      SELECT id, site, product, created_at, updated_at, last_seen_at
-      FROM scraping_inventory
-      ORDER BY updated_at DESC
-      `,
-    );
-    return rows.rows.map(mapInventoryRow);
+    return this.getFiltered();
   }
 
   async getBySite(site: string): Promise<StoredProduct[]> {
+    return this.getFiltered({ site });
+  }
+
+  async getFiltered(filters: InventoryQueryFilters = {}): Promise<StoredProduct[]> {
+    const { sql, params } = buildInventoryQuery(filters);
     const rows = await this.postgresService.query<InventoryRow>(
-      `
-      SELECT id, site, product, created_at, updated_at, last_seen_at
-      FROM scraping_inventory
-      WHERE site = $1
-      ORDER BY updated_at DESC
-      `,
-      [site],
+      sql,
+      params,
     );
     return rows.rows.map(mapInventoryRow);
   }
@@ -113,6 +113,12 @@ export class InventoryStoreService implements OnModuleInit {
       'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE site = $1',
       [site],
     );
+    return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async countFiltered(filters: InventoryQueryFilters = {}): Promise<number> {
+    const { sql, params } = buildInventoryCountQuery(filters);
+    const result = await this.postgresService.query<{ total: string }>(sql, params);
     return Number(result.rows[0]?.total ?? 0);
   }
 }
@@ -149,6 +155,89 @@ function buildProductKey(site: string, product: ProductRecord): string | undefin
 }
 
 function normalizeKeyPart(value?: string): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function buildInventoryQuery(filters: InventoryQueryFilters) {
+  const { whereClause, params } = buildInventoryConditions(filters);
+
+  return {
+    sql: `
+      SELECT id, site, product, created_at, updated_at, last_seen_at
+      FROM scraping_inventory
+      ${whereClause}
+      ORDER BY updated_at DESC
+    `,
+    params,
+  };
+}
+
+function buildInventoryCountQuery(filters: InventoryQueryFilters) {
+  const { whereClause, params } = buildInventoryConditions(filters);
+
+  return {
+    sql: `
+      SELECT COUNT(*)::text AS total
+      FROM scraping_inventory
+      ${whereClause}
+    `,
+    params,
+  };
+}
+
+function buildInventoryConditions(filters: InventoryQueryFilters) {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.site?.trim()) {
+    params.push(filters.site.trim());
+    conditions.push(`site = $${params.length}`);
+  }
+
+  const search = filters.search?.trim();
+  if (search) {
+    const pattern = `%${search.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+    params.push(pattern);
+    const index = params.length;
+    conditions.push(`
+      (
+        COALESCE(product->>'productName', '') ILIKE $${index} ESCAPE '\\'
+        OR COALESCE(product->>'brand', '') ILIKE $${index} ESCAPE '\\'
+        OR COALESCE(product->>'category', '') ILIKE $${index} ESCAPE '\\'
+        OR COALESCE(product->>'description', '') ILIKE $${index} ESCAPE '\\'
+      )
+    `);
+  }
+
+  const priceState = normalizeState(filters.priceState);
+  if (priceState === 'with-price') {
+    conditions.push(`COALESCE(NULLIF(BTRIM(product->>'price'), ''), '') <> ''`);
+  } else if (priceState === 'without-price') {
+    conditions.push(`COALESCE(NULLIF(BTRIM(product->>'price'), ''), '') = ''`);
+  }
+
+  const availability = normalizeState(filters.availability);
+  if (availability === 'available') {
+    conditions.push(`
+      LOWER(COALESCE(product->>'availability', '')) IN ('in_stock', 'in stock', 'available', 'available now')
+    `);
+  } else if (availability === 'unavailable') {
+    conditions.push(`
+      LOWER(COALESCE(product->>'availability', '')) IN ('out_of_stock', 'out of stock', 'unavailable', 'agotado', 'sin stock')
+    `);
+  } else if (availability === 'unknown') {
+    conditions.push(`
+      COALESCE(NULLIF(BTRIM(LOWER(product->>'availability')), ''), 'unknown') = 'unknown'
+    `);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  return { whereClause, params };
+}
+
+function normalizeState(value?: string): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
 }

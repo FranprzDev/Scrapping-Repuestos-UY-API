@@ -88,8 +88,18 @@ export class ScrapingController {
   }
 
   @Get('scraping/inventory')
-  getInventory(@Query('site') site?: string) {
-    return this.catalogScrapingService.getCurrentInventory(site);
+  getInventory(
+    @Query('site') site?: string,
+    @Query('search') search?: string,
+    @Query('priceState') priceState?: string,
+    @Query('availability') availability?: string,
+  ) {
+    return this.catalogScrapingService.getCurrentInventory({
+      site,
+      search,
+      priceState,
+      availability,
+    });
   }
 
   @Get('scraping/runs')
@@ -149,10 +159,7 @@ function renderInventoryPage(): string {
       }
 
       * { box-sizing: border-box; }
-      html, body {
-        margin: 0;
-        min-height: 100%;
-      }
+      html, body { margin: 0; min-height: 100%; }
       body {
         font-family: 'Manrope', system-ui, sans-serif;
         color: var(--text);
@@ -163,39 +170,25 @@ function renderInventoryPage(): string {
           linear-gradient(160deg, #050609 0%, #080b12 56%, #0d111a 100%);
         overflow-x: hidden;
       }
-      body::before {
-        content: '';
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        background-image:
-          linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-        background-size: 56px 56px;
-        mask-image: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent 92%);
-      }
       .shell {
-        position: relative;
         min-height: 100vh;
         padding: 24px;
+        position: relative;
       }
       .panel {
-        max-width: 1600px;
-        margin: 0 auto;
+        width: 100%;
+        max-width: none;
         border: 1px solid var(--line);
         border-radius: 26px;
         overflow: hidden;
-        background: linear-gradient(180deg, rgba(16, 20, 28, 0.96), rgba(8, 10, 15, 0.96));
         box-shadow: var(--shadow);
+        background: linear-gradient(180deg, rgba(16, 20, 28, 0.96), rgba(8, 10, 15, 0.96));
       }
       .topbar {
         padding: 24px 26px 20px;
         border-bottom: 1px solid var(--line);
         display: grid;
         gap: 16px;
-        background:
-          linear-gradient(135deg, rgba(242, 184, 75, 0.08), transparent 28%),
-          linear-gradient(225deg, rgba(127, 215, 196, 0.08), transparent 24%);
       }
       .eyebrow {
         display: inline-flex;
@@ -261,43 +254,34 @@ function renderInventoryPage(): string {
         letter-spacing: -0.03em;
         line-height: 1.1;
       }
-      .content {
-        display: grid;
-        grid-template-columns: 320px minmax(0, 1fr);
-        min-height: calc(100vh - 150px);
-      }
-      .sidebar {
-        border-right: 1px solid var(--line);
+      .main {
+        min-width: 0;
         padding: 20px;
-        background: rgba(255,255,255,0.015);
-        display: grid;
-        gap: 16px;
-        align-content: start;
       }
       .card {
         border: 1px solid var(--line);
         background: var(--panel);
         border-radius: 20px;
         padding: 16px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
       }
-      .card h2 {
-        margin: 0 0 12px;
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.14em;
-        color: var(--accent-2);
+      .table-toolbar {
+        display: grid;
+        gap: 14px;
+        margin-bottom: 16px;
       }
+      .search-field { display: grid; gap: 8px; }
+      .filters-row {
+        display: grid;
+        grid-template-columns: 1.2fr repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .field { display: grid; gap: 8px; }
       .field-label {
         display: block;
-        margin: 0 0 8px;
         color: var(--muted);
         text-transform: uppercase;
         font-size: 0.75rem;
         letter-spacing: 0.12em;
-      }
-      input, select, button {
-        font: inherit;
       }
       input, select {
         width: 100%;
@@ -307,64 +291,17 @@ function renderInventoryPage(): string {
         border-radius: 14px;
         padding: 12px 14px;
         outline: none;
+        font: inherit;
       }
-      input::placeholder {
-        color: rgba(246,241,234,0.42);
-      }
+      input::placeholder { color: rgba(246,241,234,0.42); }
       input:focus, select:focus {
         border-color: rgba(242,184,75,0.6);
         box-shadow: 0 0 0 3px rgba(242,184,75,0.12);
       }
-      .buttons {
-        display: grid;
-        gap: 10px;
-      }
-      button {
-        border: 1px solid transparent;
-        border-radius: 14px;
-        padding: 12px 14px;
-        cursor: pointer;
-        font-weight: 800;
-        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
-      }
-      button:hover { transform: translateY(-1px); }
-      .primary {
-        background: linear-gradient(135deg, var(--accent), #f8d58a);
-        color: #1a1407;
-        box-shadow: 0 16px 30px rgba(242,184,75,0.18);
-      }
-      .secondary {
-        background: rgba(255,255,255,0.03);
-        border-color: var(--line);
-        color: var(--text);
-      }
-      .mini-note {
+      .table-note {
         color: var(--muted);
         font-size: 0.9rem;
-        line-height: 1.65;
-      }
-      .site-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .site-pill {
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid var(--line);
-        background: rgba(255,255,255,0.03);
-        color: var(--text);
-        font-size: 0.92rem;
-      }
-      .site-pill.ok {
-        border-color: rgba(127, 215, 196, 0.25);
-      }
-      .main {
-        min-width: 0;
-        padding: 20px;
-        display: grid;
-        gap: 16px;
-        align-content: start;
+        line-height: 1.6;
       }
       .table-card {
         position: relative;
@@ -372,7 +309,7 @@ function renderInventoryPage(): string {
       }
       .table-wrap {
         overflow: auto;
-        max-height: calc(100vh - 260px);
+        max-height: calc(100vh - 240px);
       }
       table {
         width: 100%;
@@ -394,24 +331,15 @@ function renderInventoryPage(): string {
         border-bottom: 1px solid rgba(255,255,255,0.06);
         vertical-align: top;
       }
-      tbody tr:hover {
-        background: rgba(255,255,255,0.03);
-      }
-      .product-cell {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        min-width: 0;
-      }
+      tbody tr:hover { background: rgba(255,255,255,0.03); }
+      .product-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
       .product-title {
         font-weight: 700;
         color: var(--text);
         text-decoration: none;
         overflow-wrap: anywhere;
       }
-      .product-title:hover {
-        text-decoration: underline;
-      }
+      .product-title:hover { text-decoration: underline; }
       .muted { color: var(--muted); }
       .right { text-align: right; white-space: nowrap; }
       .pill {
@@ -432,13 +360,8 @@ function renderInventoryPage(): string {
         border-radius: 999px;
         background: var(--success);
       }
-      .status {
-        color: var(--muted);
-        font-size: 0.92rem;
-      }
-      .status.error {
-        color: var(--danger);
-      }
+      .status { color: var(--muted); font-size: 0.92rem; }
+      .status.error { color: var(--danger); }
       .loader {
         position: absolute;
         inset: 0;
@@ -449,9 +372,7 @@ function renderInventoryPage(): string {
         backdrop-filter: blur(2px);
         z-index: 2;
       }
-      .loader.is-visible {
-        display: flex;
-      }
+      .loader.is-visible { display: flex; }
       .loader-card {
         display: flex;
         align-items: center;
@@ -470,14 +391,8 @@ function renderInventoryPage(): string {
         border-top-color: var(--accent);
         animation: spin 0.8s linear infinite;
       }
-      .loader-text {
-        font-weight: 700;
-      }
-      .empty {
-        padding: 34px;
-        text-align: center;
-        color: var(--muted);
-      }
+      .loader-text { font-weight: 700; }
+      .empty { padding: 34px; text-align: center; color: var(--muted); }
       .skeleton {
         position: relative;
         overflow: hidden;
@@ -497,42 +412,20 @@ function renderInventoryPage(): string {
       .skeleton.sub { height: 11px; width: 48%; margin-top: 8px; }
       .skeleton.small { height: 12px; width: 72px; }
       .skeleton.price { height: 14px; width: 78px; margin-left: auto; }
-      @keyframes spin {
-        to { transform: rotate(360deg); }
-      }
-      @keyframes shimmer {
-        100% { transform: translateX(100%); }
-      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes shimmer { 100% { transform: translateX(100%); } }
       @media (max-width: 1200px) {
-        .content {
-          grid-template-columns: 1fr;
-        }
-        .sidebar {
-          border-right: none;
-          border-bottom: 1px solid var(--line);
-        }
+        .filters-row { grid-template-columns: 1fr 1fr; }
       }
       @media (max-width: 900px) {
-        .hero-stats {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
+        .hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 640px) {
-        .shell {
-          padding: 12px;
-        }
-        .hero-stats {
-          grid-template-columns: 1fr;
-        }
-        .topbar,
-        .sidebar,
-        .main {
-          padding-left: 14px;
-          padding-right: 14px;
-        }
-        .table-wrap {
-          max-height: calc(100vh - 360px);
-        }
+        .shell { padding: 12px; }
+        .hero-stats { grid-template-columns: 1fr; }
+        .main { padding-left: 14px; padding-right: 14px; }
+        .table-wrap { max-height: calc(100vh - 340px); }
+        .filters-row { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -540,19 +433,17 @@ function renderInventoryPage(): string {
     <main class="shell">
       <section class="panel">
         <header class="topbar">
-          <div class="eyebrow">Panel operativo</div>
+          <div class="eyebrow">Inventario</div>
           <div class="title-row">
             <div>
               <h1>Inventario en vivo</h1>
-              <p class="lede">
-                Vista funcional del inventario cargado en PostgreSQL. Buscá, filtrá por sitio y lanzá el refresco completo desde acá.
-              </p>
+              <p class="lede">Inventario cargado en PostgreSQL con filtros por producto, estado y casa.</p>
             </div>
             <div class="pill" id="connectionPill">Conectado</div>
           </div>
           <div class="hero-stats">
             <div class="hero-stat">
-              <span class="label">Productos visibles</span>
+              <span class="label">Resultados</span>
               <div class="value" id="visibleCount">0</div>
             </div>
             <div class="hero-stat">
@@ -560,7 +451,7 @@ function renderInventoryPage(): string {
               <div class="value" id="totalCount">0</div>
             </div>
             <div class="hero-stat">
-              <span class="label">Última actualización</span>
+              <span class="label">Ultima actualizacion</span>
               <div class="value" id="lastUpdated">Sin datos</div>
             </div>
             <div class="hero-stat">
@@ -570,81 +461,82 @@ function renderInventoryPage(): string {
           </div>
         </header>
 
-        <section class="content">
-          <aside class="sidebar">
-            <div class="card">
-              <h2>Filtros</h2>
-              <label class="field-label" for="search">Buscar</label>
-              <input id="search" placeholder="Nombre, SKU, marca o sitio" />
-              <div style="height: 12px"></div>
-              <label class="field-label" for="siteFilter">Sitio</label>
-              <select id="siteFilter">
-                <option value="">Todos los sitios</option>
-              </select>
-            </div>
-
-            <div class="card">
-              <h2>Acciones</h2>
-              <div class="buttons">
-                <button id="refresh" class="primary">Actualizar inventario</button>
-                <button id="reload" class="secondary">Recargar vista</button>
+        <section class="main">
+          <div class="card table-card">
+            <div class="table-toolbar">
+              <div class="search-field">
+                <label class="field-label" for="search">Buscar productos</label>
+                <input id="search" placeholder="Nombre, marca, categoria o descripcion" />
               </div>
-              <p class="mini-note">El botón de actualización dispara el refresco completo y luego vuelve a leer el inventario.</p>
-            </div>
-
-            <div class="card">
-              <h2>Sitios activos</h2>
-              <div class="site-list">
-                <div class="site-pill ok">Taxitor</div>
-                <div class="site-pill ok">Acesur</div>
-                <div class="site-pill ok">Chaparei</div>
-                <div class="site-pill ok">Selvir</div>
-              </div>
-            </div>
-          </aside>
-
-          <section class="main">
-            <div class="card table-card">
-              <div id="loader" class="loader" aria-live="polite" aria-busy="true">
-                <div class="loader-card">
-                  <div class="loader-spinner"></div>
-                  <div class="loader-text">Cargando inventario</div>
+              <div class="filters-row">
+                <div class="field">
+                  <label class="field-label" for="houseFilter">Casa</label>
+                  <select id="houseFilter">
+                    <option value="">Todas las casas</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="priceStateFilter">Estado precio</label>
+                  <select id="priceStateFilter">
+                    <option value="">Todos</option>
+                    <option value="with-price">Con precio</option>
+                    <option value="without-price">Sin precio</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="availabilityFilter">Estado producto</label>
+                  <select id="availabilityFilter">
+                    <option value="">Todos</option>
+                    <option value="available">Disponible</option>
+                    <option value="unavailable">Sin stock</option>
+                    <option value="unknown">Desconocido</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label">Nota</label>
+                  <div class="table-note">La busqueda usa ILIKE en el backend para devolver productos reales.</div>
                 </div>
               </div>
-
-              <div class="table-wrap">
-                <table>
+            </div>
+            <div id="loader" class="loader" aria-live="polite" aria-busy="true">
+              <div class="loader-card">
+                <div class="loader-spinner"></div>
+                <div class="loader-text">Cargando inventario</div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
                   <thead>
                     <tr>
                       <th>Producto</th>
                       <th class="right">Precio</th>
-                      <th>SKU</th>
-                      <th>Sitio</th>
-                      <th>Stock</th>
+                      <th>Casa</th>
                       <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody id="rows">
-                    <tr><td colspan="6" class="empty">Cargando inventario...</td></tr>
+                    <tr><td colspan="4" class="empty">Cargando inventario...</td></tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-          </section>
+          </div>
         </section>
       </section>
     </main>
 
     <script>
       const state = {
-        products: [],
-        filtered: [],
-        site: '',
+        search: '',
+        house: '',
+        priceState: '',
+        availability: '',
       };
 
       const rows = document.getElementById('rows');
       const search = document.getElementById('search');
-      const siteFilter = document.getElementById('siteFilter');
+      const houseFilter = document.getElementById('houseFilter');
+      const priceStateFilter = document.getElementById('priceStateFilter');
+      const availabilityFilter = document.getElementById('availabilityFilter');
       const loader = document.getElementById('loader');
       const totalCount = document.getElementById('totalCount');
       const visibleCount = document.getElementById('visibleCount');
@@ -652,13 +544,29 @@ function renderInventoryPage(): string {
       const statusBadge = document.getElementById('statusBadge');
       const connectionPill = document.getElementById('connectionPill');
 
-      document.getElementById('refresh').addEventListener('click', refreshInventory);
-      document.getElementById('reload').addEventListener('click', loadInventory);
-      search.addEventListener('input', applyFilters);
-      siteFilter.addEventListener('change', () => {
-        state.site = siteFilter.value;
-        applyFilters();
+      let searchTimer;
+
+      search.addEventListener('input', () => {
+        state.search = search.value;
+        queueLoadInventory();
       });
+      houseFilter.addEventListener('change', () => {
+        state.house = houseFilter.value;
+        loadInventory();
+      });
+      priceStateFilter.addEventListener('change', () => {
+        state.priceState = priceStateFilter.value;
+        loadInventory();
+      });
+      availabilityFilter.addEventListener('change', () => {
+        state.availability = availabilityFilter.value;
+        loadInventory();
+      });
+
+      function queueLoadInventory() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadInventory, 250);
+      }
 
       function setStatus(text, isError = false) {
         statusBadge.textContent = text;
@@ -675,75 +583,42 @@ function renderInventoryPage(): string {
         loader.classList.remove('is-visible');
       }
 
-      function normalize(value) {
-        return String(value ?? '').toLowerCase();
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
       }
 
-      function applyFilters() {
-        const term = normalize(search.value).trim();
-        state.filtered = state.products.filter((product) => {
-          if (state.site && normalize(product.site) !== normalize(state.site)) {
-            return false;
-          }
-          if (!term) return true;
-          const haystack = [
-            product.productName,
-            product.sku,
-            product.brand,
-            product.category,
-            product.site,
-            product.availability,
-          ].map(normalize).join(' ');
-          return haystack.includes(term);
-        });
-        renderRows();
-        visibleCount.textContent = String(state.filtered.length);
+      function escapeAttr(value) {
+        return escapeHtml(value).replaceAll(String.fromCharCode(96), '&#96;');
       }
 
-      function renderSiteOptions() {
-        const sites = Array.from(new Set(state.products.map((product) => product.site).filter(Boolean))).sort();
-        const current = siteFilter.value;
-        siteFilter.innerHTML = '<option value="">Todos los sitios</option>' + sites.map((site) => '<option value="' + escapeHtml(site) + '">' + escapeHtml(site) + '</option>').join('');
-        siteFilter.value = current;
-      }
-
-      function renderRows() {
-        if (!state.filtered.length) {
-          rows.innerHTML = '<tr><td colspan="6" class="empty">No hay productos para mostrar</td></tr>';
-          return;
+      function normalizeHouseLabel(site) {
+        const value = String(site ?? '').toLowerCase();
+        if (value.includes('chaparei')) return 'Chaparei';
+        if (value.includes('taxitor')) return 'Taxitor';
+        if (value.includes('acesur')) return 'Acesur';
+        if (value.includes('selvir')) return 'Selvir';
+        try {
+          return new URL(site).hostname.replace(/^www\./, '');
+        } catch {
+          return String(site ?? '-');
         }
-
-        rows.innerHTML = state.filtered.map((product) => {
-          const productName = escapeHtml(product.productName || 'Sin nombre');
-          const url = product.sourceUrl
-            ? '<a class="product-title" href="' + escapeAttr(product.sourceUrl) + '" target="_blank" rel="noreferrer">' + productName + '</a>'
-            : '<span class="product-title">' + productName + '</span>';
-          const priceCurrency = String(product.currency || '').trim().toUpperCase();
-          const priceSuffix = priceCurrency && priceCurrency !== 'UYU' && priceCurrency !== 'UY$' && priceCurrency !== 'UY'
-            ? ' <span class="muted">(' + escapeHtml(priceCurrency) + ')</span>'
-            : '';
-          return '<tr>' +
-            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + '</div></td>' +
-            '<td class="right">' + escapeHtml(product.price || '-') + priceSuffix + '</td>' +
-            '<td>' + escapeHtml(product.sku || '-') + '</td>' +
-            '<td>' + escapeHtml(product.site || '-') + '</td>' +
-            '<td>' + escapeHtml(product.stock || '-') + '</td>' +
-            '<td>' + escapeHtml(formatAvailability(product.availability)) + '</td>' +
-          '</tr>';
-        }).join('');
       }
 
-      function renderSkeletonRows() {
-        return Array.from({ length: 7 }).map(() => (
-          '<tr>' +
-            '<td><div class="skeleton name"></div><div class="skeleton sub"></div></td>' +
-            '<td class="right"><div class="skeleton price"></div></td>' +
-            '<td><div class="skeleton small"></div></td>' +
-            '<td><div class="skeleton small"></div></td>' +
-            '<td><div class="skeleton small"></div></td>' +
-            '<td><div class="skeleton small"></div></td>' +
-          '</tr>'
-        )).join('');
+      function renderHouseOptions() {
+        const preferred = [
+          { label: 'Taxitor', value: 'https://taxitor.uy/articulos/filtro/1/-/-/' },
+          { label: 'Acesur', value: 'https://acesur.uy/escritorio/ofertas/INTERNET' },
+          { label: 'Chaparei', value: 'https://www.chaparei.com/productos/?m=171' },
+          { label: 'Selvir', value: 'https://www.selvir.com.uy/product-category/carroceria/' },
+        ];
+        const current = houseFilter.value;
+        houseFilter.innerHTML = '<option value="">Todas las casas</option>' + preferred.map((item) => '<option value="' + escapeHtml(item.value) + '">' + escapeHtml(item.label) + '</option>').join('');
+        houseFilter.value = current;
       }
 
       function formatAvailability(value) {
@@ -760,54 +635,69 @@ function renderInventoryPage(): string {
         return text ? text.replaceAll('_', ' ') : '-';
       }
 
-      function escapeHtml(value) {
-        return String(value ?? '')
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#39;');
+      function renderRows(products) {
+        if (!products.length) {
+          rows.innerHTML = '<tr><td colspan="4" class="empty">No hay productos para mostrar</td></tr>';
+          return;
+        }
+
+        rows.innerHTML = products.map((product) => {
+          const productName = escapeHtml(product.productName || 'Sin nombre');
+          const url = product.sourceUrl
+            ? '<a class="product-title" href="' + escapeAttr(product.sourceUrl) + '" target="_blank" rel="noreferrer">' + productName + '</a>'
+            : '<span class="product-title">' + productName + '</span>';
+          const priceCurrency = String(product.currency || '').trim().toUpperCase();
+          const priceSuffix = priceCurrency && priceCurrency !== 'UYU' && priceCurrency !== 'UY$' && priceCurrency !== 'UY'
+            ? ' <span class="muted">(' + escapeHtml(priceCurrency) + ')</span>'
+            : '';
+          return '<tr>' +
+            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + '</div></td>' +
+            '<td class="right">' + escapeHtml(product.price || '-') + priceSuffix + '</td>' +
+            '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
+            '<td>' + escapeHtml(formatAvailability(product.availability)) + '</td>' +
+          '</tr>';
+        }).join('');
       }
 
-      function escapeAttr(value) {
-        return escapeHtml(value).replaceAll(String.fromCharCode(96), '&#96;');
+      function renderSkeletonRows() {
+        return Array.from({ length: 7 }).map(() => (
+          '<tr>' +
+            '<td><div class="skeleton name"></div><div class="skeleton sub"></div></td>' +
+            '<td class="right"><div class="skeleton price"></div></td>' +
+            '<td><div class="skeleton small"></div></td>' +
+            '<td><div class="skeleton small"></div></td>' +
+          '</tr>'
+        )).join('');
       }
 
       async function loadInventory() {
         setStatus('Cargando');
         showLoader();
         try {
-          const url = state.site ? '/scraping/inventory?site=' + encodeURIComponent(state.site) : '/scraping/inventory';
-          const response = await fetch(url);
+          const params = new URLSearchParams();
+          if (state.house) params.set('site', state.house);
+          if (state.search.trim()) params.set('search', state.search.trim());
+          if (state.priceState) params.set('priceState', state.priceState);
+          if (state.availability) params.set('availability', state.availability);
+          const response = await fetch('/scraping/inventory' + (params.toString() ? '?' + params.toString() : ''));
           if (!response.ok) throw new Error('No se pudo leer el inventario');
           const data = await response.json();
-          state.products = Array.isArray(data.products) ? data.products : [];
-          renderSiteOptions();
-          applyFilters();
-          totalCount.textContent = String(data.total ?? state.products.length);
+          const products = Array.isArray(data.products) ? data.products : [];
+          renderHouseOptions();
+          renderRows(products);
+          totalCount.textContent = String(data.total ?? products.length);
+          visibleCount.textContent = String(products.length);
           lastUpdated.textContent = new Date().toLocaleString('es-AR');
           setStatus('Inventario cargado');
         } catch (error) {
-          rows.innerHTML = '<tr><td colspan="6" class="empty">' + escapeHtml(error.message || 'Error al cargar inventario') + '</td></tr>';
+          rows.innerHTML = '<tr><td colspan="4" class="empty">' + escapeHtml(error.message || 'Error al cargar inventario') + '</td></tr>';
           setStatus(error.message || 'Error al cargar inventario', true);
         } finally {
           hideLoader();
         }
       }
 
-      async function refreshInventory() {
-        setStatus('Actualizando');
-        try {
-          const response = await fetch('/scraping/inventory/refresh', { method: 'POST' });
-          if (!response.ok) throw new Error('No se pudo iniciar la actualización');
-          await response.json();
-          await loadInventory();
-          setStatus('Actualizado');
-        } catch (error) {
-          setStatus(error.message || 'Error al actualizar inventario', true);
-        }
-      }
-
+      renderHouseOptions();
       loadInventory();
     </script>
   </body>
