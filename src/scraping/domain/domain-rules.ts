@@ -1,4 +1,4 @@
-export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
+﻿export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
 
 export interface DomainRule {
   id: string;
@@ -118,3 +118,4 @@ export function getSeedUrls(url: string, rule?: DomainRule): string[] {
   rule?.seedUrls?.forEach((seed) => seeds.add(seed));
   return Array.from(seeds);
 }
+
