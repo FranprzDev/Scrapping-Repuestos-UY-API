@@ -71,6 +71,7 @@ test('acepta detalle de Chaparei con boton comprar y agotado oculto', () => {
   const products = qualityGate(extractProductsFromHtml(html, detailUrl, 'domain', rule), rule);
   assert.equal(products.length, 1);
   assert.equal(products[0].price, '3.894');
+  assert.equal(products[0].brand, 'BMW');
   assert.equal(products[0].availability, 'in_stock');
 });
 

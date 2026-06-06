@@ -5,6 +5,7 @@ import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfa
 import { findDomainRule } from './domain/domain-rules';
 import { countQualityWarnings, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
+import { type InventoryQueryFilters } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
@@ -127,7 +128,7 @@ export class CatalogScrapingService {
       maxProductsPerSite: request.maxProducts,
     });
 
-    return await this.getCurrentInventory(request.url);
+    return await this.getCurrentInventory({ site: request.url });
   }
 
   startScrappingUy(request: CatalogScrapeRequestDto) {
@@ -135,20 +136,12 @@ export class CatalogScrapingService {
     return this.refreshCatalogInventory();
   }
 
-  async getCurrentInventory(site?: string) {
-    if (site) {
-      const products = await this.inventoryStoreService.getBySite(site);
-      return {
-        site,
-        total: products.length,
-        products,
-      };
-    }
-
-    const products = await this.inventoryStoreService.getAll();
+  async getCurrentInventory(filters: InventoryQueryFilters = {}) {
+    const products = await this.inventoryStoreService.getFiltered(filters);
+    const total = await this.inventoryStoreService.countFiltered(filters);
 
     return {
-      total: products.length,
+      total,
       products,
     };
   }

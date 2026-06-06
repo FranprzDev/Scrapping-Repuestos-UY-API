@@ -14,6 +14,7 @@ export interface DomainRule {
     title?: string[];
     price?: string[];
     description?: string[];
+    brand?: string[];
     sku?: string[];
     image?: string[];
   };
@@ -68,6 +69,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'consultar', 'no disponible'],
     detailSelectors: {
       title: ['h1', 'h2'],
+      brand: ['.copete_ficha', '[class*="copete"]', '[class*="marca"]'],
       price: ['#precio_ent_actual', '[itemprop="price"]', '.precio_cont_mas .entero', '.prod_preciomas .entero', '[class*="price"]', '[class*="precio"]'],
       description: ['article p', '.descripcion', '.summary p', '.copete_ficha'],
       sku: ['body'],
