@@ -162,6 +162,25 @@ test('acepta productos JSON-LD con disponibilidad positiva', () => {
   assert.equal(products[0].sku, 'SKU123');
 });
 
+test('limpia nombres y precios de listados Selvir', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/amortiguadores/');
+  assert.ok(rule);
+
+  const html = `
+    <article>
+      <a href="/product/amortiguador-del-chery-beat-13/">
+        AMORTIGUADOR DEL CHERY BEAT 13 Código 23152 $ 2.200 Disponible Comprar
+      </a>
+    </article>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/amortiguadores/', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'AMORTIGUADOR DEL CHERY BEAT 13');
+  assert.equal(products[0].price, '2.200');
+  assert.equal(products[0].sourceUrl, 'https://www.selvir.com.uy/product/amortiguador-del-chery-beat-13/');
+});
+
 test('rechaza paginas 404 aunque tengan texto y precio', () => {
   const rule = findDomainRule('https://www.selvir.com.uy/product/rejilla-falsa/');
   assert.ok(rule);

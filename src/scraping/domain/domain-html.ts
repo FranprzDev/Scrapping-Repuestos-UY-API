@@ -131,12 +131,16 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
 
     seen.add(href);
 
-    const productName = firstNonEmpty([
-      cleanText(anchor.text),
-      cleanText(firstElementText(card, ['h1', 'h2', 'h3', 'h4'])),
-      cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
-    ]);
-    const rawPrice = extractPriceFromNode(card);
+    const productName = rule.id === 'selvir'
+      ? extractSelvirListingName(anchor, card, cardText)
+      : firstNonEmpty([
+          cleanText(anchor.text),
+          cleanText(firstElementText(card, ['h1', 'h2', 'h3', 'h4'])),
+          cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
+        ]);
+    const rawPrice = rule.id === 'selvir'
+      ? extractSelvirListingPrice(cardText) ?? extractPriceFromNode(card)
+      : extractPriceFromNode(card);
     if (!productName) {
       return;
     }
@@ -161,6 +165,33 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
   });
 
   return products;
+}
+
+function extractSelvirListingName(anchor: HTMLElement, card: HTMLElement, cardText: string): string | undefined {
+  const source = firstNonEmpty([
+    cleanText(anchor.text),
+    cleanText(firstElementText(card, ['h1', 'h2', 'h3', 'h4'])),
+    cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
+    cleanText(cardText),
+  ]);
+
+  if (!source) {
+    return undefined;
+  }
+
+  return cleanText(
+    source
+      .replace(/\bCódigo\b[\s:#-]*\d+\b.*$/i, '')
+      .replace(/\b(Disponible|Consulte|Comprar|Añadir al carrito|Anadir al carrito)\b.*$/i, '')
+      .replace(/\$\s*[\d.,]+.*$/i, '')
+      .replace(/\s+/g, ' '),
+  );
+}
+
+function extractSelvirListingPrice(cardText: string): string | undefined {
+  const matches = Array.from(cardText.matchAll(/(?:US\$|\$|UYU|USD)\s*[\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?/gi));
+  const lastMatch = matches.at(-1)?.[0];
+  return lastMatch ? cleanText(lastMatch) : undefined;
 }
 
 function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
