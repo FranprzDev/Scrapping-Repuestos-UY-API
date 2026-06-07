@@ -64,6 +64,19 @@ export class PostgresService implements OnModuleDestroy {
     await this.query(`CREATE INDEX IF NOT EXISTS scraping_runs_requested_at_idx ON scraping_runs(requested_at DESC);`);
 
     await this.query(`
+      CREATE TABLE IF NOT EXISTS scraping_site_links (
+        site TEXT NOT NULL,
+        url TEXT NOT NULL,
+        source TEXT NOT NULL,
+        first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        hit_count INT NOT NULL DEFAULT 1,
+        PRIMARY KEY (site, url)
+      );
+    `);
+    await this.query(`CREATE INDEX IF NOT EXISTS scraping_site_links_site_seen_idx ON scraping_site_links(site, last_seen_at DESC);`);
+
+    await this.query(`
       CREATE TABLE IF NOT EXISTS scraping_run_sites (
         run_id UUID NOT NULL REFERENCES scraping_runs(id) ON DELETE CASCADE,
         site TEXT NOT NULL,

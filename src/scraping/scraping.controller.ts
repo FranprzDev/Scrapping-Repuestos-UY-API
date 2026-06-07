@@ -138,7 +138,7 @@ function renderInventoryPage(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Inventario | Scrapping Repuestos UY</title>
+    <title>Repuestos nuevos en Uruguay</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -229,31 +229,6 @@ function renderInventoryPage(): string {
         font-size: 1rem;
         line-height: 1.75;
       }
-      .hero-stats {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .hero-stat {
-        padding: 14px 16px;
-        border-radius: 18px;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.06);
-      }
-      .hero-stat .label {
-        display: block;
-        margin-bottom: 10px;
-        color: var(--muted);
-        text-transform: uppercase;
-        font-size: 0.74rem;
-        letter-spacing: 0.12em;
-      }
-      .hero-stat .value {
-        font-family: 'Fraunces', Georgia, serif;
-        font-size: 1.4rem;
-        letter-spacing: -0.03em;
-        line-height: 1.1;
-      }
       .main {
         min-width: 0;
         padding: 20px;
@@ -298,11 +273,6 @@ function renderInventoryPage(): string {
         border-color: rgba(242,184,75,0.6);
         box-shadow: 0 0 0 3px rgba(242,184,75,0.12);
       }
-      .table-note {
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.6;
-      }
       .table-card {
         position: relative;
         overflow: hidden;
@@ -315,6 +285,7 @@ function renderInventoryPage(): string {
         width: 100%;
         border-collapse: collapse;
         font-size: 0.92rem;
+        table-layout: fixed;
       }
       thead th {
         position: sticky;
@@ -331,37 +302,34 @@ function renderInventoryPage(): string {
         border-bottom: 1px solid rgba(255,255,255,0.06);
         vertical-align: top;
       }
+      thead th:first-child,
+      tbody td:first-child {
+        width: 62%;
+      }
+      thead th:nth-child(2),
+      tbody td:nth-child(2) {
+        width: 16%;
+      }
+      thead th:nth-child(3),
+      tbody td:nth-child(3) {
+        width: 22%;
+      }
       tbody tr:hover { background: rgba(255,255,255,0.03); }
       .product-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
       .product-title {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
         font-weight: 700;
         color: var(--text);
         text-decoration: none;
-        overflow-wrap: anywhere;
+        overflow: hidden;
+        word-break: break-word;
+        line-height: 1.35;
       }
       .product-title:hover { text-decoration: underline; }
       .muted { color: var(--muted); }
       .right { text-align: right; white-space: nowrap; }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        font-size: 0.78rem;
-        color: var(--muted);
-      }
-      .pill::before {
-        content: '';
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        background: var(--success);
-      }
-      .status { color: var(--muted); font-size: 0.92rem; }
-      .status.error { color: var(--danger); }
       .loader {
         position: absolute;
         inset: 0;
@@ -393,6 +361,18 @@ function renderInventoryPage(): string {
       }
       .loader-text { font-weight: 700; }
       .empty { padding: 34px; text-align: center; color: var(--muted); }
+      .table-tail {
+        display: grid;
+        gap: 8px;
+        padding: 12px 4px 4px;
+      }
+      .load-more-status {
+        min-height: 1.25rem;
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .scroll-sentinel { height: 1px; }
       .skeleton {
         position: relative;
         overflow: hidden;
@@ -417,12 +397,8 @@ function renderInventoryPage(): string {
       @media (max-width: 1200px) {
         .filters-row { grid-template-columns: 1fr 1fr; }
       }
-      @media (max-width: 900px) {
-        .hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      }
       @media (max-width: 640px) {
         .shell { padding: 12px; }
-        .hero-stats { grid-template-columns: 1fr; }
         .main { padding-left: 14px; padding-right: 14px; }
         .table-wrap { max-height: calc(100vh - 340px); }
         .filters-row { grid-template-columns: 1fr; }
@@ -433,30 +409,10 @@ function renderInventoryPage(): string {
     <main class="shell">
       <section class="panel">
         <header class="topbar">
-          <div class="eyebrow">Inventario</div>
           <div class="title-row">
             <div>
-              <h1>Inventario en vivo</h1>
-              <p class="lede">Inventario cargado en PostgreSQL con filtros por producto, estado y casa.</p>
-            </div>
-            <div class="pill" id="connectionPill">Conectado</div>
-          </div>
-          <div class="hero-stats">
-            <div class="hero-stat">
-              <span class="label">Resultados</span>
-              <div class="value" id="visibleCount">0</div>
-            </div>
-            <div class="hero-stat">
-              <span class="label">Total inventario</span>
-              <div class="value" id="totalCount">0</div>
-            </div>
-            <div class="hero-stat">
-              <span class="label">Ultima actualizacion</span>
-              <div class="value" id="lastUpdated">Sin datos</div>
-            </div>
-            <div class="hero-stat">
-              <span class="label">Estado</span>
-              <div class="value" id="statusBadge">Listo</div>
+              <h1>Repuestos nuevos en Uruguay</h1>
+              <p class="lede">Productos cargados en PostgreSQL con filtros por producto y casa.</p>
             </div>
           </div>
         </header>
@@ -492,10 +448,6 @@ function renderInventoryPage(): string {
                     <option value="unknown">Desconocido</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label class="field-label">Nota</label>
-                  <div class="table-note">La busqueda usa ILIKE en el backend para devolver productos reales.</div>
-                </div>
               </div>
             </div>
             <div id="loader" class="loader" aria-live="polite" aria-busy="true">
@@ -511,13 +463,16 @@ function renderInventoryPage(): string {
                       <th>Producto</th>
                       <th class="right">Precio</th>
                       <th>Casa</th>
-                      <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody id="rows">
-                    <tr><td colspan="4" class="empty">Cargando inventario...</td></tr>
+                    <tr><td colspan="3" class="empty">Cargando inventario...</td></tr>
                   </tbody>
                 </table>
+                <div class="table-tail">
+                  <div id="loadMoreStatus" class="load-more-status" aria-live="polite"></div>
+                  <div id="scrollSentinel" class="scroll-sentinel" aria-hidden="true"></div>
+                </div>
               </div>
           </div>
         </section>
@@ -538,13 +493,24 @@ function renderInventoryPage(): string {
       const priceStateFilter = document.getElementById('priceStateFilter');
       const availabilityFilter = document.getElementById('availabilityFilter');
       const loader = document.getElementById('loader');
-      const totalCount = document.getElementById('totalCount');
-      const visibleCount = document.getElementById('visibleCount');
-      const lastUpdated = document.getElementById('lastUpdated');
-      const statusBadge = document.getElementById('statusBadge');
-      const connectionPill = document.getElementById('connectionPill');
+      const loadMoreStatus = document.getElementById('loadMoreStatus');
+      const scrollSentinel = document.getElementById('scrollSentinel');
+      const tableWrap = document.querySelector('.table-wrap');
+
+      const PAGE_SIZE = 100;
+      const SEARCH_DEBOUNCE_MS = 500;
+
+      const inventory = {
+        offset: 0,
+        total: 0,
+        hasMore: true,
+        loading: false,
+        requestId: 0,
+      };
 
       let searchTimer;
+      let inFlightController;
+      let scrollObserver;
 
       search.addEventListener('input', () => {
         state.search = search.value;
@@ -552,26 +518,25 @@ function renderInventoryPage(): string {
       });
       houseFilter.addEventListener('change', () => {
         state.house = houseFilter.value;
-        loadInventory();
+        resetAndLoadInventory();
       });
       priceStateFilter.addEventListener('change', () => {
         state.priceState = priceStateFilter.value;
-        loadInventory();
+        resetAndLoadInventory();
       });
       availabilityFilter.addEventListener('change', () => {
         state.availability = availabilityFilter.value;
-        loadInventory();
+        resetAndLoadInventory();
       });
 
       function queueLoadInventory() {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(loadInventory, 250);
+        searchTimer = setTimeout(resetAndLoadInventory, SEARCH_DEBOUNCE_MS);
       }
 
-      function setStatus(text, isError = false) {
-        statusBadge.textContent = text;
-        statusBadge.className = isError ? 'status error' : 'status';
-        connectionPill.textContent = isError ? 'Con error' : 'Conectado';
+      function setLoadMoreStatus(text = '') {
+        loadMoreStatus.textContent = text;
+        loadMoreStatus.hidden = !text;
       }
 
       function showLoader() {
@@ -637,7 +602,7 @@ function renderInventoryPage(): string {
 
       function renderRows(products) {
         if (!products.length) {
-          rows.innerHTML = '<tr><td colspan="4" class="empty">No hay productos para mostrar</td></tr>';
+          rows.innerHTML = '<tr><td colspan="3" class="empty">No hay productos para mostrar</td></tr>';
           return;
         }
 
@@ -654,51 +619,148 @@ function renderInventoryPage(): string {
             '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + '</div></td>' +
             '<td class="right">' + escapeHtml(product.price || '-') + priceSuffix + '</td>' +
             '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
-            '<td>' + escapeHtml(formatAvailability(product.availability)) + '</td>' +
           '</tr>';
         }).join('');
       }
 
       function renderSkeletonRows() {
-        return Array.from({ length: 7 }).map(() => (
+        return Array.from({ length: 9 }).map(() => (
           '<tr>' +
             '<td><div class="skeleton name"></div><div class="skeleton sub"></div></td>' +
             '<td class="right"><div class="skeleton price"></div></td>' +
-            '<td><div class="skeleton small"></div></td>' +
             '<td><div class="skeleton small"></div></td>' +
           '</tr>'
         )).join('');
       }
 
-      async function loadInventory() {
-        setStatus('Cargando');
-        showLoader();
+      function buildParams() {
+        const params = new URLSearchParams();
+        if (state.house) params.set('site', state.house);
+        if (state.search.trim()) params.set('search', state.search.trim());
+        if (state.priceState) params.set('priceState', state.priceState);
+        if (state.availability) params.set('availability', state.availability);
+        params.set('limit', String(PAGE_SIZE));
+        params.set('offset', String(inventory.offset));
+        return params;
+      }
+
+      function setScrollObserverEnabled(enabled) {
+        if (!scrollObserver && enabled) {
+          scrollObserver = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+              loadNextPage();
+            }
+          }, {
+            root: tableWrap,
+            rootMargin: '320px 0px',
+            threshold: 0,
+          });
+        }
+
+        if (!scrollObserver) {
+          return;
+        }
+
+        scrollObserver.disconnect();
+        if (enabled) {
+          scrollObserver.observe(scrollSentinel);
+        }
+      }
+
+      function abortPendingRequest() {
+        if (inFlightController) {
+          inFlightController.abort();
+          inFlightController = undefined;
+        }
+      }
+
+      function resetInventoryState() {
+        inventory.offset = 0;
+        inventory.total = 0;
+        inventory.hasMore = true;
+        setLoadMoreStatus('');
+      }
+
+      function resetAndLoadInventory() {
+        clearTimeout(searchTimer);
+        abortPendingRequest();
+        resetInventoryState();
+        rows.innerHTML = renderSkeletonRows();
+        setScrollObserverEnabled(false);
+        void loadNextPage(true);
+      }
+
+      async function loadNextPage(isReset = false) {
+        if (inventory.loading || (!inventory.hasMore && !isReset)) {
+          return;
+        }
+
+        inventory.loading = true;
+        const requestId = ++inventory.requestId;
+        const currentOffset = inventory.offset;
+
+        if (isReset) {
+          showLoader();
+        } else {
+          setLoadMoreStatus('Cargando mas productos...');
+        }
+
         try {
-          const params = new URLSearchParams();
-          if (state.house) params.set('site', state.house);
-          if (state.search.trim()) params.set('search', state.search.trim());
-          if (state.priceState) params.set('priceState', state.priceState);
-          if (state.availability) params.set('availability', state.availability);
-          const response = await fetch('/scraping/inventory' + (params.toString() ? '?' + params.toString() : ''));
+          inFlightController = new AbortController();
+          const response = await fetch('/scraping/inventory?' + buildParams().toString(), {
+            signal: inFlightController.signal,
+          });
           if (!response.ok) throw new Error('No se pudo leer el inventario');
           const data = await response.json();
           const products = Array.isArray(data.products) ? data.products : [];
           renderHouseOptions();
-          renderRows(products);
-          totalCount.textContent = String(data.total ?? products.length);
-          visibleCount.textContent = String(products.length);
-          lastUpdated.textContent = new Date().toLocaleString('es-AR');
-          setStatus('Inventario cargado');
+
+          if (requestId !== inventory.requestId) {
+            return;
+          }
+
+          if (isReset || currentOffset === 0) {
+            rows.innerHTML = '';
+          }
+
+          if (!products.length && currentOffset === 0) {
+            renderRows([]);
+          } else if (products.length) {
+            rows.insertAdjacentHTML('beforeend', renderRows(products));
+          }
+
+          inventory.total = Number(data.total ?? inventory.total ?? 0);
+          inventory.offset = currentOffset + products.length;
+          inventory.hasMore = Boolean(data.hasMore ?? (products.length === PAGE_SIZE && inventory.offset < inventory.total));
+
+          if (!products.length && currentOffset > 0) {
+            inventory.hasMore = false;
+          }
+
+          if (inventory.hasMore) {
+            setLoadMoreStatus('Desliza para cargar mas...');
+            setScrollObserverEnabled(true);
+          } else {
+            setLoadMoreStatus('No hay mas productos para mostrar.');
+            setScrollObserverEnabled(false);
+          }
         } catch (error) {
-          rows.innerHTML = '<tr><td colspan="4" class="empty">' + escapeHtml(error.message || 'Error al cargar inventario') + '</td></tr>';
-          setStatus(error.message || 'Error al cargar inventario', true);
+          if ((error && error.name) === 'AbortError') {
+            return;
+          }
+          rows.innerHTML = '<tr><td colspan="3" class="empty">' + escapeHtml(error.message || 'Error al cargar inventario') + '</td></tr>';
+          setLoadMoreStatus('');
         } finally {
-          hideLoader();
+          if (requestId === inventory.requestId) {
+            hideLoader();
+          }
+          inventory.loading = false;
+          inFlightController = undefined;
         }
       }
 
       renderHouseOptions();
-      loadInventory();
+      resetAndLoadInventory();
     </script>
   </body>
 </html>`;

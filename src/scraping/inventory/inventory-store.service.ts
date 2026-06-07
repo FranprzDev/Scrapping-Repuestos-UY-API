@@ -26,6 +26,11 @@ export interface InventoryQueryFilters {
   availability?: string;
 }
 
+export interface InventoryQueryPagination {
+  limit?: number;
+  offset?: number;
+}
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -103,6 +108,12 @@ export class InventoryStoreService implements OnModuleInit {
     return rows.rows.map(mapInventoryRow);
   }
 
+  async getFilteredPage(filters: InventoryQueryFilters = {}, pagination: InventoryQueryPagination = {}): Promise<StoredProduct[]> {
+    const { sql, params } = buildInventoryQuery(filters, pagination);
+    const rows = await this.postgresService.query<InventoryRow>(sql, params);
+    return rows.rows.map(mapInventoryRow);
+  }
+
   async countAll(): Promise<number> {
     const result = await this.postgresService.query<{ total: string }>('SELECT COUNT(*)::text AS total FROM scraping_inventory');
     return Number(result.rows[0]?.total ?? 0);
@@ -159,8 +170,18 @@ function normalizeKeyPart(value?: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function buildInventoryQuery(filters: InventoryQueryFilters) {
+function buildInventoryQuery(filters: InventoryQueryFilters, pagination: InventoryQueryPagination = {}) {
   const { whereClause, params } = buildInventoryConditions(filters);
+  const limit = normalizeLimit(pagination.limit);
+  const offset = normalizeOffset(pagination.offset);
+
+  if (limit !== undefined) {
+    params.push(limit);
+  }
+
+  if (offset !== undefined) {
+    params.push(offset);
+  }
 
   return {
     sql: `
@@ -168,6 +189,8 @@ function buildInventoryQuery(filters: InventoryQueryFilters) {
       FROM scraping_inventory
       ${whereClause}
       ORDER BY updated_at DESC
+      ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
+      ${offset !== undefined ? `OFFSET $${params.length}` : ''}
     `,
     params,
   };
@@ -197,17 +220,40 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
 
   const search = filters.search?.trim();
   if (search) {
-    const pattern = `%${search.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
-    params.push(pattern);
-    const index = params.length;
-    conditions.push(`
-      (
-        COALESCE(product->>'productName', '') ILIKE $${index} ESCAPE '\\'
-        OR COALESCE(product->>'brand', '') ILIKE $${index} ESCAPE '\\'
-        OR COALESCE(product->>'category', '') ILIKE $${index} ESCAPE '\\'
-        OR COALESCE(product->>'description', '') ILIKE $${index} ESCAPE '\\'
-      )
-    `);
+    const tokens = normalizeSearchTokens(search);
+    if (tokens.length) {
+      const searchableText = `
+        regexp_replace(
+          regexp_replace(
+            regexp_replace(
+              lower(
+                CONCAT_WS(
+                  ' ',
+                  COALESCE(product->>'productName', ''),
+                  COALESCE(product->>'brand', ''),
+                  COALESCE(product->>'category', ''),
+                  COALESCE(product->>'description', '')
+                )
+              ),
+              '[^[:alnum:]]+',
+              ' ',
+              'g'
+            ),
+            '([[:alpha:]])\\1+',
+            '\\1',
+            'g'
+          ),
+          '\\s+',
+          ' ',
+          'g'
+        )
+      `;
+
+      for (const token of tokens) {
+        params.push(`%${token.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
+        conditions.push(`${searchableText} LIKE $${params.length} ESCAPE '\\'`);
+      }
+    }
   }
 
   const priceState = normalizeState(filters.priceState);
@@ -240,4 +286,35 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
 function normalizeState(value?: string): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function normalizeSearchTokens(search: string): string[] {
+  return search
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .map((token) =>
+      token
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/([a-z])\1+/g, '$1')
+        .trim(),
+    )
+    .filter((token) => token.length >= 2);
+}
+
+function normalizeLimit(value?: number): number | undefined {
+  if (!Number.isFinite(value ?? NaN)) {
+    return undefined;
+  }
+
+  const normalized = Math.max(1, Math.min(Math.trunc(value as number), 101));
+  return normalized;
+}
+
+function normalizeOffset(value?: number): number | undefined {
+  if (!Number.isFinite(value ?? NaN)) {
+    return undefined;
+  }
+
+  return Math.max(0, Math.trunc(value as number));
 }
