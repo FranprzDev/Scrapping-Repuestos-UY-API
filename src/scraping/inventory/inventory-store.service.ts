@@ -24,6 +24,7 @@ export interface InventoryQueryFilters {
   search?: string;
   priceState?: string;
   availability?: string;
+  priceOrder?: string;
 }
 
 export interface InventoryQueryPagination {
@@ -174,6 +175,8 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
   const { whereClause, params } = buildInventoryConditions(filters);
   const limit = normalizeLimit(pagination.limit);
   const offset = normalizeOffset(pagination.offset);
+  const orderBy = buildOrderByClause(filters.priceOrder);
+  const orderedByPrice = isPriceOrder(filters.priceOrder);
 
   if (limit !== undefined) {
     params.push(limit);
@@ -184,11 +187,31 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
   }
 
   return {
-    sql: `
+    sql: orderedByPrice
+      ? `
+      WITH inventory_rows AS (
+        SELECT
+          id,
+          site,
+          product,
+          created_at,
+          updated_at,
+          last_seen_at,
+          NULLIF(regexp_replace(COALESCE(product->>'price', ''), '[^0-9.]', '', 'g'), '')::numeric AS price_sort
+        FROM scraping_inventory
+        ${whereClause}
+      )
+      SELECT id, site, product, created_at, updated_at, last_seen_at
+      FROM inventory_rows
+      ORDER BY ${orderBy}
+      ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
+      ${offset !== undefined ? `OFFSET $${params.length}` : ''}
+    `
+      : `
       SELECT id, site, product, created_at, updated_at, last_seen_at
       FROM scraping_inventory
       ${whereClause}
-      ORDER BY updated_at DESC
+      ORDER BY ${orderBy}
       ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
       ${offset !== undefined ? `OFFSET $${params.length}` : ''}
     `,
@@ -286,6 +309,24 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
 function normalizeState(value?: string): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function buildOrderByClause(priceOrder?: string): string {
+  const normalized = priceOrder?.trim().toLowerCase();
+  if (normalized === 'asc') {
+    return `price_sort ASC NULLS LAST, updated_at DESC`;
+  }
+
+  if (normalized === 'desc') {
+    return `price_sort DESC NULLS LAST, updated_at DESC`;
+  }
+
+  return `updated_at DESC`;
+}
+
+function isPriceOrder(priceOrder?: string): boolean {
+  const normalized = priceOrder?.trim().toLowerCase();
+  return normalized === 'asc' || normalized === 'desc';
 }
 
 function normalizeSearchTokens(search: string): string[] {

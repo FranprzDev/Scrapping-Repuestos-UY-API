@@ -93,12 +93,14 @@ export class ScrapingController {
     @Query('search') search?: string,
     @Query('priceState') priceState?: string,
     @Query('availability') availability?: string,
+    @Query('priceOrder') priceOrder?: string,
   ) {
     return this.catalogScrapingService.getCurrentInventory({
       site,
       search,
       priceState,
       availability,
+      priceOrder,
     });
   }
 
@@ -185,28 +187,10 @@ function renderInventoryPage(): string {
         background: linear-gradient(180deg, rgba(16, 20, 28, 0.96), rgba(8, 10, 15, 0.96));
       }
       .topbar {
-        padding: 24px 26px 20px;
+        padding: 16px 20px 12px;
         border-bottom: 1px solid var(--line);
         display: grid;
-        gap: 16px;
-      }
-      .eyebrow {
-        display: inline-flex;
-        align-items: center;
         gap: 10px;
-        color: var(--accent-2);
-        letter-spacing: 0.15em;
-        text-transform: uppercase;
-        font-size: 0.74rem;
-        font-weight: 800;
-      }
-      .eyebrow::before {
-        content: '';
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--accent);
-        box-shadow: 0 0 0 6px rgba(242, 184, 75, 0.12);
       }
       .title-row {
         display: flex;
@@ -218,36 +202,29 @@ function renderInventoryPage(): string {
       h1 {
         margin: 0;
         font-family: 'Fraunces', Georgia, serif;
-        font-size: clamp(2.2rem, 4vw, 3.9rem);
+        font-size: clamp(1.8rem, 3vw, 2.8rem);
         letter-spacing: -0.05em;
         line-height: 0.95;
       }
-      .lede {
-        margin: 0;
-        max-width: 78ch;
-        color: var(--muted);
-        font-size: 1rem;
-        line-height: 1.75;
-      }
       .main {
         min-width: 0;
-        padding: 20px;
+        padding: 14px;
       }
       .card {
         border: 1px solid var(--line);
         background: var(--panel);
         border-radius: 20px;
-        padding: 16px;
+        padding: 14px;
       }
       .table-toolbar {
         display: grid;
-        gap: 14px;
-        margin-bottom: 16px;
+        gap: 12px;
+        margin-bottom: 12px;
       }
       .search-field { display: grid; gap: 8px; }
       .filters-row {
         display: grid;
-        grid-template-columns: 1.2fr repeat(3, minmax(0, 1fr));
+        grid-template-columns: 1.2fr 1fr;
         gap: 12px;
       }
       .field { display: grid; gap: 8px; }
@@ -279,7 +256,7 @@ function renderInventoryPage(): string {
       }
       .table-wrap {
         overflow: auto;
-        max-height: calc(100vh - 240px);
+        max-height: calc(100vh - 196px);
       }
       table {
         width: 100%;
@@ -304,15 +281,15 @@ function renderInventoryPage(): string {
       }
       thead th:first-child,
       tbody td:first-child {
-        width: 62%;
+        width: 56%;
       }
       thead th:nth-child(2),
       tbody td:nth-child(2) {
-        width: 16%;
+        width: 20%;
       }
       thead th:nth-child(3),
       tbody td:nth-child(3) {
-        width: 22%;
+        width: 24%;
       }
       tbody tr:hover { background: rgba(255,255,255,0.03); }
       .product-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -330,6 +307,12 @@ function renderInventoryPage(): string {
       .product-title:hover { text-decoration: underline; }
       .muted { color: var(--muted); }
       .right { text-align: right; white-space: nowrap; }
+      .price-label {
+        display: inline-block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .loader {
         position: absolute;
         inset: 0;
@@ -399,8 +382,8 @@ function renderInventoryPage(): string {
       }
       @media (max-width: 640px) {
         .shell { padding: 12px; }
-        .main { padding-left: 14px; padding-right: 14px; }
-        .table-wrap { max-height: calc(100vh - 340px); }
+        .main { padding: 10px; }
+        .table-wrap { max-height: calc(100vh - 300px); }
         .filters-row { grid-template-columns: 1fr; }
       }
     </style>
@@ -412,7 +395,6 @@ function renderInventoryPage(): string {
           <div class="title-row">
             <div>
               <h1>Repuestos nuevos en Uruguay</h1>
-              <p class="lede">Productos cargados en PostgreSQL con filtros por producto y casa.</p>
             </div>
           </div>
         </header>
@@ -432,20 +414,11 @@ function renderInventoryPage(): string {
                   </select>
                 </div>
                 <div class="field">
-                  <label class="field-label" for="priceStateFilter">Estado precio</label>
-                  <select id="priceStateFilter">
-                    <option value="">Todos</option>
-                    <option value="with-price">Con precio</option>
-                    <option value="without-price">Sin precio</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label class="field-label" for="availabilityFilter">Estado producto</label>
-                  <select id="availabilityFilter">
-                    <option value="">Todos</option>
-                    <option value="available">Disponible</option>
-                    <option value="unavailable">Sin stock</option>
-                    <option value="unknown">Desconocido</option>
+                  <label class="field-label" for="priceOrderFilter">Precio</label>
+                  <select id="priceOrderFilter">
+                    <option value="">Sin ordenar</option>
+                    <option value="asc">Menor precio</option>
+                    <option value="desc">Mayor precio</option>
                   </select>
                 </div>
               </div>
@@ -483,15 +456,13 @@ function renderInventoryPage(): string {
       const state = {
         search: '',
         house: '',
-        priceState: '',
-        availability: '',
+        priceOrder: '',
       };
 
       const rows = document.getElementById('rows');
       const search = document.getElementById('search');
       const houseFilter = document.getElementById('houseFilter');
-      const priceStateFilter = document.getElementById('priceStateFilter');
-      const availabilityFilter = document.getElementById('availabilityFilter');
+      const priceOrderFilter = document.getElementById('priceOrderFilter');
       const loader = document.getElementById('loader');
       const loadMoreStatus = document.getElementById('loadMoreStatus');
       const scrollSentinel = document.getElementById('scrollSentinel');
@@ -520,12 +491,8 @@ function renderInventoryPage(): string {
         state.house = houseFilter.value;
         resetAndLoadInventory();
       });
-      priceStateFilter.addEventListener('change', () => {
-        state.priceState = priceStateFilter.value;
-        resetAndLoadInventory();
-      });
-      availabilityFilter.addEventListener('change', () => {
-        state.availability = availabilityFilter.value;
+      priceOrderFilter.addEventListener('change', () => {
+        state.priceOrder = priceOrderFilter.value;
         resetAndLoadInventory();
       });
 
@@ -586,18 +553,13 @@ function renderInventoryPage(): string {
         houseFilter.value = current;
       }
 
-      function formatAvailability(value) {
-        const text = String(value ?? '').trim().toLowerCase();
-        if (text === 'in_stock' || text === 'in stock' || text === 'available' || text === 'available now') {
-          return 'en stock';
+      function formatPrice(value) {
+        const text = String(value ?? '').trim();
+        if (!text || text === '-') {
+          return '-';
         }
-        if (text === 'out_of_stock' || text === 'out of stock' || text === 'unavailable') {
-          return 'sin stock';
-        }
-        if (text === 'unknown') {
-          return 'desconocido';
-        }
-        return text ? text.replaceAll('_', ' ') : '-';
+
+        return '$ ' + text;
       }
 
       function renderRows(products) {
@@ -611,13 +573,9 @@ function renderInventoryPage(): string {
           const url = product.sourceUrl
             ? '<a class="product-title" href="' + escapeAttr(product.sourceUrl) + '" target="_blank" rel="noreferrer">' + productName + '</a>'
             : '<span class="product-title">' + productName + '</span>';
-          const priceCurrency = String(product.currency || '').trim().toUpperCase();
-          const priceSuffix = priceCurrency && priceCurrency !== 'UYU' && priceCurrency !== 'UY$' && priceCurrency !== 'UY'
-            ? ' <span class="muted">(' + escapeHtml(priceCurrency) + ')</span>'
-            : '';
           return '<tr>' +
             '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + '</div></td>' +
-            '<td class="right">' + escapeHtml(product.price || '-') + priceSuffix + '</td>' +
+            '<td class="right"><span class="price-label">' + escapeHtml(formatPrice(product.price)) + '</span></td>' +
             '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
           '</tr>';
         }).join('');
@@ -637,8 +595,7 @@ function renderInventoryPage(): string {
         const params = new URLSearchParams();
         if (state.house) params.set('site', state.house);
         if (state.search.trim()) params.set('search', state.search.trim());
-        if (state.priceState) params.set('priceState', state.priceState);
-        if (state.availability) params.set('availability', state.availability);
+        if (state.priceOrder) params.set('priceOrder', state.priceOrder);
         params.set('limit', String(PAGE_SIZE));
         params.set('offset', String(inventory.offset));
         return params;
