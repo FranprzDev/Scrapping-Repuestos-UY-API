@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Header, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { CatalogScrapeRequestDto, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { CatalogScrapingService } from './catalog-scraping.service';
 import { JobQueueService } from './jobs/job.queue';
+import { type ScrapingOperationPayload } from './interfaces/scraping.types';
 import { ScrapingService } from './scraping.service';
 
 @Controller()
@@ -68,8 +69,14 @@ export class ScrapingController {
   }
 
   @Post('scraping/catalog/run')
-  runCatalog(@Body() payload: CatalogScrapeRequestDto) {
-    return this.catalogScrapingService.scrapeCatalogWithPrices(payload);
+  @HttpCode(202)
+  async runCatalog(@Body() payload: CatalogScrapeRequestDto) {
+    const job = await this.jobQueueService.enqueue('catalog-run', payload as unknown as ScrapingOperationPayload);
+    return {
+      message: 'Scraping encolado',
+      jobId: job.id,
+      status: job.status,
+    };
   }
 
   @Post('scraping/inventory/refresh')

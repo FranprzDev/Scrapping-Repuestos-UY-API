@@ -1,4 +1,4 @@
-export type ScrapingTask = 'scrape' | 'crawl' | 'extract';
+export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run';
 
 export type ProviderName = 'domain' | 'playwright' | 'custom';
 

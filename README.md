@@ -89,6 +89,8 @@ Query opcional:
 - `POST /scraping/inventory/refresh`
 - `POST /start-scrapping-uy`
 
+`POST /scraping/catalog/run` encola un job y responde `202 Accepted` con `jobId`.
+
 Body opcional:
 
 ```json
@@ -115,6 +117,8 @@ Body opcional:
 ### Jobs asincronos
 
 - `GET /scraping/jobs/:id`
+- `GET /scraping/runs`
+- `GET /scraping/runs/:runId`
 
 ## Automatizacion diaria (cada 24h)
 
