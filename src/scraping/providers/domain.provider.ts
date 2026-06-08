@@ -233,7 +233,6 @@ function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { 
         price: rawPrice ? normalizePriceValue(rawPrice) : undefined,
         currency: inferCurrency(String(item.moneda ?? '$')),
         brand: String(item.marca ?? '').trim() || undefined,
-        sku: String(item.codigo ?? item.codigo_fabrica ?? '').trim() || undefined,
         category: [item.rubro, item.subrubro].filter(Boolean).join(' / ') || undefined,
         description: String(item.descripcion_larga ?? item.comentarios ?? '').trim() || undefined,
         availability:

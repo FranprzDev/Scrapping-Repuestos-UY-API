@@ -152,18 +152,7 @@ function buildProductKey(site: string, product: ProductRecord): string | undefin
     return `${site}|url|${sourceUrl}`;
   }
 
-  const sku = normalizeKeyPart(product.sku);
-  if (sku) {
-    return `${site}|sku|${sku}`;
-  }
-
-  const productName = normalizeKeyPart(product.productName);
-  if (!productName) {
-    return undefined;
-  }
-
-  const brand = normalizeKeyPart(product.brand) ?? 'no-brand';
-  return `${site}|name|${productName}|${brand}`;
+  return undefined;
 }
 
 function normalizeKeyPart(value?: string): string | undefined {

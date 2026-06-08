@@ -1,13 +1,11 @@
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 
 const PRICE_REGEX = /(\$|USD|UYU)?\s?([\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{2})?)/i;
-const SKU_REGEX = /(sku|c[oó]digo|code)[:\s#-]*([\w-]{3,})/i;
 const BRAND_REGEX = /(marca|brand)[:\s-]*([\w\s-]{2,})/i;
 
 export function normalizeToProducts(input: unknown, provider: ProviderName, sourceUrl?: string): ProductRecord[] {
   const text = JSON.stringify(input ?? '');
   const priceMatch = text.match(PRICE_REGEX);
-  const skuMatch = text.match(SKU_REGEX);
   const brandMatch = text.match(BRAND_REGEX);
 
   const candidate: ProductRecord = {
@@ -21,15 +19,11 @@ export function normalizeToProducts(input: unknown, provider: ProviderName, sour
     candidate.price = priceMatch[2];
   }
 
-  if (skuMatch) {
-    candidate.sku = skuMatch[2];
-  }
-
   if (brandMatch) {
     candidate.brand = brandMatch[2].trim();
   }
 
-  if (!candidate.price && !candidate.brand && !candidate.sku) {
+  if (!candidate.price && !candidate.brand) {
     return [];
   }
 

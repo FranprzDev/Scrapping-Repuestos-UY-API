@@ -1,4 +1,4 @@
-import { HTMLElement, parse } from 'node-html-parser';
+﻿import { HTMLElement, parse } from 'node-html-parser';
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
 import { cleanText, inferCurrency, normalizePriceValue, resolveAvailability } from './product-quality';
@@ -14,6 +14,31 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
     const href = normalizeUrl(anchor.getAttribute('href'), baseUrl);
     if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href))) {
       return;
+    }
+
+    if (rule.id === 'selvir') {
+      const card = findSelvirCardContainer(anchor);
+      const cardText = cleanText(card.text) ?? '';
+      const hostname = safeHostname(href);
+      const pathname = safePathname(href) ?? '';
+
+      if (!hostname || !hostname.endsWith('selvir.com.uy')) {
+        return;
+      }
+
+      if (pathname === '/' || pathname === '') {
+        return;
+      }
+
+      if (isSelvirProductCard(href, card, cardText)) {
+        productLinks.add(href);
+        return;
+      }
+
+      if (rule.categoryUrlPatterns.some((pattern) => pattern.test(href)) || /\/page\/\d+\/?$/i.test(href)) {
+        categoryLinks.add(href);
+        return;
+      }
     }
 
     if (rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
@@ -38,6 +63,18 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
     }
   });
 
+  root.querySelectorAll('link[rel]').forEach((element) => {
+    const rel = (element.getAttribute('rel') ?? '').toLowerCase();
+    const href = normalizeUrl(element.getAttribute('href'), baseUrl);
+    if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href))) {
+      return;
+    }
+
+    if (rel === 'next' || rel === 'prev') {
+      categoryLinks.add(href);
+    }
+  });
+
   return {
     productLinks: Array.from(productLinks),
     categoryLinks: Array.from(categoryLinks),
@@ -55,7 +92,9 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
     candidates.push(...extractListProducts(root, pageUrl, provider, rule));
   }
 
-  const detailProduct = extractDetailProduct(root, pageUrl, provider, rule);
+  const detailProduct = rule.id === 'selvir'
+    ? extractSelvirDetailProduct(root, pageUrl, provider, rule)
+    : extractDetailProduct(root, pageUrl, provider, rule);
   if (detailProduct) {
     candidates.push(detailProduct);
   }
@@ -85,13 +124,27 @@ function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: Pro
           continue;
         }
 
-        const rawPrice = cleanText(asString(offer?.price) ?? asString(node.price));
+        const visiblePrice = /selvir\.com\.uy\/product\//i.test(pageUrl)
+          ? firstNonEmpty([
+              cleanText(firstElementText(root, ['.product-info-price .price-number'])),
+              cleanText(firstElementText(root, ['.product-info-price .woocommerce-Price-amount'])),
+              cleanText(firstElementText(root, ['.product-info-price'])),
+              cleanText(firstElementText(root, ['.summary .price-number'])),
+              cleanText(firstElementText(root, ['[class*="price-number"]'])),
+            ])
+          : undefined;
+        const rawPrice = cleanText(
+          visiblePrice
+          ?? asString(offer?.price)
+          ?? asString(offer?.priceSpecification?.[0]?.price)
+          ?? asString(offer?.priceSpecification?.price)
+          ?? asString(node.price),
+        );
         const availabilityText = cleanText(asString(offer?.availability));
         products.push({
           productName,
           price: normalizePriceValue(rawPrice),
           currency: inferCurrency(rawPrice, cleanText(asString(offer?.priceCurrency))),
-          sku: cleanText(asString(node.sku)),
           brand: cleanText(asString(node.brand?.name ?? node.brand)),
           description: cleanText(asString(node.description)),
           imageUrl: normalizeUrl(asString(Array.isArray(node.image) ? node.image[0] : node.image), pageUrl),
@@ -123,23 +176,27 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
-    const card = findCardContainer(anchor);
+    const card = rule.id === 'selvir' ? findSelvirCardContainer(anchor) : findCardContainer(anchor);
     const cardText = cleanText(card.text) ?? '';
     if (!isSemanticProductLink(href, cardText, rule)) {
+      return;
+    }
+
+    if (rule.id === 'selvir' && !isSelvirProductCard(href, card, cardText)) {
       return;
     }
 
     seen.add(href);
 
     const productName = rule.id === 'selvir'
-      ? extractSelvirListingName(anchor, card, cardText)
+      ? extractSelvirListingNameV2(anchor, card, cardText)
       : firstNonEmpty([
           cleanText(anchor.text),
           cleanText(firstElementText(card, ['h1', 'h2', 'h3', 'h4'])),
           cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
         ]);
     const rawPrice = rule.id === 'selvir'
-      ? extractSelvirListingPrice(cardText) ?? extractPriceFromNode(card)
+      ? extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card)
       : extractPriceFromNode(card);
     if (!productName) {
       return;
@@ -149,7 +206,6 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       productName,
       price: normalizePriceValue(rawPrice),
       currency: inferCurrency(rawPrice),
-      sku: extractSku(cardText),
       description: cleanText(firstElementText(card, ['p'])),
       imageUrl: normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
       sourceUrl: href,
@@ -181,8 +237,8 @@ function extractSelvirListingName(anchor: HTMLElement, card: HTMLElement, cardTe
 
   return cleanText(
     source
-      .replace(/\bCódigo\b[\s:#-]*\d+\b.*$/i, '')
-      .replace(/\b(Disponible|Consulte|Comprar|Añadir al carrito|Anadir al carrito)\b.*$/i, '')
+      .replace(/\bCÃ³digo\b[\s:#-]*\d+\b.*$/i, '')
+      .replace(/\b(Disponible|Consulte|Comprar|AÃ±adir al carrito|Anadir al carrito)\b.*$/i, '')
       .replace(/\$\s*[\d.,]+.*$/i, '')
       .replace(/\s+/g, ' '),
   );
@@ -192,6 +248,118 @@ function extractSelvirListingPrice(cardText: string): string | undefined {
   const matches = Array.from(cardText.matchAll(/(?:US\$|\$|UYU|USD)\s*[\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?/gi));
   const lastMatch = matches.at(-1)?.[0];
   return lastMatch ? cleanText(lastMatch) : undefined;
+}
+
+function extractSelvirListingNameV2(anchor: HTMLElement, card: HTMLElement, cardText: string): string | undefined {
+  const source = firstNonEmpty([
+    cleanText(firstElementText(card, ['.product-info-title'])),
+    cleanText(anchor.text),
+    cleanText(firstElementText(card, ['h1', 'h2', 'h3', 'h4'])),
+    cleanText(firstElementText(card, ['[class*="title"]', '[class*="name"]'])),
+    cleanText(cardText),
+  ]);
+
+  if (!source) {
+    return undefined;
+  }
+
+  return cleanText(
+    source
+      .replace(/\b(?:C[oÃ³]digo|CÃƒÂ³digo)\b[\s:#-]*[\w.-]+\b.*$/i, '')
+      .replace(/\b(?:Disponible|Consulte|Comprar|A[Ã±n]adir al carrito|Agotado|Sin stock|Out of stock|No disponible)\b.*$/i, '')
+      .replace(/\$\s*[\d.,]+.*$/i, '')
+      .replace(/\s+/g, ' '),
+  );
+}
+
+function extractSelvirListingPriceV2(card: HTMLElement, cardText: string): string | undefined {
+  const priceText = firstNonEmpty([
+    cleanText(firstElementText(card, ['.product-info-price .woocommerce-Price-currency'])),
+    cleanText(firstElementText(card, ['.product-info-price .woocommerce-Price-amount'])),
+    cleanText(firstElementText(card, ['.product-info-price'])),
+    cleanText(firstElementText(card, ['[class*="price-number"]'])),
+  ]);
+
+  if (priceText && normalizePriceValue(priceText)) {
+    return priceText;
+  }
+
+  const matches = Array.from(cardText.matchAll(/(?:US\$|\$|UYU|USD)\s*[\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?/gi));
+  const firstMatch = matches[0]?.[0];
+  return firstMatch ? cleanText(firstMatch) : undefined;
+}
+
+function isSelvirProductCard(href: string, card: HTMLElement, cardText: string): boolean {
+  if (!/\/product\//i.test(href) || /\/product-category\//i.test(href)) {
+    return false;
+  }
+
+  const hasStructuredTitle = queryAll(card, '.product-info-title').length > 0;
+  const hasStructuredPrice = queryAll(card, '.product-info-price').length > 0 || queryAll(card, '.price-number').length > 0;
+  const hasPriceText = Boolean(normalizePriceValue(cardText));
+
+  return (hasStructuredTitle || hasStructuredPrice) && hasPriceText;
+}
+
+function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
+  if (!/\/product\//i.test(pageUrl)) {
+    return undefined;
+  }
+
+  const title = firstNonEmpty(selectText(root, ['h1.product-info-title', 'h1.product_title', 'h1']));
+  if (!title) {
+    return undefined;
+  }
+
+  const priceText = firstNonEmpty([
+    cleanText(firstElementText(root, ['.product-info-price .price-number'])),
+    cleanText(firstElementText(root, ['.product-info-price .woocommerce-Price-amount'])),
+    cleanText(firstElementText(root, ['.product-info-price'])),
+    cleanText(firstElementText(root, ['.summary .price-number'])),
+    cleanText(firstElementText(root, ['[class*="price-number"]'])),
+  ]);
+
+  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  if (/(404|page not found|not found|pagina no encontrada|p[aÃƒÂ¡]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
+    return undefined;
+  }
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
+  const brandText = firstNonEmpty(selectText(root, ['.product-info-brand', '.brand', '.copete_ficha']));
+  const description = firstNonEmpty(selectText(root, ['#tab-description', '.woocommerce-product-details__short-description', '.summary p', 'meta[name="description"]']));
+
+  return {
+    productName: title,
+    price: priceText ? normalizePriceValue(priceText) : undefined,
+    currency: priceText ? inferCurrency(priceText) : undefined,
+    brand: extractBrandFromText(brandText),
+    description,
+    imageUrl:
+      normalizeUrl(firstNonEmpty(attributeValues(root, ['figure img', '.woocommerce-product-gallery img', 'img'], 'src')), pageUrl)
+      ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
+    sourceUrl: pageUrl,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
+    extractedAt: new Date().toISOString(),
+    provider,
+  };
+}
+
+function findSelvirCardContainer(anchor: HTMLElement): HTMLElement {
+  return (
+    anchor.querySelector('.product-item-container')
+    ?? anchor.querySelector('.product-info')
+    ?? anchor.querySelector('.item')
+    ?? anchor
+  );
 }
 
 function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
@@ -206,21 +374,19 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   }
 
   const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
-  if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
+  if (/(404|page not found|not found|pagina no encontrada|p[aÃ¡]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
     return undefined;
   }
   const availabilityText = collectAvailabilityText(root);
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
 
-  const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? ['body']));
 
   return {
     productName: title,
     price: normalizePriceValue(rawPrice),
     currency: inferCurrency(rawPrice),
     brand: extractBrandFromText(brandText),
-    sku: cleanText(skuText?.match(/(?:sku|c[oó]d\.?)[:#\s-]*([\w.-]+)/i)?.[1]),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
       normalizeUrl(firstNonEmpty(attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')), pageUrl)
@@ -334,6 +500,22 @@ function normalizeUrl(value: string | undefined, baseUrl: string): string | unde
   }
 }
 
+function safePathname(value: string): string | undefined {
+  try {
+    return new URL(value).pathname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function safeHostname(value: string): string | undefined {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
@@ -342,9 +524,6 @@ function firstNonEmpty(values: Array<string | undefined>): string | undefined {
   return values.find((value) => cleanText(value));
 }
 
-function extractSku(text: string): string | undefined {
-  return cleanText(text.match(/(?:sku|c[oó]d\.?)[:#\s-]*([\w.-]+)/i)?.[1]);
-}
 
 function extractBrandFromText(value: string | undefined): string | undefined {
   const text = cleanText(value);
@@ -440,7 +619,7 @@ function isSemanticProductLink(href: string, cardText: string, rule: DomainRule)
   const loweredText = normalizeComparableText(cardText);
   const hasNameSignal = /[a-z0-9]{3,}/i.test(loweredText);
   const hasProductSignal =
-    /comprar|agregar al carrito|consultar|iva inc|en stock|agotado|sku|c[oó]d|precio|producto|repuesto|articulo|ficha/i.test(
+    /comprar|agregar al carrito|consultar|iva inc|en stock|agotado|c[oÃ³]d|precio|producto|repuesto|articulo|ficha/i.test(
       loweredText,
     );
   const excluded = /contacto|faq|mi-cuenta|carrito|login|checkout|terminos|privacidad/i.test(loweredHref);
@@ -454,7 +633,7 @@ function isSemanticCategoryLink(href: string, cardText: string): boolean {
   const hasCategorySignal = /productos|catalogo|categoria|shop|ofertas|outlet|familia|marca|linea/i.test(
     `${loweredHref} ${loweredText}`,
   );
-  const looksLikeProduct = Boolean(normalizePriceValue(cardText)) || /comprar|agregar al carrito|consultar|sku|c[oó]d/i.test(loweredText);
+  const looksLikeProduct = Boolean(normalizePriceValue(cardText)) || /comprar|agregar al carrito|consultar|c[oÃ³]d/i.test(loweredText);
 
   return hasCategorySignal && !looksLikeProduct;
 }
@@ -486,3 +665,6 @@ function normalizeComparableText(value: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+
+

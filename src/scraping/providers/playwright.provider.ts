@@ -302,7 +302,6 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
                 productName: text(current.name),
                 price: text(offer?.price ?? current.price),
                 currency: text(offer?.priceCurrency),
-                sku: text(current.sku),
                 brand: text(current.brand?.name ?? current.brand),
                 availability: text(offer?.availability),
                 sourceUrl: absoluteUrl(current.url) ?? url,
@@ -408,7 +407,6 @@ function normalizeExtractedProduct(
     price: rawPrice ? normalizePrice(rawPrice) : undefined,
     currency: rawPrice ? inferCurrency(rawPrice, asString(product.currency)) : asString(product.currency)?.toUpperCase(),
     brand: cleanText(asString(product.brand)),
-    sku: cleanText(asString(product.sku)),
     category: cleanText(asString(product.category)),
     description: cleanText(asString(product.description)),
     availability: cleanText(asString(product.availability)),
@@ -428,7 +426,7 @@ function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
   const seen = new Map<string, ProductRecord>();
 
   for (const product of products) {
-    const key = [product.sourceUrl, product.sku, product.productName]
+    const key = [product.sourceUrl]
       .map((value) => cleanText(value)?.toLowerCase())
       .filter(Boolean)
       .join('|');
