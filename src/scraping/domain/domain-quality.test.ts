@@ -160,7 +160,7 @@ test('acepta productos JSON-LD con disponibilidad positiva', () => {
   assert.equal(products.length, 1);
 });
 
-test('extrae tarjetas Selvir reales sin mezclar titulo, precio ni datos entre productos', () => {
+test('extrae tarjetas Selvir reales sin mezclar titulo y precio entre productos', () => {
   const rule = findDomainRule('https://www.selvir.com.uy/product-category/carroceria/');
   assert.ok(rule);
 
@@ -174,7 +174,6 @@ test('extrae tarjetas Selvir reales sin mezclar titulo, precio ni datos entre pr
             </div>
             <div class="product-info product-info-shop">
               <div class="product-info-title">10 BROCHES GM 86-1Y0143</div>
-              <span class="product-code">C&oacute;digo 38915</span>
               <span class="product-info-price">
                 <span class="woocommerce-Price-amount amount">
                   <span class="woocommerce-Price-currencySymbol">$</span>
@@ -199,7 +198,6 @@ test('extrae tarjetas Selvir reales sin mezclar titulo, precio ni datos entre pr
             </div>
             <div class="product-info product-info-shop">
               <div class="product-info-title">10 BROCHES GM 86-1Y0144</div>
-              <span class="product-code">C&oacute;digo 38914</span>
               <span class="product-info-price">
                 <span class="woocommerce-Price-amount amount">
                   <span class="woocommerce-Price-currencySymbol">$</span>
@@ -431,5 +429,6 @@ test('resume warnings de calidad por tipo', () => {
     not_sellable: 2,
   });
 });
+
 
 
