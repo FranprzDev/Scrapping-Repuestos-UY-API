@@ -536,7 +536,6 @@ function collectExtractedProducts(raw: unknown, provider: ProviderName, sourceUr
           price,
           currency: asString(item.currency),
           brand: asString(item.brand),
-          sku: asString(item.sku),
           stock: asString(item.stock),
           availability: asString(item.availability),
           sourceUrl: asString(item.productUrl) ?? asString(item.sourceUrl) ?? sourceUrl,
@@ -568,7 +567,10 @@ function mergeProducts(base: ProductRecord[], incoming: ProductRecord[]): Produc
   const merged = new Map<string, ProductRecord>();
 
   for (const item of [...base, ...incoming]) {
-    const key = `${item.sourceUrl ?? item.sku ?? `${item.productName ?? 'unknown'}|${item.brand ?? 'unknown'}`}`.toLowerCase();
+    const key = item.sourceUrl?.toLowerCase();
+    if (!key) {
+      continue;
+    }
     const previous = merged.get(key);
 
     if (!previous) {

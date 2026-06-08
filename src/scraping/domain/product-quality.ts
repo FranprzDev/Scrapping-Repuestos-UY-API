@@ -16,7 +16,7 @@ export function normalizePriceValue(value?: string): string | undefined {
     return undefined;
   }
 
-  const match = cleaned.match(/(?:US\$|\$U|\$|UYU|USD)?\s*([\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?)/i);
+  const match = cleaned.match(/(?:US\$|\$U|\$|UYU|USD)?\s*([\d]{1,3}(?:[.,][\d]{3})+(?:[.,][\d]{1,2})?|[\d]+(?:[.,][\d]{1,2})?)/i);
   if (!match) {
     return undefined;
   }
@@ -182,7 +182,6 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
       price: product.price ?? previous.price,
       currency: product.currency ?? previous.currency,
       brand: product.brand ?? previous.brand,
-      sku: product.sku ?? previous.sku,
       category: product.category ?? previous.category,
       description: product.description ?? previous.description,
       availability: product.availability ?? previous.availability,
@@ -201,11 +200,6 @@ function buildDedupKey(product: ProductRecord): string | undefined {
   const sourceUrl = cleanText(product.sourceUrl)?.toLowerCase();
   if (sourceUrl) {
     return `url|${sourceUrl}`;
-  }
-
-  const sku = cleanText(product.sku)?.toLowerCase();
-  if (sku) {
-    return `sku|${sku}`;
   }
 
   const productName = cleanText(product.productName)?.toLowerCase();
