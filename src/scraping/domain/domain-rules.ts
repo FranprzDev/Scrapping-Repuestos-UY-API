@@ -53,11 +53,10 @@ export const DOMAIN_RULES: DomainRule[] = [
     seedUrls: ['https://www.chaparei.com/productos/?m=171'],
     preferredMethod: 'http',
     productUrlPatterns: [
-      /\/productos\/(?:productos\.php)?\?(?=.*\bc=\d+)(?=.*\bm=\d+)/i,
-      /\/catalogo\//i,
+      /\/catalogo\/[^/?#]+\/.+\/?$/i,
     ],
     categoryUrlPatterns: [
-      /\/productos\/(?:productos\.php)?\?(?=.*\bm=\d+)(?!.*\bc=\d+)/i,
+      /\/productos\/(?:productos\.php)?\?(?=.*\bm=\d+)/i,
       /\/productos\/?$/i,
       /\/catalogo\//i,
       /\/ofertas/i,

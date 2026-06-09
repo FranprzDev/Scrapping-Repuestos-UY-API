@@ -32,6 +32,17 @@ export class ScrapingController {
     };
   }
 
+  @Get('stats')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  stats() {
+    return renderStatsPage();
+  }
+
+  @Get('stats/data')
+  statsData() {
+    return this.catalogScrapingService.getStats();
+  }
+
   @Post('scraping/scrape')
   async scrape(@Body() payload: ScrapeRequestDto, @Query() config: DomainProviderConfigDto) {
     if (config.async === 'true') {
@@ -205,6 +216,26 @@ function renderInventoryPage(): string {
         align-items: end;
         justify-content: space-between;
         flex-wrap: wrap;
+      }
+      .nav-links {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .nav-link {
+        color: var(--text);
+        text-decoration: none;
+        border: 1px solid var(--line-strong);
+        background: rgba(255,255,255,0.03);
+        padding: 10px 14px;
+        border-radius: 999px;
+        font-size: 0.92rem;
+        font-weight: 700;
+      }
+      .nav-link:hover {
+        border-color: rgba(242,184,75,0.55);
+        background: rgba(242,184,75,0.1);
       }
       h1 {
         margin: 0;
@@ -403,6 +434,9 @@ function renderInventoryPage(): string {
             <div>
               <h1>Repuestos nuevos en Uruguay</h1>
             </div>
+            <nav class="nav-links" aria-label="Navegacion principal">
+              <a class="nav-link" href="/stats">Estadisticas</a>
+            </nav>
           </div>
         </header>
 
@@ -725,6 +759,283 @@ function renderInventoryPage(): string {
 
       renderHouseOptions();
       resetAndLoadInventory();
+    </script>
+  </body>
+</html>`;
+}
+
+function renderStatsPage(): string {
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Estadisticas del inventario</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --panel: rgba(15, 17, 24, 0.92);
+        --panel-strong: #10141d;
+        --line: rgba(255, 255, 255, 0.08);
+        --line-strong: rgba(255, 255, 255, 0.12);
+        --text: #f6f1ea;
+        --muted: rgba(246, 241, 234, 0.72);
+        --accent: #f2b84b;
+        --accent-2: #7fd7c4;
+        --shadow: 0 28px 90px rgba(0, 0, 0, 0.52);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: 'Manrope', system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 20% 10%, rgba(242, 184, 75, 0.18), transparent 28%),
+          radial-gradient(circle at 85% 15%, rgba(127, 215, 196, 0.14), transparent 25%),
+          linear-gradient(160deg, #050609 0%, #080b12 56%, #0d111a 100%);
+        overflow-x: hidden;
+      }
+      .shell { min-height: 100vh; padding: 24px; }
+      .panel {
+        width: 100%;
+        max-width: 1180px;
+        margin: 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+        background: linear-gradient(180deg, rgba(16, 20, 28, 0.96), rgba(8, 10, 15, 0.96));
+      }
+      .topbar {
+        padding: 16px 20px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .title-row {
+        display: flex;
+        gap: 16px;
+        align-items: end;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .nav-links {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .nav-link {
+        color: var(--text);
+        text-decoration: none;
+        border: 1px solid var(--line-strong);
+        background: rgba(255,255,255,0.03);
+        padding: 10px 14px;
+        border-radius: 999px;
+        font-size: 0.92rem;
+        font-weight: 700;
+      }
+      .nav-link:hover {
+        border-color: rgba(242,184,75,0.55);
+        background: rgba(242,184,75,0.1);
+      }
+      h1 {
+        margin: 0;
+        font-family: 'Fraunces', Georgia, serif;
+        font-size: clamp(1.8rem, 3vw, 2.8rem);
+        letter-spacing: -0.05em;
+        line-height: 0.95;
+      }
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        max-width: 72ch;
+      }
+      .main { padding: 14px; display: grid; gap: 14px; }
+      .summary-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 20px;
+        padding: 16px;
+      }
+      .metric-label {
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 0.74rem;
+      }
+      .metric-value {
+        margin-top: 8px;
+        font-family: 'Fraunces', Georgia, serif;
+        font-size: clamp(2rem, 6vw, 3.8rem);
+        letter-spacing: -0.06em;
+      }
+      .metric-note {
+        margin-top: 6px;
+        color: var(--muted);
+      }
+      .site-list { display: grid; gap: 10px; }
+      .site-item {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      .site-item:last-child { border-bottom: 0; padding-bottom: 0; }
+      .site-name { font-weight: 700; word-break: break-word; }
+      .site-count { color: var(--accent); font-weight: 800; white-space: nowrap; }
+      .bar {
+        grid-column: 1 / -1;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.06);
+        overflow: hidden;
+      }
+      .bar > span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      }
+      .empty { padding: 24px 0 4px; color: var(--muted); }
+      .status { color: var(--muted); font-size: 0.95rem; }
+      .status.error { color: #ff8b7a; }
+      code {
+        background: rgba(255,255,255,0.06);
+        padding: 0.18rem 0.35rem;
+        border-radius: 6px;
+      }
+      @media (max-width: 820px) {
+        .summary-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 640px) {
+        .shell { padding: 12px; }
+        .main { padding: 10px; }
+        .site-item { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <header class="topbar">
+          <div class="title-row">
+            <div>
+              <h1>Estadisticas del inventario</h1>
+              <p class="subtitle">Resumen rapido del total cargado y el corte por sitio. La pagina lee los datos desde <code>/stats/data</code>.</p>
+            </div>
+            <nav class="nav-links" aria-label="Navegacion principal">
+              <a class="nav-link" href="/">Inventario</a>
+              <a class="nav-link" href="/stats/data" target="_blank" rel="noreferrer">JSON</a>
+            </nav>
+          </div>
+        </header>
+
+        <section class="main">
+          <section class="summary-grid">
+            <article class="card">
+              <div class="metric-label">Total inventario</div>
+              <div id="totalValue" class="metric-value">-</div>
+              <div class="metric-note">Productos persistidos en la base.</div>
+            </article>
+            <article class="card">
+              <div class="metric-label">Sitios</div>
+              <div id="siteCountValue" class="metric-value">-</div>
+              <div class="metric-note">Cantidad de casas con productos cargados.</div>
+            </article>
+          </section>
+
+          <section class="card">
+            <div class="metric-label">Desglose por sitio</div>
+            <div id="status" class="status">Cargando estadisticas...</div>
+            <div id="siteList" class="site-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const totalValue = document.getElementById('totalValue');
+      const siteCountValue = document.getElementById('siteCountValue');
+      const status = document.getElementById('status');
+      const siteList = document.getElementById('siteList');
+      const numberFormat = new Intl.NumberFormat('es-UY');
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function normalizeSiteLabel(site) {
+        const value = String(site ?? '').toLowerCase();
+        if (value.includes('chaparei')) return 'Chaparei';
+        if (value.includes('taxitor')) return 'Taxitor';
+        if (value.includes('acesur')) return 'Acesur';
+        if (value.includes('selvir')) return 'Selvir';
+        try {
+          return new URL(site).hostname.replace(/^www\\./, '');
+        } catch {
+          return String(site ?? '-');
+        }
+      }
+
+      function renderStats(data) {
+        const total = Number(data?.total ?? 0);
+        const bySite = Array.isArray(data?.bySite) ? data.bySite : [];
+        totalValue.textContent = numberFormat.format(total);
+        siteCountValue.textContent = numberFormat.format(bySite.length);
+
+        if (!bySite.length) {
+          siteList.innerHTML = '<div class="empty">No hay datos cargados todavia.</div>';
+          status.textContent = 'Sin resultados.';
+          return;
+        }
+
+        const max = Math.max(...bySite.map((item) => Number(item?.total ?? 0)), 1);
+        siteList.innerHTML = bySite.map((item) => {
+          const site = normalizeSiteLabel(item?.site);
+          const count = Number(item?.total ?? 0);
+          const width = Math.max(4, Math.round((count / max) * 100));
+          return '<div class="site-item">' +
+            '<div class="site-name">' + escapeHtml(site) + '</div>' +
+            '<div class="site-count">' + escapeHtml(numberFormat.format(count)) + '</div>' +
+            '<div class="bar" aria-hidden="true"><span style="width:' + width + '%"></span></div>' +
+          '</div>';
+        }).join('');
+        status.textContent = 'Datos actualizados desde la base local.';
+      }
+
+      async function loadStats() {
+        try {
+          const response = await fetch('/stats/data');
+          if (!response.ok) {
+            throw new Error('No se pudieron leer las estadisticas');
+          }
+          const data = await response.json();
+          renderStats(data);
+        } catch (error) {
+          status.textContent = error.message || 'Error al cargar estadisticas';
+          status.classList.add('error');
+          siteList.innerHTML = '';
+          totalValue.textContent = '-';
+          siteCountValue.textContent = '-';
+        }
+      }
+
+      void loadStats();
     </script>
   </body>
 </html>`;

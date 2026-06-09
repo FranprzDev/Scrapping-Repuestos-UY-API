@@ -3,7 +3,7 @@ import { DomainRule } from './domain-rules';
 
 const DEFAULT_NEGATIVE_AVAILABILITY = ['agotado', 'sin stock', 'out of stock', 'no disponible', 'consultar'];
 const DEFAULT_POSITIVE_AVAILABILITY = ['en stock', 'disponible', 'agregar al carrito', 'anadir al carrito', 'comprar'];
-const INVALID_PRODUCT_NAMES = ['productos', 'inicio', 'home', '404', 'pagina no encontrada'];
+const INVALID_PRODUCT_NAMES = ['productos', 'inicio', 'home', '404', 'pagina no encontrada', 'finalizar compra', 'ver mas', 'ver más', 'comprar'];
 
 export function cleanText(value?: string): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim();

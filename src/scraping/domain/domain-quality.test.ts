@@ -9,16 +9,40 @@ test('preserva productos agotados en cards tipo Chaparei', () => {
   assert.ok(rule);
 
   const html = `
-    <article>
-      <div>Agotado</div>
-      <a href="/catalogo/carroceria/espolon-f0103280/">ESPOLON</a>
-      <div>$U 5.261</div>
-      <button>Consultar</button>
+    <article class="prod_item">
+      <div class="foto">
+        <a href="/catalogo/carroceria/espolon-original-f0104160/" target="_blank">
+          <img src="https://www.chaparei.com/imgs/productos/productos31_19984.jpg" alt="ESPOLON -ORIGINAL-">
+        </a>
+      </div>
+      <div class="cont">
+        <h2><a href="/catalogo/carroceria/espolon-original-f0104160/"><span itemprop="name">ESPOLON -ORIGINAL-</span></a></h2>
+        <h2 class="copete_ficha">FIAT - STRADA ULTRA 1.0cc 2024- (281DMX)</h2>
+      </div>
+      <div class="opcionespreciocont">
+        <div class="precios">
+          <div class="precio_cont" itemprop="offers">
+            <span class="ele">
+              <span class="pmoneda">$U</span>
+              <span id="precio_ent_actual" itemprop="price" content="12.463">12.463</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="opcionescarrito">
+        <div class="opciones_cart">
+          <div style="display:none" id="producto_agotado" class="agotado"><span>Agotado</span></div>
+          <div class="submit"><button type="submit"><span>Comprar</span></button></div>
+        </div>
+      </div>
     </article>
   `;
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
   assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'ESPOLON -ORIGINAL-');
+  assert.equal(products[0].price, '12.463');
+  assert.equal(products[0].sourceUrl, 'https://www.chaparei.com/catalogo/carroceria/espolon-original-f0104160/');
   assert.equal(products[0].availability, 'out_of_stock');
   assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
 });
@@ -129,6 +153,98 @@ test('descubre productos Chaparei por heuristica semantica aunque el href no sea
 
   const links = extractCandidateLinks(html, 'https://www.chaparei.com/productos/?m=171', rule);
   assert.equal(links.productLinks.length, 1);
+});
+
+test('descubre opciones de orden Chaparei desde option[value]', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const html = `
+    <select>
+      <option value="/productos/productos.php?m=171&amp;order=2&amp;mo=1">Precio menor</option>
+      <option value="/productos/productos.php?m=171&amp;order=7&amp;mo=1">Más vendidos</option>
+      <option value="171">FIAT</option>
+    </select>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.chaparei.com/productos/?m=171', rule);
+  assert.ok(links.categoryLinks.includes('https://www.chaparei.com/productos/productos.php?m=171&order=2&mo=1'));
+  assert.ok(links.categoryLinks.includes('https://www.chaparei.com/productos/productos.php?m=171&order=7&mo=1'));
+  assert.equal(links.categoryLinks.some((url) => url.endsWith('/171')), false);
+});
+
+test('extrae tarjetas reales de Chaparei sin mezclar nombre, precio y url', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const html = `
+    <section>
+      <article class="prod_item">
+        <div class="foto">
+          <a href="/catalogo/carroceria/espolon-original-f0104160/" target="_blank">
+            <img src="https://www.chaparei.com/imgs/productos/productos31_19984.jpg" alt="ESPOLON -ORIGINAL-">
+          </a>
+        </div>
+        <div class="cont">
+          <h2><a href="/catalogo/carroceria/espolon-original-f0104160/"><span itemprop="name">ESPOLON -ORIGINAL-</span></a></h2>
+          <h2 class="copete_ficha">FIAT - STRADA ULTRA 1.0cc 2024- (281DMX)</h2>
+        </div>
+        <div class="precios_cont">
+          <div class="precio_cont_mas" itemprop="offers">
+            <div class="prod_preciomas">
+              <span class="ele">
+                <span class="moneda">$U</span>
+                <span class="entero" itemprop="price" content="12.463">12.463</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article class="prod_item">
+        <div class="foto">
+          <a href="/catalogo/carroceria/espolon-f0104180/" target="_blank">
+            <img src="https://www.chaparei.com/imgs/productos/productos31_19985.jpg" alt="ESPOLON">
+          </a>
+        </div>
+        <div class="cont">
+          <h2><a href="/catalogo/carroceria/espolon-f0104180/"><span itemprop="name">ESPOLON</span></a></h2>
+          <h2 class="copete_ficha">FIAT - UNO 2004-11 3 PTAS. 1.3cc FIRE (158076)</h2>
+        </div>
+        <div class="precios_cont">
+          <div class="precio_cont_mas" itemprop="offers">
+            <div class="prod_preciomas">
+              <span class="ele">
+                <span class="moneda">$U</span>
+                <span class="entero" itemprop="price" content="5.846">5.846</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
+  assert.equal(products.length, 2);
+  assert.deepEqual(
+    products.map((product) => ({
+      productName: product.productName,
+      price: product.price,
+      sourceUrl: product.sourceUrl,
+    })),
+    [
+      {
+        productName: 'ESPOLON -ORIGINAL-',
+        price: '12.463',
+        sourceUrl: 'https://www.chaparei.com/catalogo/carroceria/espolon-original-f0104160/',
+      },
+      {
+        productName: 'ESPOLON',
+        price: '5.846',
+        sourceUrl: 'https://www.chaparei.com/catalogo/carroceria/espolon-f0104180/',
+      },
+    ],
+  );
 });
 
 test('acepta productos JSON-LD con disponibilidad positiva', () => {
