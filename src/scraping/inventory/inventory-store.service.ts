@@ -32,6 +32,14 @@ export interface InventoryQueryPagination {
   offset?: number;
 }
 
+export interface InventoryStats {
+  total: number;
+  bySite: Array<{
+    site: string;
+    total: number;
+  }>;
+}
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -126,6 +134,26 @@ export class InventoryStoreService implements OnModuleInit {
       [site],
     );
     return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async getStats(): Promise<InventoryStats> {
+    const [total, bySite] = await Promise.all([
+      this.countAll(),
+      this.postgresService.query<{ site: string; total: string }>(`
+        SELECT site, COUNT(*)::text AS total
+        FROM scraping_inventory
+        GROUP BY site
+        ORDER BY COUNT(*) DESC, site ASC
+      `),
+    ]);
+
+    return {
+      total,
+      bySite: bySite.rows.map((row) => ({
+        site: row.site,
+        total: Number(row.total ?? 0),
+      })),
+    };
   }
 
   async countFiltered(filters: InventoryQueryFilters = {}): Promise<number> {

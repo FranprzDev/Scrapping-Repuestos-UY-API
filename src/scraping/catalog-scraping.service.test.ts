@@ -217,3 +217,47 @@ test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
     'https://example.com/producto/3',
   ]);
 });
+
+test('expone stats globales y por sitio', async () => {
+  const service = new CatalogScrapingService(
+    { runTask: async () => ({}) } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 42;
+      },
+      async countBySite() {
+        return 0;
+      },
+      async getStats() {
+        return {
+          total: 42,
+          bySite: [
+            { site: 'https://www.chaparei.com/productos/?m=171', total: 18 },
+            { site: 'https://www.selvir.com.uy/product-category/carroceria/', total: 24 },
+          ],
+        };
+      },
+    } as never,
+    { saveSiteCatalog: async () => ({ outputPath: '', total: 0, imagesSaved: 0, products: [] }) } as never,
+    { ensureCatalogTables: async () => {}, query: async () => ({ rows: [] }) } as never,
+  );
+
+  const stats = await service.getStats();
+
+  assert.deepEqual(stats, {
+    total: 42,
+    bySite: [
+      { site: 'https://www.chaparei.com/productos/?m=171', total: 18 },
+      { site: 'https://www.selvir.com.uy/product-category/carroceria/', total: 24 },
+    ],
+  });
+});

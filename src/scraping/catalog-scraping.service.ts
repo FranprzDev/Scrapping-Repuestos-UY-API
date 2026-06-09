@@ -198,6 +198,10 @@ export class CatalogScrapingService {
     };
   }
 
+  async getStats() {
+    return this.inventoryStoreService.getStats();
+  }
+
   private async getCachedTargetUrls(site: string): Promise<string[]> {
     const result = await this.postgresService.query<{ url: string }>(
       `

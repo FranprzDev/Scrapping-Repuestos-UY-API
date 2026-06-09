@@ -10,10 +10,53 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
   const productLinks = new Set<string>();
   const categoryLinks = new Set<string>();
 
+  root.querySelectorAll('option[value]').forEach((option) => {
+    const value = normalizeUrl(option.getAttribute('value'), baseUrl);
+    if (!value || rule.excludeUrlPatterns.some((pattern) => pattern.test(value))) {
+      return;
+    }
+
+    if (rule.id === 'chaparei') {
+      if (isChapareiProductLink(value)) {
+        productLinks.add(value);
+        return;
+      }
+
+      if (isChapareiCategoryLink(value) || isChapareiSemanticCategoryLink(value, cleanText(option.text) ?? '')) {
+        categoryLinks.add(value);
+      }
+    }
+  });
+
   root.querySelectorAll('a[href]').forEach((anchor) => {
     const href = normalizeUrl(anchor.getAttribute('href'), baseUrl);
     if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href))) {
       return;
+    }
+
+    if (rule.id === 'chaparei') {
+      const card = findChapareiCardContainer(anchor);
+      const cardText = cleanText(card.text) ?? '';
+
+      if (isChapareiProductLink(href)) {
+        productLinks.add(href);
+        return;
+      }
+
+      if (isChapareiCategoryLink(href)) {
+        categoryLinks.add(href);
+        return;
+      }
+
+      if (isChapareiSemanticProductLink(href, cardText)) {
+        productLinks.add(href);
+        return;
+      }
+
+      if (isChapareiSemanticCategoryLink(href, cardText)) {
+        categoryLinks.add(href);
+        return;
+      }
     }
 
     if (rule.id === 'selvir') {
@@ -81,12 +124,75 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
   };
 }
 
+function isChapareiProductLink(href: string): boolean {
+  return /\/catalogo\/[^/?#]+\/.+\/?$/i.test(href);
+}
+
+function isChapareiCategoryLink(href: string): boolean {
+  try {
+    const url = new URL(href);
+    const pathname = url.pathname.toLowerCase();
+    const hasModel = url.searchParams.has('m');
+    const hasCategory = url.searchParams.has('c');
+    return (
+      !isChapareiProductLink(href)
+      && (
+        pathname === '/productos/'
+        || pathname === '/productos/productos.php'
+        || /\/catalogo\/[^/?#]+\/?$/i.test(pathname)
+      )
+      && (hasModel || hasCategory)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isChapareiSemanticProductLink(href: string, cardText: string): boolean {
+  if (isChapareiProductLink(href)) {
+    return true;
+  }
+
+  if (!/\/catalogo\/[^/?#]+\/?$/i.test(href) && !/\/productos\/(?:productos\.php)?\?/i.test(href)) {
+    return false;
+  }
+
+  const loweredText = normalizeComparableText(cardText);
+  return Boolean(loweredText) && /comprar|en stock|agotado|precio|c[oó]d|iva inc|producto|repuesto|articulo|ficha/.test(loweredText);
+}
+
+function isChapareiSemanticCategoryLink(href: string, cardText: string): boolean {
+  if (isChapareiProductLink(href)) {
+    return false;
+  }
+
+  const loweredText = normalizeComparableText(cardText);
+  const loweredHref = href.toLowerCase();
+  return /\/productos\/|\/catalogo\//.test(loweredHref) && /carrocer[ií]a|espejos|l[aá]mparas|seguridad|enfriamiento|tren delantero|manijas|filtros|accesorios|paragolpes|ofertas|outlet/.test(loweredText);
+}
+
 export function extractProductsFromHtml(html: string, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const root = parse(html);
   const candidates: ProductRecord[] = [];
-  const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   candidates.push(...extractJsonLdProducts(root, pageUrl, provider));
+
+  if (rule.id === 'chaparei') {
+    const detailProduct = extractChapareiDetailProduct(root, pageUrl, provider, rule);
+    if (detailProduct) {
+      candidates.push(detailProduct);
+    } else {
+      const chapareiProducts = extractChapareiListProducts(root, pageUrl, provider, rule);
+      if (chapareiProducts.length > 0) {
+        candidates.push(...chapareiProducts);
+      } else {
+        candidates.push(...extractListProducts(root, pageUrl, provider, rule));
+      }
+    }
+    return candidates;
+  }
+
+  const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   if (!isDetailPage) {
     candidates.push(...extractListProducts(root, pageUrl, provider, rule));
@@ -223,6 +329,57 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
   return products;
 }
 
+function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  const products: ProductRecord[] = [];
+  const articles = queryAll(root, 'article.prod_item');
+
+  for (const article of articles) {
+    const sourceUrl = firstNonEmpty([
+      normalizeUrl(firstAttributeValue(article, ['a[href*="/catalogo/"]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(article, ['a[itemprop="url"]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(article, ['h2 a'], 'href'), pageUrl),
+    ]);
+
+    if (!sourceUrl) {
+      continue;
+    }
+
+    const productName = extractChapareiListingName(article);
+    const rawPrice = extractChapareiListingPrice(article);
+
+    if (!productName || !rawPrice) {
+      continue;
+    }
+
+    const availabilityText = cleanText([
+      firstElementText(article, ['.enstock']),
+      firstElementText(article, ['#producto_agotado']),
+      firstElementText(article, ['.opcionescarrito']),
+      article.text,
+    ].filter(Boolean).join(' '));
+
+    products.push({
+      productName,
+      price: normalizePriceValue(rawPrice),
+      currency: inferCurrency(rawPrice),
+      brand: extractBrandFromText(cleanText(firstElementText(article, ['.copete_f'])) ?? cleanText(firstElementText(article, ['.copete_ficha']))),
+      description: cleanText(firstElementText(article, ['.copete_f'])) ?? cleanText(firstElementText(article, ['.copete_ficha'])),
+      imageUrl:
+        normalizeUrl(firstAttributeValue(article, ['img'], 'src') ?? firstAttributeValue(article, ['img'], 'data-src') ?? firstAttributeValue(article, ['img'], 'srcset')?.split(',')[0]?.trim().split(' ')[0], pageUrl),
+      sourceUrl,
+      availability: resolveAvailability(availabilityText ?? '', rule) === 'in_stock'
+        ? 'in_stock'
+        : resolveAvailability(availabilityText ?? '', rule) === 'out_of_stock'
+          ? 'out_of_stock'
+          : undefined,
+      extractedAt: new Date().toISOString(),
+      provider,
+    });
+  }
+
+  return products;
+}
+
 function extractSelvirListingName(anchor: HTMLElement, card: HTMLElement, cardText: string): string | undefined {
   const source = firstNonEmpty([
     cleanText(anchor.text),
@@ -287,6 +444,115 @@ function extractSelvirListingPriceV2(card: HTMLElement, cardText: string): strin
   const matches = Array.from(cardText.matchAll(/(?:US\$|\$|UYU|USD)\s*[\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?/gi));
   const firstMatch = matches[0]?.[0];
   return firstMatch ? cleanText(firstMatch) : undefined;
+}
+
+function extractChapareiListingName(article: HTMLElement): string | undefined {
+  const name = firstNonEmpty([
+    cleanText(firstElementText(article, ['span[itemprop="name"]'])),
+    cleanText(firstElementText(article, ['h1.nombre'])),
+    cleanText(firstElementText(article, ['h2 span[itemprop="name"]'])),
+    cleanText(firstElementText(article, ['h2 .nombre'])),
+    cleanText(firstElementText(article, ['[itemprop="name"]'])),
+    cleanText(firstAttributeValue(article, ['img'], 'alt')),
+    cleanText(firstElementText(article, ['h2 a'])),
+    cleanText(firstElementText(article, ['h1'])),
+  ]);
+
+  if (!name) {
+    return undefined;
+  }
+
+  if (/finalizar compra|agregar al carrito|comprar|ver m[aá]s|ver mas|menu|inicio/i.test(normalizeComparableText(name))) {
+    return undefined;
+  }
+
+  return name;
+}
+
+function extractChapareiListingPrice(article: HTMLElement): string | undefined {
+  const rawPrice = firstNonEmpty([
+    cleanText(firstElementText(article, ['#precio_ent_actual'])),
+    cleanText(firstAttributeValue(article, ['#precio_ent_actual'], 'content')),
+    cleanText(firstElementText(article, ['[itemprop="price"]'])),
+    cleanText(firstAttributeValue(article, ['[itemprop="price"]'], 'content')),
+    cleanText(firstElementText(article, ['.precio_cont .entero'])),
+    cleanText(firstElementText(article, ['.prod_preciomas .entero'])),
+    cleanText(firstElementText(article, ['.pprecio'])),
+    cleanText(firstElementText(article, ['.precio_cont'])),
+  ]);
+
+  if (rawPrice && normalizePriceValue(rawPrice)) {
+    return rawPrice;
+  }
+
+  const text = cleanText(article.text) ?? '';
+  const match = text.match(/(?:US\$|\$U|\$|UYU|USD)\s*[\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?/i);
+  return match?.[0] ? cleanText(match[0]) : undefined;
+}
+
+function extractChapareiDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
+  if (!isChapareiProductPage(pageUrl, root)) {
+    return undefined;
+  }
+
+  const title = firstNonEmpty([
+    cleanText(firstElementText(root, ['h1.nombre'])),
+    cleanText(firstElementText(root, ['h1[itemprop="name"]'])),
+    cleanText(firstElementText(root, ['h1'])),
+  ]);
+  const priceText = firstNonEmpty([
+    cleanText(firstElementText(root, ['#precio_ent_actual'])),
+    cleanText(firstAttributeValue(root, ['#precio_ent_actual'], 'content')),
+    cleanText(firstElementText(root, ['[itemprop="price"]'])),
+    cleanText(firstAttributeValue(root, ['[itemprop="price"]'], 'content')),
+    cleanText(firstElementText(root, ['.precio_cont .entero'])),
+    cleanText(firstElementText(root, ['.prod_preciomas .entero'])),
+    cleanText(firstElementText(root, ['.pprecio'])),
+  ]);
+
+  if (!title || !priceText) {
+    return undefined;
+  }
+
+  if (/finalizar compra|agregar al carrito|comprar|ver m[aá]s|ver mas|menu|inicio/i.test(normalizeComparableText(title))) {
+    return undefined;
+  }
+
+  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
+    return undefined;
+  }
+
+  const brandText = firstNonEmpty([
+    cleanText(firstElementText(root, ['.copete_ficha'])),
+    cleanText(firstElementText(root, ['.copete_f'])),
+  ]);
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
+
+  return {
+    productName: title,
+    price: normalizePriceValue(priceText),
+    currency: inferCurrency(priceText),
+    brand: extractBrandFromText(brandText),
+    description: cleanText(firstElementText(root, ['.copete_ficha', '.copete_f'])),
+    imageUrl:
+      normalizeUrl(firstNonEmpty(attributeValues(root, ['figure img', '.prod_cont img', '.foto img', 'img'], 'src')), pageUrl)
+      ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
+    sourceUrl: pageUrl,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
+    extractedAt: new Date().toISOString(),
+    provider,
+  };
 }
 
 function isSelvirProductCard(href: string, card: HTMLElement, cardText: string): boolean {
@@ -358,6 +624,15 @@ function findSelvirCardContainer(anchor: HTMLElement): HTMLElement {
     anchor.querySelector('.product-item-container')
     ?? anchor.querySelector('.product-info')
     ?? anchor.querySelector('.item')
+    ?? anchor
+  );
+}
+
+function findChapareiCardContainer(anchor: HTMLElement): HTMLElement {
+  return (
+    findAncestorWithClass(anchor, 'article', 'prod_item')
+    ?? findAncestorWithClass(anchor, 'div', 'prod_item')
+    ?? findAncestorWithClass(anchor, 'article', 'prod_cont')
     ?? anchor
   );
 }
@@ -455,6 +730,26 @@ function findCardContainer(anchor: HTMLElement): HTMLElement {
   }
 
   return anchor.parentNode instanceof HTMLElement ? anchor.parentNode : anchor;
+}
+
+function findAncestorWithClass(node: HTMLElement, tagName: string, className: string): HTMLElement | undefined {
+  let current: HTMLElement | null = node;
+
+  while (current) {
+    const currentTag = current.rawTagName?.toLowerCase();
+    const currentClass = String(current.getAttribute('class') ?? '')
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (currentTag === tagName.toLowerCase() && currentClass.includes(className)) {
+      return current;
+    }
+
+    const parentNode: unknown = current.parentNode;
+    current = parentNode instanceof HTMLElement ? parentNode : null;
+  }
+
+  return undefined;
 }
 
 function flattenJsonLd(input: unknown): Array<Record<string, any>> {
@@ -639,6 +934,10 @@ function isSemanticCategoryLink(href: string, cardText: string): boolean {
 }
 
 function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule): boolean {
+  if (rule.id === 'chaparei' && queryAll(root, 'article.prod_item').length > 1) {
+    return false;
+  }
+
   if (rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl))) {
     return true;
   }
@@ -655,6 +954,15 @@ function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule
   return Boolean(price) || /comprar|agregar al carrito|consultar|en stock|agotado|sin stock|disponible|iva inc|producto|repuesto|articulo|ficha/i.test(
     normalizeComparableText(signals),
   );
+}
+
+function isChapareiProductPage(pageUrl: string, root: HTMLElement): boolean {
+  if (!/\/catalogo\/[^/?#]+\/.+\/?$/i.test(pageUrl)) {
+    return false;
+  }
+
+  const articleCount = queryAll(root, 'article.prod_item').length;
+  return articleCount <= 1;
 }
 
 function normalizeComparableText(value: string): string {

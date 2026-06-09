@@ -71,6 +71,41 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
+    if (rule.id === 'chaparei') {
+      const response = await fetchHtml(sourceUrl);
+      const { productLinks, categoryLinks } = extractCandidateLinks(response.body, response.finalUrl, rule);
+      const nestedCategoryLinks = await mapWithConcurrency(
+        uniqueStrings(categoryLinks).slice(0, limit),
+        5,
+        async (categoryUrl) => {
+          try {
+            const nestedResponse = await fetchHtml(categoryUrl);
+            const nestedLinks = extractCandidateLinks(nestedResponse.body, nestedResponse.finalUrl, rule);
+            return uniqueStrings([
+              ...nestedLinks.categoryLinks,
+              ...nestedLinks.productLinks.filter((url) => isChapareiDetailUrl(url)),
+            ]);
+          } catch (error) {
+            this.logger.warn(`No se pudo explorar categoria Chaparei ${categoryUrl}: ${formatError(error)}`);
+            return [];
+          }
+        },
+      );
+
+      const discoveredUrls = uniqueStrings([
+        ...categoryLinks,
+        ...productLinks.filter((url) => isChapareiDetailUrl(url)),
+        ...nestedCategoryLinks.flat(),
+      ]);
+
+      return {
+        seedUrl: sourceUrl,
+        pages: [{ url: response.finalUrl, depth: 0, productCount: discoveredUrls.length }],
+        discoveredUrls,
+        discoveryMethod: 'chaparei-http',
+      };
+    }
+
     if (rule.preferredMethod === 'api') {
       return {
         seedUrl: sourceUrl,
@@ -286,6 +321,10 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isChapareiDetailUrl(url: string): boolean {
+  return /\/catalogo\/[^/?#]+\/.+\/?$/i.test(url);
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
