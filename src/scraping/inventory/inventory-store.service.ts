@@ -140,9 +140,15 @@ export class InventoryStoreService implements OnModuleInit {
     const [total, bySite] = await Promise.all([
       this.countAll(),
       this.postgresService.query<{ site: string; total: string }>(`
-        SELECT site, COUNT(*)::text AS total
+        SELECT
+          split_part(
+            replace(replace(lower(site), 'https://', ''), 'http://', ''),
+            '/',
+            1
+          ) AS site,
+          COUNT(*)::text AS total
         FROM scraping_inventory
-        GROUP BY site
+        GROUP BY 1
         ORDER BY COUNT(*) DESC, site ASC
       `),
     ]);

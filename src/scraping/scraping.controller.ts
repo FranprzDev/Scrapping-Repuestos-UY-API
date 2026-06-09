@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
-import { CatalogScrapeRequestDto, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
+import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { CatalogScrapingService } from './catalog-scraping.service';
 import { JobQueueService } from './jobs/job.queue';
@@ -91,18 +91,48 @@ export class ScrapingController {
   }
 
   @Post('scraping/inventory/refresh')
-  refreshInventory() {
-    return this.catalogScrapingService.refreshCatalogInventory();
+  @HttpCode(202)
+  async refreshInventory() {
+    const job = await this.jobQueueService.enqueue('catalog-run', {
+      urls: [...DEFAULT_CATALOG_SITES],
+    } as unknown as ScrapingOperationPayload);
+
+    return {
+      message: 'Scraping encolado',
+      jobId: job.id,
+      status: job.status,
+    };
   }
 
   @Post('scraping/quick-run')
+  @HttpCode(202)
   quickRunSingleSite(@Body() payload: SingleSiteCatalogScrapeRequestDto) {
-    return this.catalogScrapingService.scrapeSingleSiteAndReturnInventory(payload);
+    return this.jobQueueService.enqueue('catalog-run', {
+      urls: [payload.url],
+      maxPagesPerSite: payload.maxPages,
+      maxProductsPerSite: payload.maxProducts,
+    } as unknown as ScrapingOperationPayload).then((job) => ({
+      message: 'Scraping encolado',
+      jobId: job.id,
+      status: job.status,
+    }));
   }
 
   @Post('start-scrapping-uy')
-  startScrappingUy(@Body() payload: CatalogScrapeRequestDto) {
-    return this.catalogScrapingService.startScrappingUy(payload);
+  @HttpCode(202)
+  async startScrappingUy(@Body() payload: CatalogScrapeRequestDto) {
+    const job = await this.jobQueueService.enqueue('catalog-run', {
+      urls: payload.urls?.length ? payload.urls : [...DEFAULT_CATALOG_SITES],
+      maxPagesPerSite: payload.maxPagesPerSite,
+      maxProductsPerSite: payload.maxProductsPerSite,
+      siteConcurrency: payload.siteConcurrency,
+    } as unknown as ScrapingOperationPayload);
+
+    return {
+      message: 'Scraping encolado',
+      jobId: job.id,
+      status: job.status,
+    };
   }
 
   @Get('scraping/inventory')
