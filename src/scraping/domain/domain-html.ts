@@ -170,7 +170,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     productName: title,
     price: normalizePriceValue(rawPrice),
     currency: inferCurrency(rawPrice),
-    sku: cleanText(skuText?.match(/(?:sku|c[oó]d\.?)[:#\s-]*([\w.-]+)/i)?.[1]),
+    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1]),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
       normalizeUrl(firstNonEmpty(attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')), pageUrl)

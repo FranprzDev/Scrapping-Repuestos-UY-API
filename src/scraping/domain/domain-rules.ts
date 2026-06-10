@@ -87,11 +87,20 @@ export const DOMAIN_RULES: DomainRule[] = [
     id: 'feyvi',
     hostnames: ['feyvi.com.uy', 'www.feyvi.com.uy'],
     preferredMethod: 'playwright-fallback',
-    productUrlPatterns: [/\/product\//i, /\/producto\//i, /\/shop\//i],
-    categoryUrlPatterns: [/\/shop/i, /\/catalog/i, /\/productos/i],
+    productUrlPatterns: [/^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){2}[^/]+\/?$/i],
+    categoryUrlPatterns: [
+      /^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){1,2}(?:page-\d+\/)?$/i,
+    ],
     excludeUrlPatterns: [/\/contacto/i, /\/mi-cuenta/i, /\/carrito/i],
     positiveAvailabilityTexts: ['agregar al carrito', 'comprar', 'anadir al carrito', 'añadir al carrito'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+    detailSelectors: {
+      title: ['h1.product-title', 'h1', '.product-title'],
+      price: ['.ty-price', '.price', '[class*="price"]', '[class*="precio"]', '.ty-price .ty-price-num'],
+      description: ['.product-description', 'main p', '.summary', '[class*="description"]'],
+      sku: ['.ty-control-group__item', '.sku', 'body'],
+      image: ['.ty-product-img img', '.product-image img', 'main img', 'meta[property="og:image"]'],
+    },
   },
 ];
 

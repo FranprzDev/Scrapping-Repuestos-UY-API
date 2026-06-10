@@ -26,8 +26,6 @@ export class CatalogScrapingService {
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
     const urls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
-    const maxPagesPerSite = request.maxPagesPerSite ?? 30;
-    const maxProductsPerSite = request.maxProductsPerSite ?? 150;
     const siteConcurrency = request.siteConcurrency ?? 2;
     const runAt = new Date().toISOString();
     const runId = randomUUID();
@@ -35,6 +33,7 @@ export class CatalogScrapingService {
     this.logger.log(`[run:${runId}] started sites=${urls.length} siteConcurrency=${siteConcurrency}`);
 
     const results = await runWithConcurrency(urls, siteConcurrency, async (url) => {
+      const { maxPagesPerSite, maxProductsPerSite } = resolveCatalogLimits(url, request);
       const siteStartedAt = Date.now();
       this.logger.log(`[run:${runId}] site_started site=${url}`);
       try {
@@ -261,6 +260,28 @@ export class CatalogScrapingService {
         [runId, site, status, JSON.stringify(record)],
       );
     }
+  }
+}
+
+function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto) {
+  if (isFeyviSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 5000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 20000,
+    };
+  }
+
+  return {
+    maxPagesPerSite: request.maxPagesPerSite ?? 30,
+    maxProductsPerSite: request.maxProductsPerSite ?? 150,
+  };
+}
+
+function isFeyviSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'feyvi.com.uy';
+  } catch {
+    return false;
   }
 }
 

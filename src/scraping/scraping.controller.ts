@@ -397,6 +397,8 @@ function renderInventoryPage(): string {
             <span id="status">Listo</span>
             <span id="count">0 productos</span>
             <span id="updated">Sin actualizar</span>
+            <span id="siteCount">0 sitios</span>
+            <span id="lastRun">Sin corrida</span>
           </div>
         </div>
         <div class="sidebar-card">
@@ -451,6 +453,8 @@ function renderInventoryPage(): string {
     const status = document.getElementById('status');
     const count = document.getElementById('count');
     const updated = document.getElementById('updated');
+    const siteCount = document.getElementById('siteCount');
+    const lastRun = document.getElementById('lastRun');
     const loader = document.getElementById('loader');
 
     document.getElementById('refresh').addEventListener('click', () => loadInventory());
@@ -500,6 +504,7 @@ function renderInventoryPage(): string {
       });
       renderRows();
       count.textContent = state.filtered.length + ' productos';
+      siteCount.textContent = new Set(state.products.map((product) => product.site).filter(Boolean)).size + ' sitios';
     }
 
     function renderSiteOptions() {
@@ -566,21 +571,40 @@ function renderInventoryPage(): string {
     }
 
     function escapeAttr(value) {
-      return escapeHtml(value).replaceAll('\`', '&#96;');
+      return escapeHtml(value).replaceAll(String.fromCharCode(96), '&#96;');
     }
 
     async function loadInventory() {
       setStatus('Cargando inventario...');
       showLoader();
       try {
-        const url = state.site ? '/scraping/inventory?site=' + encodeURIComponent(state.site) : '/scraping/inventory';
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('No se pudo leer el inventario');
-        const data = await response.json();
+        const inventoryUrl = state.site ? '/scraping/inventory?site=' + encodeURIComponent(state.site) : '/scraping/inventory';
+        const [inventoryResult, runsResult] = await Promise.allSettled([
+          fetch(inventoryUrl),
+          fetch('/scraping/runs?limit=1'),
+        ]);
+
+        if (inventoryResult.status !== 'fulfilled' || !inventoryResult.value.ok) {
+          throw new Error('No se pudo leer el inventario');
+        }
+
+        const data = await inventoryResult.value.json();
         state.products = Array.isArray(data.products) ? data.products : [];
         renderSiteOptions();
         applyFilters();
         updated.textContent = data.total + ' productos totales';
+        siteCount.textContent = new Set(state.products.map((product) => product.site).filter(Boolean)).size + ' sitios';
+
+        if (runsResult.status === 'fulfilled' && runsResult.value.ok) {
+          const runsData = await runsResult.value.json();
+          const last = Array.isArray(runsData.runs) ? runsData.runs[0] : undefined;
+          lastRun.textContent = last
+            ? last.requestedAt + ' · ' + last.sitesProcessed + ' sitios · ' + last.inventorySize + ' ítems'
+            : 'Sin corrida';
+        } else {
+          lastRun.textContent = 'Sin corrida';
+        }
+
         setStatus('Inventario cargado');
       } catch (error) {
         rows.innerHTML = '<tr><td colspan="5" class="empty error">' + escapeHtml(error.message || 'Error al cargar inventario') + '</td></tr>';

@@ -2,15 +2,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
+import { canonicalSiteKey } from '../domain/site-key';
 
 @Injectable()
 export class ArchiveStoreService {
   private readonly outputRoot = path.join(process.cwd(), 'output');
 
   async saveSiteCatalog(site: string, products: ProductRecord[], runAt: string) {
-    const hostname = safeHostname(site) ?? 'unknown-site';
+    const siteKey = canonicalSiteKey(site);
     const catalogDir = path.join(this.outputRoot, 'catalog');
-    const imageDir = path.join(this.outputRoot, 'images', hostname);
+    const imageDir = path.join(this.outputRoot, 'images', siteKey);
 
     await mkdir(catalogDir, { recursive: true });
     await mkdir(imageDir, { recursive: true });
@@ -21,7 +22,7 @@ export class ArchiveStoreService {
       let imagePath = product.imagePath;
 
       if (product.imageUrl) {
-        imagePath = await this.downloadImage(product.imageUrl, imageDir, hostname, product.productName);
+        imagePath = await this.downloadImage(product.imageUrl, imageDir, product.productName);
       }
 
       productsWithImages.push({
@@ -37,7 +38,7 @@ export class ArchiveStoreService {
       products: productsWithImages,
     };
 
-    const outputPath = path.join(catalogDir, `${hostname}.json`);
+    const outputPath = path.join(catalogDir, `${siteKey}.json`);
     await writeFile(outputPath, JSON.stringify(payload, null, 2), 'utf8');
 
     return {
@@ -48,7 +49,7 @@ export class ArchiveStoreService {
     };
   }
 
-  private async downloadImage(imageUrl: string, imageDir: string, hostname: string, productName?: string) {
+  private async downloadImage(imageUrl: string, imageDir: string, productName?: string) {
     try {
       const response = await fetch(imageUrl);
       if (!response.ok) {
@@ -65,14 +66,6 @@ export class ArchiveStoreService {
     } catch {
       return undefined;
     }
-  }
-}
-
-function safeHostname(url: string): string | undefined {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return undefined;
   }
 }
 
