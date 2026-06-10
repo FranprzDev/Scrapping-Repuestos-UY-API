@@ -53,14 +53,56 @@ export class DomainProvider implements ScrapingProvider {
 
   private async crawl(sourceUrl: string, payload: ScrapingOperationPayload) {
     const rule = findDomainRule(sourceUrl);
-    const limit = clampNumber(payload.limit, 1, 5000, 30);
+    const limit = clampNumber(payload.limit, 1, 1000000, 30);
 
     if (!rule) {
+      const fallback = await this.playwrightProvider.run('crawl', { ...payload, url: sourceUrl, limit });
+      const raw = fallback.raw as {
+        seedUrl?: string;
+        pages?: Array<{ url: string; depth?: number; title?: string; links?: string[]; products?: ProductRecord[] }>;
+        discoveredUrls?: string[];
+      };
+
+      return {
+        seedUrl: raw.seedUrl ?? sourceUrl,
+        pages: raw.pages ?? [],
+        discoveredUrls: raw.discoveredUrls ?? [],
+        discoveryMethod: 'playwright-fallback',
+      };
+    }
+
+    if (rule.id === 'chaparei') {
+      const response = await fetchHtml(sourceUrl);
+      const { productLinks, categoryLinks } = extractCandidateLinks(response.body, response.finalUrl, rule);
+      const nestedCategoryLinks = await mapWithConcurrency(
+        uniqueStrings(categoryLinks).slice(0, limit),
+        5,
+        async (categoryUrl) => {
+          try {
+            const nestedResponse = await fetchHtml(categoryUrl);
+            const nestedLinks = extractCandidateLinks(nestedResponse.body, nestedResponse.finalUrl, rule);
+            return uniqueStrings([
+              ...nestedLinks.categoryLinks,
+              ...nestedLinks.productLinks.filter((url) => isChapareiDetailUrl(url)),
+            ]);
+          } catch (error) {
+            this.logger.warn(`No se pudo explorar categoria Chaparei ${categoryUrl}: ${formatError(error)}`);
+            return [];
+          }
+        },
+      );
+
+      const discoveredUrls = uniqueStrings([
+        ...categoryLinks,
+        ...productLinks.filter((url) => isChapareiDetailUrl(url)),
+        ...nestedCategoryLinks.flat(),
+      ]);
+
       return {
         seedUrl: sourceUrl,
-        pages: [],
-        discoveredUrls: [sourceUrl],
-        discoveryMethod: 'unknown-domain',
+        pages: [{ url: response.finalUrl, depth: 0, productCount: discoveredUrls.length }],
+        discoveredUrls,
+        discoveryMethod: 'chaparei-http',
       };
     }
 
@@ -78,7 +120,7 @@ export class DomainProvider implements ScrapingProvider {
     const discoveredProducts = new Set<string>();
     const pages: Array<{ url: string; depth: number; productCount: number }> = [];
 
-    while (queue.length > 0 && pages.length < limit && discoveredProducts.size < limit * 10) {
+    while (queue.length > 0 && pages.length < limit) {
       const current = queue.shift();
       if (!current || visited.has(current.url)) {
         continue;
@@ -115,14 +157,14 @@ export class DomainProvider implements ScrapingProvider {
     return {
       seedUrl: sourceUrl,
       pages,
-      discoveredUrls: Array.from(discoveredProducts).slice(0, limit * 10),
+      discoveredUrls: Array.from(discoveredProducts),
       discoveryMethod: 'domain-http',
     };
   }
 
   private async extract(sourceUrl: string, payload: ScrapingOperationPayload) {
     const rule = findDomainRule(sourceUrl);
-    const maxItems = clampNumber(payload.maxItems, 1, 20000, 150);
+    const maxItems = clampNumber(payload.maxItems, 1, 1000000, 150);
     const urls = uniqueStrings([
       ...(Array.isArray(payload.urls) ? payload.urls.filter((value): value is string => typeof value === 'string') : []),
       sourceUrl,
@@ -215,25 +257,27 @@ function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { 
   const parsed = JSON.parse(body) as { cantidad_registros?: string; productos?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
   const items = Array.isArray(parsed) ? parsed : parsed.productos ?? [];
   const totalRecords = Number((Array.isArray(parsed) ? undefined : parsed.cantidad_registros) ?? 0);
-  const products = items.reduce<ProductRecord[]>((accumulator, item) => {
+    const products = items.reduce<ProductRecord[]>((accumulator, item) => {
       const stock = String(item.stock ?? '').trim();
       const stockValue = Number(stock.replace(',', '.'));
       const noComprable = String(item.no_comprable ?? '').toUpperCase();
       const rawPrice = String(item.precio ?? item.precio_anterior_con_iva ?? '').trim();
 
-      if (!rawPrice || noComprable === 'S' || Number.isNaN(stockValue) || stockValue <= 0) {
-        return accumulator;
-      }
-
       accumulator.push({
-        productName: String(item.descripcion_corta ?? '').trim(),
-        price: normalizePriceValue(rawPrice),
+        productName: String(item.descripcion_corta ?? '').trim() || String(item.descripcion_larga ?? '').trim(),
+        price: rawPrice ? normalizePriceValue(rawPrice) : undefined,
         currency: inferCurrency(String(item.moneda ?? '$')),
         brand: String(item.marca ?? '').trim() || undefined,
-        sku: String(item.codigo ?? item.codigo_fabrica ?? '').trim() || undefined,
         category: [item.rubro, item.subrubro].filter(Boolean).join(' / ') || undefined,
         description: String(item.descripcion_larga ?? item.comentarios ?? '').trim() || undefined,
-        availability: 'in_stock',
+        availability:
+          noComprable === 'S'
+            ? 'out_of_stock'
+            : Number.isNaN(stockValue)
+              ? 'unknown'
+              : stockValue > 0
+                ? 'in_stock'
+                : 'out_of_stock',
         stock,
         sourceUrl: `${sourceUrl}?codigo=${encodeURIComponent(String(item.codigo ?? item.codigo_fabrica ?? ''))}`,
         imageUrl: buildAcesurImageUrl(String(item.nombre_foto ?? '').trim()),
@@ -277,6 +321,10 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isChapareiDetailUrl(url: string): boolean {
+  return /\/catalogo\/[^/?#]+\/.+\/?$/i.test(url);
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {

@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { ProviderResult, ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
+import { ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
+import { CatalogScrapeRequestDto } from '../dto/catalog-request.dto';
+import { CatalogScrapingService } from '../catalog-scraping.service';
 import { ScrapingService } from '../scraping.service';
 import { PostgresService } from './postgres.service';
 
@@ -12,7 +14,7 @@ export interface ScrapingJob {
   payload: ScrapingOperationPayload;
   status: JobStatus;
   provider?: string;
-  result?: ProviderResult;
+  result?: unknown;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -24,7 +26,7 @@ type ScrapingJobRow = {
   payload: ScrapingOperationPayload;
   status: JobStatus;
   provider: string | null;
-  result: ProviderResult | null;
+  result: unknown | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -42,6 +44,8 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(ScrapingService)
     private readonly scrapingService: ScrapingService,
+    @Inject(CatalogScrapingService)
+    private readonly catalogScrapingService: CatalogScrapingService,
     @Inject(PostgresService)
     private readonly postgresService: PostgresService,
   ) {}
@@ -121,9 +125,8 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const providerOverride = typeof claimed.payload.providerOverride === 'string' ? claimed.payload.providerOverride : undefined;
-      const payload = Object.fromEntries(Object.entries(claimed.payload).filter(([key]) => key !== 'providerOverride'));
-      const result = await this.scrapingService.runTask(claimed.task, payload, providerOverride);
+      const result = await this.runClaimedJob(claimed.task, claimed.payload);
+      const provider = extractProvider(result);
       await this.postgresService.query(
         `
         UPDATE scraping_jobs
@@ -133,7 +136,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
             updated_at = NOW()
         WHERE id = $1
         `,
-        [claimed.id, result.provider, JSON.stringify(result)],
+        [claimed.id, provider, JSON.stringify(result)],
       );
     } catch (error) {
       await this.postgresService.query(
@@ -150,6 +153,16 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.tick();
+  }
+
+  private async runClaimedJob(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<unknown> {
+    if (task === 'catalog-run') {
+      return this.catalogScrapingService.scrapeCatalogWithPrices(payload as CatalogScrapeRequestDto);
+    }
+
+    const providerOverride = typeof payload.providerOverride === 'string' ? payload.providerOverride : undefined;
+    const normalizedPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'providerOverride'));
+    return this.scrapingService.runTask(task, normalizedPayload, providerOverride);
   }
 
   private async claimNextQueuedJob(): Promise<ScrapingJob | undefined> {
@@ -214,4 +227,13 @@ function clampNumber(raw: string | undefined, min: number, max: number, fallback
   }
 
   return Math.max(min, Math.min(max, value));
+}
+
+function extractProvider(result: unknown): string | null {
+  if (typeof result !== 'object' || !result) {
+    return null;
+  }
+
+  const provider = (result as { provider?: unknown }).provider;
+  return typeof provider === 'string' ? provider : null;
 }

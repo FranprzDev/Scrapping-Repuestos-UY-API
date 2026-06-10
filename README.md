@@ -69,6 +69,11 @@ npm run start:dev
 
 - `GET /health`
 
+### Home
+
+- `GET /`
+- Landing ligera para operacion y acceso rapido a los endpoints principales.
+
 ### Scrape individual
 
 - `POST /scraping/scrape`
@@ -83,7 +88,10 @@ Query opcional:
 ### Batch catalogo
 
 - `POST /scraping/catalog/run`
+- `POST /scraping/inventory/refresh`
 - `POST /start-scrapping-uy`
+
+`POST /scraping/catalog/run` encola un job y responde `202 Accepted` con `jobId`.
 
 Body opcional:
 
@@ -103,9 +111,16 @@ Body opcional:
 - `GET /scraping/inventory`
 - `GET /scraping/inventory?site=https://taxitor.uy/`
 
+### Refresh completo
+
+- `POST /scraping/inventory/refresh`
+- Fuerza el scraping del set validado de sitios activos.
+
 ### Jobs asincronos
 
 - `GET /scraping/jobs/:id`
+- `GET /scraping/runs`
+- `GET /scraping/runs/:runId`
 
 ## Automatizacion diaria (cada 24h)
 

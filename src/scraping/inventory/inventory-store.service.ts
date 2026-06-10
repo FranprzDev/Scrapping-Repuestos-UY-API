@@ -19,6 +19,27 @@ type InventoryRow = {
   last_seen_at: string;
 };
 
+export interface InventoryQueryFilters {
+  site?: string;
+  search?: string;
+  priceState?: string;
+  availability?: string;
+  priceOrder?: string;
+}
+
+export interface InventoryQueryPagination {
+  limit?: number;
+  offset?: number;
+}
+
+export interface InventoryStats {
+  total: number;
+  bySite: Array<{
+    site: string;
+    total: number;
+  }>;
+}
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -80,26 +101,25 @@ export class InventoryStoreService implements OnModuleInit {
   }
 
   async getAll(): Promise<StoredProduct[]> {
+    return this.getFiltered();
+  }
+
+  async getBySite(site: string): Promise<StoredProduct[]> {
+    return this.getFiltered({ site });
+  }
+
+  async getFiltered(filters: InventoryQueryFilters = {}): Promise<StoredProduct[]> {
+    const { sql, params } = buildInventoryQuery(filters);
     const rows = await this.postgresService.query<InventoryRow>(
-      `
-      SELECT id, site, product, created_at, updated_at, last_seen_at
-      FROM scraping_inventory
-      ORDER BY updated_at DESC
-      `,
+      sql,
+      params,
     );
     return rows.rows.map(mapInventoryRow);
   }
 
-  async getBySite(site: string): Promise<StoredProduct[]> {
-    const rows = await this.postgresService.query<InventoryRow>(
-      `
-      SELECT id, site, product, created_at, updated_at, last_seen_at
-      FROM scraping_inventory
-      WHERE site = $1
-      ORDER BY updated_at DESC
-      `,
-      [site],
-    );
+  async getFilteredPage(filters: InventoryQueryFilters = {}, pagination: InventoryQueryPagination = {}): Promise<StoredProduct[]> {
+    const { sql, params } = buildInventoryQuery(filters, pagination);
+    const rows = await this.postgresService.query<InventoryRow>(sql, params);
     return rows.rows.map(mapInventoryRow);
   }
 
@@ -113,6 +133,38 @@ export class InventoryStoreService implements OnModuleInit {
       'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE site = $1',
       [site],
     );
+    return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async getStats(): Promise<InventoryStats> {
+    const [total, bySite] = await Promise.all([
+      this.countAll(),
+      this.postgresService.query<{ site: string; total: string }>(`
+        SELECT
+          split_part(
+            replace(replace(lower(site), 'https://', ''), 'http://', ''),
+            '/',
+            1
+          ) AS site,
+          COUNT(*)::text AS total
+        FROM scraping_inventory
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC, site ASC
+      `),
+    ]);
+
+    return {
+      total,
+      bySite: bySite.rows.map((row) => ({
+        site: row.site,
+        total: Number(row.total ?? 0),
+      })),
+    };
+  }
+
+  async countFiltered(filters: InventoryQueryFilters = {}): Promise<number> {
+    const { sql, params } = buildInventoryCountQuery(filters);
+    const result = await this.postgresService.query<{ total: string }>(sql, params);
     return Number(result.rows[0]?.total ?? 0);
   }
 }
@@ -134,21 +186,199 @@ function buildProductKey(site: string, product: ProductRecord): string | undefin
     return `${site}|url|${sourceUrl}`;
   }
 
-  const sku = normalizeKeyPart(product.sku);
-  if (sku) {
-    return `${site}|sku|${sku}`;
-  }
-
-  const productName = normalizeKeyPart(product.productName);
-  if (!productName) {
-    return undefined;
-  }
-
-  const brand = normalizeKeyPart(product.brand) ?? 'no-brand';
-  return `${site}|name|${productName}|${brand}`;
+  return undefined;
 }
 
 function normalizeKeyPart(value?: string): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function buildInventoryQuery(filters: InventoryQueryFilters, pagination: InventoryQueryPagination = {}) {
+  const { whereClause, params } = buildInventoryConditions(filters);
+  const limit = normalizeLimit(pagination.limit);
+  const offset = normalizeOffset(pagination.offset);
+  const orderBy = buildOrderByClause(filters.priceOrder);
+  const orderedByPrice = isPriceOrder(filters.priceOrder);
+
+  if (limit !== undefined) {
+    params.push(limit);
+  }
+
+  if (offset !== undefined) {
+    params.push(offset);
+  }
+
+  return {
+    sql: orderedByPrice
+      ? `
+      WITH inventory_rows AS (
+        SELECT
+          id,
+          site,
+          product,
+          created_at,
+          updated_at,
+          last_seen_at,
+          NULLIF(regexp_replace(COALESCE(product->>'price', ''), '[^0-9.]', '', 'g'), '')::numeric AS price_sort
+        FROM scraping_inventory
+        ${whereClause}
+      )
+      SELECT id, site, product, created_at, updated_at, last_seen_at
+      FROM inventory_rows
+      ORDER BY ${orderBy}
+      ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
+      ${offset !== undefined ? `OFFSET $${params.length}` : ''}
+    `
+      : `
+      SELECT id, site, product, created_at, updated_at, last_seen_at
+      FROM scraping_inventory
+      ${whereClause}
+      ORDER BY ${orderBy}
+      ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
+      ${offset !== undefined ? `OFFSET $${params.length}` : ''}
+    `,
+    params,
+  };
+}
+
+function buildInventoryCountQuery(filters: InventoryQueryFilters) {
+  const { whereClause, params } = buildInventoryConditions(filters);
+
+  return {
+    sql: `
+      SELECT COUNT(*)::text AS total
+      FROM scraping_inventory
+      ${whereClause}
+    `,
+    params,
+  };
+}
+
+function buildInventoryConditions(filters: InventoryQueryFilters) {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.site?.trim()) {
+    params.push(filters.site.trim());
+    conditions.push(`site = $${params.length}`);
+  }
+
+  const search = filters.search?.trim();
+  if (search) {
+    const tokens = normalizeSearchTokens(search);
+    if (tokens.length) {
+      const searchableText = `
+        regexp_replace(
+          regexp_replace(
+            regexp_replace(
+              lower(
+                CONCAT_WS(
+                  ' ',
+                  COALESCE(product->>'productName', ''),
+                  COALESCE(product->>'brand', ''),
+                  COALESCE(product->>'category', ''),
+                  COALESCE(product->>'description', '')
+                )
+              ),
+              '[^[:alnum:]]+',
+              ' ',
+              'g'
+            ),
+            '([[:alpha:]])\\1+',
+            '\\1',
+            'g'
+          ),
+          '\\s+',
+          ' ',
+          'g'
+        )
+      `;
+
+      for (const token of tokens) {
+        params.push(`%${token.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
+        conditions.push(`${searchableText} LIKE $${params.length} ESCAPE '\\'`);
+      }
+    }
+  }
+
+  const priceState = normalizeState(filters.priceState);
+  if (priceState === 'with-price') {
+    conditions.push(`COALESCE(NULLIF(BTRIM(product->>'price'), ''), '') <> ''`);
+  } else if (priceState === 'without-price') {
+    conditions.push(`COALESCE(NULLIF(BTRIM(product->>'price'), ''), '') = ''`);
+  }
+
+  const availability = normalizeState(filters.availability);
+  if (availability === 'available') {
+    conditions.push(`
+      LOWER(COALESCE(product->>'availability', '')) IN ('in_stock', 'in stock', 'available', 'available now')
+    `);
+  } else if (availability === 'unavailable') {
+    conditions.push(`
+      LOWER(COALESCE(product->>'availability', '')) IN ('out_of_stock', 'out of stock', 'unavailable', 'agotado', 'sin stock')
+    `);
+  } else if (availability === 'unknown') {
+    conditions.push(`
+      COALESCE(NULLIF(BTRIM(LOWER(product->>'availability')), ''), 'unknown') = 'unknown'
+    `);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  return { whereClause, params };
+}
+
+function normalizeState(value?: string): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function buildOrderByClause(priceOrder?: string): string {
+  const normalized = priceOrder?.trim().toLowerCase();
+  if (normalized === 'asc') {
+    return `price_sort ASC NULLS LAST, updated_at DESC`;
+  }
+
+  if (normalized === 'desc') {
+    return `price_sort DESC NULLS LAST, updated_at DESC`;
+  }
+
+  return `updated_at DESC`;
+}
+
+function isPriceOrder(priceOrder?: string): boolean {
+  const normalized = priceOrder?.trim().toLowerCase();
+  return normalized === 'asc' || normalized === 'desc';
+}
+
+function normalizeSearchTokens(search: string): string[] {
+  return search
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .map((token) =>
+      token
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/([a-z])\1+/g, '$1')
+        .trim(),
+    )
+    .filter((token) => token.length >= 2);
+}
+
+function normalizeLimit(value?: number): number | undefined {
+  if (!Number.isFinite(value ?? NaN)) {
+    return undefined;
+  }
+
+  const normalized = Math.max(1, Math.min(Math.trunc(value as number), 101));
+  return normalized;
+}
+
+function normalizeOffset(value?: number): number | undefined {
+  if (!Number.isFinite(value ?? NaN)) {
+    return undefined;
+  }
+
+  return Math.max(0, Math.trunc(value as number));
 }

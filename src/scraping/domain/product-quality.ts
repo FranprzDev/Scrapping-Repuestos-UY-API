@@ -3,7 +3,7 @@ import { DomainRule } from './domain-rules';
 
 const DEFAULT_NEGATIVE_AVAILABILITY = ['agotado', 'sin stock', 'out of stock', 'no disponible', 'consultar'];
 const DEFAULT_POSITIVE_AVAILABILITY = ['en stock', 'disponible', 'agregar al carrito', 'anadir al carrito', 'comprar'];
-const INVALID_PRODUCT_NAMES = ['productos', 'inicio', 'home', '404', 'pagina no encontrada'];
+const INVALID_PRODUCT_NAMES = ['productos', 'inicio', 'home', '404', 'pagina no encontrada', 'finalizar compra', 'ver mas', 'ver más', 'comprar'];
 
 export function cleanText(value?: string): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim();
@@ -16,7 +16,7 @@ export function normalizePriceValue(value?: string): string | undefined {
     return undefined;
   }
 
-  const match = cleaned.match(/(?:US\$|\$U|\$|UYU|USD)?\s*([\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{1,2})?)/i);
+  const match = cleaned.match(/(?:US\$|\$U|\$|UYU|USD)?\s*([\d]{1,3}(?:[.,][\d]{3})+(?:[.,][\d]{1,2})?|[\d]+(?:[.,][\d]{1,2})?)/i);
   if (!match) {
     return undefined;
   }
@@ -124,7 +124,7 @@ export function qualityWarnings(product: ProductRecord, rule?: DomainRule): stri
   const sourceUrl = product.sourceUrl;
   if (!sourceUrl) {
     warnings.push('missing_url');
-  } else if (rule && rule.productUrlPatterns.length > 0 && !rule.productUrlPatterns.some((pattern) => pattern.test(sourceUrl))) {
+  } else if (rule && rule.productUrlPatterns.length > 0 && !looksLikeProductUrl(sourceUrl, rule)) {
     warnings.push('invalid_product_url');
   }
 
@@ -143,18 +143,27 @@ export function qualityGate(products: ProductRecord[], rule?: DomainRule): Produ
   return dedupeProducts(
     products
       .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
-      .filter((product) => (product.qualityWarnings?.length ?? 0) === 0),
+      .filter((product) => !(product.qualityWarnings?.includes('invalid_page') ?? false)),
   );
+}
+
+export function countQualityWarnings(products: ProductRecord[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+
+  for (const product of products) {
+    for (const warning of product.qualityWarnings ?? []) {
+      counts[warning] = (counts[warning] ?? 0) + 1;
+    }
+  }
+
+  return counts;
 }
 
 export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
   const map = new Map<string, ProductRecord>();
 
   for (const product of products) {
-    const key = [cleanText(product.sourceUrl), cleanText(product.sku), cleanText(product.productName)]
-      .filter(Boolean)
-      .map((value) => value!.toLowerCase())
-      .join('|');
+    const key = buildDedupKey(product);
 
     if (!key) {
       continue;
@@ -169,14 +178,54 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
     map.set(key, {
       ...previous,
       ...product,
+      productName: product.productName ?? previous.productName,
+      price: product.price ?? previous.price,
+      currency: product.currency ?? previous.currency,
+      brand: product.brand ?? previous.brand,
+      category: product.category ?? previous.category,
       description: product.description ?? previous.description,
-      imageUrl: product.imageUrl ?? previous.imageUrl,
-      stock: product.stock ?? previous.stock,
       availability: product.availability ?? previous.availability,
+      stock: product.stock ?? previous.stock,
+      sourceUrl: product.sourceUrl ?? previous.sourceUrl,
+      imageUrl: product.imageUrl ?? previous.imageUrl,
+      imagePath: product.imagePath ?? previous.imagePath,
+      qualityWarnings: mergeWarnings(previous.qualityWarnings, product.qualityWarnings),
     });
   }
 
   return Array.from(map.values());
+}
+
+function buildDedupKey(product: ProductRecord): string | undefined {
+  const sourceUrl = cleanText(product.sourceUrl)?.toLowerCase();
+  if (sourceUrl) {
+    return `url|${sourceUrl}`;
+  }
+
+  const productName = cleanText(product.productName)?.toLowerCase();
+  if (!productName) {
+    return undefined;
+  }
+
+  const brand = cleanText(product.brand)?.toLowerCase() ?? 'no-brand';
+  return `name|${productName}|${brand}`;
+}
+
+function mergeWarnings(previous?: string[], current?: string[]): string[] | undefined {
+  if (previous?.length && current?.length) {
+    return Array.from(new Set([...previous, ...current]));
+  }
+
+  return current?.length ? current : previous;
+}
+
+function looksLikeProductUrl(sourceUrl: string, rule: DomainRule): boolean {
+  if (rule.productUrlPatterns.some((pattern) => pattern.test(sourceUrl))) {
+    return true;
+  }
+
+  const lowered = sourceUrl.toLowerCase();
+  return /producto|productos|repuesto|repuestos|catalogo|product|shop|detalle|articulo|articulos/.test(lowered);
 }
 
 function normalizeComparableText(value: string): string {

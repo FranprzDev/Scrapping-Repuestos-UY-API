@@ -8,7 +8,7 @@ import { canonicalSiteKey } from '../domain/site-key';
 export class ArchiveStoreService {
   private readonly outputRoot = path.join(process.cwd(), 'output');
 
-  async saveSiteCatalog(site: string, products: ProductRecord[], runAt: string) {
+  async saveSiteCatalog(site: string, products: ProductRecord[], runAt: string, trace?: Record<string, unknown>) {
     const siteKey = canonicalSiteKey(site);
     const catalogDir = path.join(this.outputRoot, 'catalog');
     const imageDir = path.join(this.outputRoot, 'images', siteKey);
@@ -35,6 +35,7 @@ export class ArchiveStoreService {
       site,
       runAt,
       total: productsWithImages.length,
+      trace,
       products: productsWithImages,
     };
 
