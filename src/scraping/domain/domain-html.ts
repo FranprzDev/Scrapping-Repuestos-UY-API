@@ -655,6 +655,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   const availabilityText = collectAvailabilityText(root);
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
+  const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
 
 
   return {
@@ -662,6 +663,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     price: normalizePriceValue(rawPrice),
     currency: inferCurrency(rawPrice),
     brand: extractBrandFromText(brandText),
+    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1]),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
       normalizeUrl(firstNonEmpty(attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')), pageUrl)
@@ -938,6 +940,25 @@ function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule
     return false;
   }
 
+  if (rule.id === 'feyvi') {
+    if (queryAll(root, '.ty-grid-list__item, .ty-pagination__items, .ty-pagination__item').length > 0) {
+      return false;
+    }
+
+    const productLinkCount = queryAll(root, 'a[href]').reduce((count, anchor) => {
+      const href = normalizeUrl(anchor.getAttribute('href'), pageUrl);
+      if (!href || !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+        return count;
+      }
+
+      return count + 1;
+    }, 0);
+
+    if (productLinkCount > 1) {
+      return false;
+    }
+  }
+
   if (rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl))) {
     return true;
   }
@@ -973,6 +994,3 @@ function normalizeComparableText(value: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
-
-
-

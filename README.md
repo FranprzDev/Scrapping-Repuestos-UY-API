@@ -10,9 +10,10 @@ El alcance funcional de esta fase esta limitado a estos sitios:
 - [Acesur](https://acesur.uy/escritorio/ofertas/INTERNET)
 - [Chaparei](https://www.chaparei.com/)
 - [Selvir](https://www.selvir.com.uy/productos/)
+- [Feyvi](https://www.feyvi.com.uy/repuestos/)
 
 `centrorepuestos.com.uy` fue removido del alcance.
-`feyvi.com.uy` quedo pausado fuera del flujo por defecto.
+`feyvi.com.uy` queda incluido por categorias fijas con paginacion dinamica.
 
 ## Arquitectura actual
 
@@ -32,6 +33,7 @@ El pipeline actual funciona asi:
 - `taxitor.uy`: HTML server-rendered.
 - `chaparei.com`: HTML server-rendered.
 - `selvir.com.uy`: HTML + JSON-LD.
+- `feyvi.com.uy`: HTML paginado por categoria con discovery dinamico de paginas.
 
 ## Reglas de negocio activas
 
@@ -149,11 +151,11 @@ Los endpoints sync devuelven:
 
 Los catalogos archivados se escriben en:
 
-- `output/catalog/<hostname>.json`
+- `output/catalog/<site-key>.json`
 
 Las imagenes descargadas se escriben en:
 
-- `output/images/<hostname>/`
+- `output/images/<site-key>/`
 
 ## Estado de esta fase
 

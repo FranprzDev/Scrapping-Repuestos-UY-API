@@ -19,6 +19,7 @@ export interface ProductRecord {
   price?: string;
   currency?: string;
   brand?: string;
+  sku?: string;
   category?: string;
   description?: string;
   availability?: string;
