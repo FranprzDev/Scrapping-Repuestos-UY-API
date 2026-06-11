@@ -208,6 +208,56 @@ export class CatalogScrapingService {
     return this.inventoryStoreService.getStats();
   }
 
+  async resetCatalogData() {
+    await this.postgresService.query('BEGIN');
+    try {
+      const inventoryDeleted = await this.postgresService.query<{ id: string }>(
+        `
+        DELETE FROM scraping_inventory
+        RETURNING id
+        `,
+      );
+      const siteLinksDeleted = await this.postgresService.query<{ url: string }>(
+        `
+        DELETE FROM scraping_site_links
+        RETURNING url
+        `,
+      );
+      const runSitesDeleted = await this.postgresService.query<{ site: string }>(
+        `
+        DELETE FROM scraping_run_sites
+        RETURNING site
+        `,
+      );
+      const runsDeleted = await this.postgresService.query<{ id: string }>(
+        `
+        DELETE FROM scraping_runs
+        RETURNING id
+        `,
+      );
+      const jobsDeleted = await this.postgresService.query<{ id: string }>(
+        `
+        DELETE FROM scraping_jobs
+        RETURNING id
+        `,
+      );
+
+      await this.postgresService.query('COMMIT');
+      await this.archiveStoreService.clearAll();
+
+      return {
+        inventoryDeleted: inventoryDeleted.rows.length,
+        siteLinksDeleted: siteLinksDeleted.rows.length,
+        runSitesDeleted: runSitesDeleted.rows.length,
+        runsDeleted: runsDeleted.rows.length,
+        jobsDeleted: jobsDeleted.rows.length,
+      };
+    } catch (error) {
+      await this.postgresService.query('ROLLBACK');
+      throw error;
+    }
+  }
+
   private async getCachedTargetUrls(site: string): Promise<string[]> {
     const result = await this.postgresService.query<{ url: string }>(
       `

@@ -68,3 +68,8 @@ export class SingleSiteCatalogScrapeRequestDto {
   @Min(1)
   maxProducts?: number;
 }
+
+export class PurgeSiteDataRequestDto {
+  @IsUrl()
+  site!: string;
+}
