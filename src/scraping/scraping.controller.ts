@@ -653,11 +653,10 @@ function renderInventoryPage(): string {
 
       function renderRows(products) {
         if (!products.length) {
-          rows.innerHTML = '<tr><td colspan="3" class="empty">No hay productos para mostrar</td></tr>';
-          return;
+          return '<tr><td colspan="3" class="empty">No hay productos para mostrar</td></tr>';
         }
 
-        rows.innerHTML = products.map((product) => {
+        return products.map((product) => {
           const productName = escapeHtml(product.productName || 'Sin nombre');
           const url = product.sourceUrl
             ? '<a class="product-title" href="' + escapeAttr(product.sourceUrl) + '" target="_blank" rel="noreferrer">' + productName + '</a>'
@@ -770,7 +769,7 @@ function renderInventoryPage(): string {
           }
 
           if (!products.length && currentOffset === 0) {
-            renderRows([]);
+            rows.innerHTML = renderRows([]);
             inventory.total = Number(data.total ?? inventory.total ?? 0);
             inventory.offset = 0;
             inventory.hasMore = false;
