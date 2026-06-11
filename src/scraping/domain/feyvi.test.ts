@@ -95,3 +95,26 @@ test('feyvi descarta productos no automotrices aunque esten dentro de /repuestos
 
   assert.equal(products.length, 0);
 });
+
+test('feyvi descarta las cards de paginacion tipo 24 productos mas como producto', () => {
+  const rule = findDomainRule('https://www.feyvi.com.uy/repuestos/acabamiento-exterior/');
+  assert.ok(rule);
+
+  const html = `
+    <div class="col-tile">
+      <div class="ty-grid-list__item">
+        <div class="ty-grid-list__item-name">
+          <a class="product-title" href="https://www.feyvi.com.uy/repuestos/acabamiento-exterior/page-2/">24 productos mas</a>
+        </div>
+        <button>Añadir al carrito</button>
+      </div>
+    </div>
+  `;
+
+  const products = qualityGate(
+    extractProductsFromHtml(html, 'https://www.feyvi.com.uy/repuestos/acabamiento-exterior/', 'domain', rule),
+    rule,
+  );
+
+  assert.equal(products.length, 0);
+});

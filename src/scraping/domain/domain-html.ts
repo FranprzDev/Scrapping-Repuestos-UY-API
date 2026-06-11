@@ -985,12 +985,18 @@ function isFeyviUiLabel(productName: string, cardText: string, href: string): bo
   const normalizedName = normalizeComparableText(productName);
   const normalizedCardText = normalizeComparableText(cardText);
   const normalizedHref = href.toLowerCase();
+  const uiLabelPatterns = [
+    /^(ordenar por|total productos(?:\s+\d+)?|mostrar(?:\s+\d+)?|ver mas|ver mas productos|filtros?|resultados|categoria(?:s)?|pagina(?:\s+\d+)?)$/,
+    /^\d+\s+productos?\s+mas$/,
+    /^productos?\s+mas$/,
+    /^\d+\s+mas$/,
+  ];
 
-  if (/^(ordenar por|total productos(?:\s+\d+)?|mostrar(?:\s+\d+)?|ver mas|ver mas productos|filtros?|resultados|categoria(?:s)?|pagina(?:\s+\d+)?)$/.test(normalizedName)) {
+  if (uiLabelPatterns.some((pattern) => pattern.test(normalizedName))) {
     return true;
   }
 
-  if (/^(ordenar por|total productos(?:\s+\d+)?|mostrar(?:\s+\d+)?|ver mas|ver mas productos|filtros?|resultados|categoria(?:s)?|pagina(?:\s+\d+)?)$/.test(normalizedCardText)) {
+  if (uiLabelPatterns.some((pattern) => pattern.test(normalizedCardText))) {
     return true;
   }
 
