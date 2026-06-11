@@ -2,10 +2,10 @@ import { ArchiveStoreService } from './archive/archive-store.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
-import { findDomainRule } from './domain/domain-rules';
-import { countQualityWarnings, qualityGate } from './domain/product-quality';
+import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
+import { countQualityWarnings, isAllowedCatalogUrl, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
-import { type InventoryQueryFilters } from './inventory/inventory-store.service';
+import { type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
@@ -26,12 +26,14 @@ export class CatalogScrapingService {
   ) {}
 
   async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
-    const urls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
+    const requestedUrls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
+    const urls = requestedUrls.filter(isAdmittedHouseUrl);
     const siteConcurrency = request.siteConcurrency ?? 2;
     const runAt = new Date().toISOString();
     const runId = randomUUID();
     const startedAt = Date.now();
-    this.logger.log(`[run:${runId}] started sites=${urls.length} siteConcurrency=${siteConcurrency}`);
+    const skipped = requestedUrls.length - urls.length;
+    this.logger.log(`[run:${runId}] started sites=${urls.length} siteConcurrency=${siteConcurrency}${skipped > 0 ? ` skipped=${skipped}` : ''}`);
 
     const results = await runWithConcurrency(urls, siteConcurrency, async (url) => {
       const { maxPagesPerSite, maxProductsPerSite } = resolveCatalogLimits(url, request);
@@ -172,7 +174,7 @@ export class CatalogScrapingService {
 
   async scrapeSingleSiteAndReturnInventory(request: SingleSiteCatalogScrapeRequestDto) {
     await this.scrapeCatalogWithPrices({
-      urls: [request.url],
+      urls: isAdmittedHouseUrl(request.url) ? [request.url] : [],
       maxPagesPerSite: request.maxPages,
       maxProductsPerSite: request.maxProducts,
     });
@@ -185,15 +187,20 @@ export class CatalogScrapingService {
     return this.refreshCatalogInventory();
   }
 
-  async getCurrentInventory(filters: InventoryQueryFilters = {}) {
-    const limit = 101;
-    const products = await this.inventoryStoreService.getFilteredPage(filters, { limit });
-    const hasMore = products.length > 100;
-    const visibleProducts = hasMore ? products.slice(0, 100) : products;
+  async getCurrentInventory(filters: InventoryQueryFilters = {}, pagination: InventoryQueryPagination = {}) {
+    const pageSize = clampPageSize(pagination.limit);
+    const offset = clampOffset(pagination.offset);
+    const products = await this.inventoryStoreService.getFilteredPage(filters, {
+      limit: pageSize,
+      offset,
+    });
+    const total = await this.inventoryStoreService.countFiltered(filters);
+    const hasMore = offset + products.length < total;
 
     return {
-      products: visibleProducts,
+      products,
       hasMore,
+      total,
     };
   }
 
@@ -212,14 +219,15 @@ export class CatalogScrapingService {
       [site],
     );
 
-    return result.rows.map((row) => row.url);
+    return result.rows.map((row) => row.url).filter((url) => isAllowedCatalogUrl(url, site));
   }
 
   private async saveSiteLinks(site: string, targetUrls: string[], products: ProductRecord[], seenAt: string) {
     const productUrls = products
       .map((product) => product.sourceUrl?.trim())
-      .filter((value): value is string => Boolean(value));
-    const uniqueUrls = Array.from(new Set([...targetUrls, ...productUrls]));
+      .filter((value): value is string => Boolean(value))
+      .filter((value) => isAllowedCatalogUrl(value, site));
+    const uniqueUrls = Array.from(new Set([...targetUrls, ...productUrls].filter((value) => isAllowedCatalogUrl(value, site))));
 
     if (!uniqueUrls.length) {
       return;
@@ -419,10 +427,11 @@ function formatSiteError(error: unknown): string {
 function collectTargetUrls(raw: unknown, fallbackUrl: string): string[] {
   if (typeof raw === 'object' && raw && Array.isArray((raw as { discoveredUrls?: unknown[] }).discoveredUrls)) {
     const discovered = (raw as { discoveredUrls: unknown[] }).discoveredUrls
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .filter((value) => isAllowedCatalogUrl(value, fallbackUrl));
 
     if (discovered.length > 0) {
-      return discovered;
+      return prioritizeUrls(discovered, safeParseUrl(fallbackUrl));
     }
   }
 
@@ -487,7 +496,8 @@ function normalizeCandidateUrl(candidate: string, baseUrl: string): string | und
   }
 
   try {
-    return new URL(value, baseUrl).toString();
+    const normalized = new URL(value, baseUrl).toString();
+    return isAllowedCatalogUrl(normalized, baseUrl) ? normalized : undefined;
   } catch {
     return undefined;
   }
@@ -497,9 +507,7 @@ function prioritizeUrls(urls: string[], fallback: URL | undefined): string[] {
   const sameHost = urls.filter((url) => isSameHost(url, fallback));
   const preferred = sameHost.filter((url) => isCatalogLike(url));
   const regular = sameHost.filter((url) => !isCatalogLike(url));
-  const ranked = [...preferred, ...regular];
-  const offDomain = urls.filter((url) => !isSameHost(url, fallback));
-  return [...ranked, ...offDomain];
+  return [...preferred, ...regular];
 }
 
 function isSameHost(candidateUrl: string, fallback: URL | undefined): boolean {
@@ -508,7 +516,7 @@ function isSameHost(candidateUrl: string, fallback: URL | undefined): boolean {
   }
 
   try {
-    return new URL(candidateUrl).hostname === fallback.hostname;
+    return normalizeHostname(new URL(candidateUrl).hostname) === normalizeHostname(fallback.hostname);
   } catch {
     return false;
   }
@@ -635,4 +643,24 @@ function buildSiteTrace(
       mergedProducts: mergedProducts.length,
     },
   };
+}
+
+function clampPageSize(value?: number): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 200;
+  }
+
+  return Math.max(1, Math.min(value, 200));
+}
+
+function clampOffset(value?: number): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.trunc(value));
+}
+
+function normalizeHostname(value: string): string {
+  return value.trim().toLowerCase().replace(/^www\./, '');
 }

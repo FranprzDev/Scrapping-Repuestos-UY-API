@@ -1,10 +1,23 @@
 import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
+import { ADMITTED_HOUSES } from './domain/domain-rules';
 import { CatalogScrapingService } from './catalog-scraping.service';
 import { JobQueueService } from './jobs/job.queue';
 import { type ScrapingOperationPayload } from './interfaces/scraping.types';
 import { ScrapingService } from './scraping.service';
+
+const INVENTORY_HOUSE_OPTIONS = ADMITTED_HOUSES.map((house) => ({
+  label: house.label,
+  value: house.canonicalHostname,
+}));
+
+const INVENTORY_HOUSE_LABELS: Record<string, string> = Object.fromEntries(
+  ADMITTED_HOUSES.flatMap((house) => [
+    [house.canonicalHostname, house.label],
+    ...house.hostnames.map((hostname) => [hostname, house.label] as const),
+  ]),
+);
 
 @Controller()
 export class ScrapingController {
@@ -142,6 +155,8 @@ export class ScrapingController {
     @Query('priceState') priceState?: string,
     @Query('availability') availability?: string,
     @Query('priceOrder') priceOrder?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.catalogScrapingService.getCurrentInventory({
       site,
@@ -149,6 +164,9 @@ export class ScrapingController {
       priceState,
       availability,
       priceOrder,
+    }, {
+      limit: Number(limit),
+      offset: Number(offset),
     });
   }
 
@@ -524,6 +542,9 @@ function renderInventoryPage(): string {
     </main>
 
     <script>
+      const HOUSE_OPTIONS = ${JSON.stringify(INVENTORY_HOUSE_OPTIONS)};
+      const HOUSE_LABELS = ${JSON.stringify(INVENTORY_HOUSE_LABELS)};
+
       const state = {
         search: '',
         house: '',
@@ -539,7 +560,7 @@ function renderInventoryPage(): string {
       const scrollSentinel = document.getElementById('scrollSentinel');
       const tableWrap = document.querySelector('.table-wrap');
 
-      const PAGE_SIZE = 100;
+      const PAGE_SIZE = 200;
       const SEARCH_DEBOUNCE_MS = 500;
 
       const inventory = {
@@ -600,27 +621,18 @@ function renderInventoryPage(): string {
       }
 
       function normalizeHouseLabel(site) {
-        const value = String(site ?? '').toLowerCase();
-        if (value.includes('chaparei')) return 'Chaparei';
-        if (value.includes('taxitor')) return 'Taxitor';
-        if (value.includes('acesur')) return 'Acesur';
-        if (value.includes('selvir')) return 'Selvir';
         try {
-          return new URL(site).hostname.replace(/^www\./, '');
+          const hostname = new URL(site).hostname.replace(/^www\./, '').toLowerCase();
+          return HOUSE_LABELS[hostname] ?? hostname;
         } catch {
-          return String(site ?? '-');
+          const hostname = String(site ?? '').trim().toLowerCase().replace(/^www\./, '');
+          return HOUSE_LABELS[hostname] ?? (hostname || '-');
         }
       }
 
       function renderHouseOptions() {
-        const preferred = [
-          { label: 'Taxitor', value: 'https://taxitor.uy/articulos/filtro/1/-/-/' },
-          { label: 'Acesur', value: 'https://acesur.uy/escritorio/ofertas/INTERNET' },
-          { label: 'Chaparei', value: 'https://www.chaparei.com/productos/?m=171' },
-          { label: 'Selvir', value: 'https://www.selvir.com.uy/product-category/carroceria/' },
-        ];
         const current = houseFilter.value;
-        houseFilter.innerHTML = '<option value="">Todas las casas</option>' + preferred.map((item) => '<option value="' + escapeHtml(item.value) + '">' + escapeHtml(item.label) + '</option>').join('');
+        houseFilter.innerHTML = '<option value="">Todas las casas</option>' + HOUSE_OPTIONS.map((item) => '<option value="' + escapeHtml(item.value) + '">' + escapeHtml(item.label) + '</option>').join('');
         houseFilter.value = current;
       }
 

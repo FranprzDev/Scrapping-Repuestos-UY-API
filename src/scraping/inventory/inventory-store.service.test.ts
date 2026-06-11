@@ -32,3 +32,22 @@ test('getStats agrupa por host base y no por url completa', async () => {
   assert.ok(queries.some((sql) => sql.includes('split_part')));
   assert.ok(queries.some((sql) => sql.includes("replace(replace(lower(site), 'https://', ''), 'http://', '')")));
 });
+
+test('getFilteredPage limita el resultado a 200 y aplica offset', async () => {
+  let capturedSql = '';
+  let capturedParams: unknown[] = [];
+
+  const service = new InventoryStoreService({
+    async query(sql: string, params?: unknown[]) {
+      capturedSql = sql;
+      capturedParams = params ?? [];
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({}, { limit: 500, offset: 15 });
+
+  assert.ok(capturedSql.includes('LIMIT $1'));
+  assert.ok(capturedSql.includes('OFFSET $2'));
+  assert.deepEqual(capturedParams, [200, 15]);
+});

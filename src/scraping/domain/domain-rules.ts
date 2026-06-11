@@ -20,6 +20,13 @@ export interface DomainRule {
   };
 }
 
+export interface AdmittedHouse {
+  id: string;
+  label: string;
+  canonicalHostname: string;
+  hostnames: string[];
+}
+
 export const DOMAIN_RULES: DomainRule[] = [
   {
     id: 'taxitor',
@@ -114,10 +121,27 @@ export const DOMAIN_RULES: DomainRule[] = [
 
 export function findDomainRule(url: string): DomainRule | undefined {
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return DOMAIN_RULES.find((rule) => rule.hostnames.includes(hostname));
+    const hostname = normalizeHostname(new URL(url).hostname);
+    return DOMAIN_RULES.find((rule) => rule.hostnames.map((value) => normalizeHostname(value)).includes(hostname));
   } catch {
     return undefined;
+  }
+}
+
+export function getAllowedHostnames(): string[] {
+  return Array.from(
+    new Set(
+      DOMAIN_RULES.flatMap((rule) => rule.hostnames.map((hostname) => normalizeHostname(hostname))),
+    ),
+  );
+}
+
+export function isAdmittedHouseUrl(url: string): boolean {
+  try {
+    const hostname = normalizeHostname(new URL(url).hostname);
+    return getAllowedHostnames().includes(hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -125,4 +149,23 @@ export function getSeedUrls(url: string, rule?: DomainRule): string[] {
   const seeds = new Set<string>([url]);
   rule?.seedUrls?.forEach((seed) => seeds.add(seed));
   return Array.from(seeds);
+}
+
+export const ADMITTED_HOUSES: AdmittedHouse[] = DOMAIN_RULES.map((rule) => ({
+  id: rule.id,
+  label: formatHouseLabel(rule.id),
+  canonicalHostname: normalizeHostname(rule.hostnames[0] ?? rule.id),
+  hostnames: rule.hostnames.map((hostname) => normalizeHostname(hostname)),
+}));
+
+function normalizeHostname(value: string): string {
+  return value.trim().toLowerCase().replace(/^www\./, '');
+}
+
+function formatHouseLabel(id: string): string {
+  return id
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ');
 }

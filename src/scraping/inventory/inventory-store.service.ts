@@ -260,8 +260,8 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   const params: unknown[] = [];
 
   if (filters.site?.trim()) {
-    params.push(filters.site.trim());
-    conditions.push(`site = $${params.length}`);
+    params.push(normalizeSiteHost(filters.site.trim()));
+    conditions.push(`split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1) = $${params.length}`);
   }
 
   const search = filters.search?.trim();
@@ -334,6 +334,19 @@ function normalizeState(value?: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function normalizeSiteHost(site: string): string {
+  try {
+    return new URL(site).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return site
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0];
+  }
+}
+
 function buildOrderByClause(priceOrder?: string): string {
   const normalized = priceOrder?.trim().toLowerCase();
   if (normalized === 'asc') {
@@ -371,7 +384,7 @@ function normalizeLimit(value?: number): number | undefined {
     return undefined;
   }
 
-  const normalized = Math.max(1, Math.min(Math.trunc(value as number), 101));
+  const normalized = Math.max(1, Math.min(Math.trunc(value as number), 200));
   return normalized;
 }
 

@@ -2,7 +2,7 @@
 import * as assert from 'node:assert/strict';
 import { findDomainRule } from './domain-rules';
 import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
-import { countQualityWarnings, dedupeProducts, isSellableProduct, qualityGate } from './product-quality';
+import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 
 test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
@@ -153,6 +153,13 @@ test('descubre productos Chaparei por heuristica semantica aunque el href no sea
 
   const links = extractCandidateLinks(html, 'https://www.chaparei.com/productos/?m=171', rule);
   assert.equal(links.productLinks.length, 1);
+});
+
+test('acepta enlaces del mismo host aunque cambien entre www y sin www', () => {
+  assert.equal(
+    isAllowedCatalogUrl('https://www.feyvi.com.uy/repuestos/acabamiento-exterior/', 'https://feyvi.com.uy/repuestos/acabamiento-exterior/'),
+    true,
+  );
 });
 
 test('descubre opciones de orden Chaparei desde option[value]', () => {
@@ -497,6 +504,30 @@ test('rechaza paginas 404 aunque tengan texto y precio', () => {
   assert.equal(products.length, 0);
 });
 
+test('rechaza labels de UI y enlaces externos aunque parezcan productos', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const products = qualityGate([
+    {
+      productName: 'Ordenar por',
+      price: '100',
+      sourceUrl: 'https://www.chaparei.com/productos/?m=171',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+    },
+    {
+      productName: 'TORTA ROCKY 41 TIROS',
+      price: '1990',
+      sourceUrl: 'https://www.mundopirotecnico.uy/catalogo/tortas-y-festivales/linea-tradicional/torta-rocky-41-tiros-nuevo-2023-mp1006/',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+    },
+  ], rule);
+
+  assert.equal(products.length, 0);
+});
+
 test('deduplica por sourceUrl sin perder datos utiles', () => {
   const products = dedupeProducts([
     {
@@ -545,6 +576,4 @@ test('resume warnings de calidad por tipo', () => {
     not_sellable: 2,
   });
 });
-
-
 
