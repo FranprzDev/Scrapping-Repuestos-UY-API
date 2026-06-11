@@ -383,3 +383,74 @@ test('pagina inventario con 200 items y calcula hasMore con el total', async () 
   assert.equal(page.hasMore, true);
   assert.equal(page.total, 250);
 });
+
+test('resetea por completo los datos scrapeados y limpia el archive', async () => {
+  const queries: string[] = [];
+  let archiveCleared = false;
+
+  const service = new CatalogScrapingService(
+    { runTask: async () => ({}) } as never,
+    {
+      async getFilteredPage() {
+        return [];
+      },
+      async countFiltered() {
+        return 0;
+      },
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 0;
+      },
+      async countBySite() {
+        return 0;
+      },
+    } as never,
+    { saveSiteCatalog: async () => ({ outputPath: '', total: 0, imagesSaved: 0, products: [] }), clearAll: async () => { archiveCleared = true; } } as never,
+    {
+      async ensureCatalogTables() {},
+      async query(sql: string) {
+        queries.push(sql.trim());
+        if (/DELETE FROM scraping_inventory/i.test(sql)) {
+          return { rows: [{ id: '1' }, { id: '2' }] } as never;
+        }
+
+        if (/DELETE FROM scraping_site_links/i.test(sql)) {
+          return { rows: [{ url: 'a' }] } as never;
+        }
+
+        if (/DELETE FROM scraping_run_sites/i.test(sql)) {
+          return { rows: [{ site: 'a' }, { site: 'b' }, { site: 'c' }] } as never;
+        }
+
+        if (/DELETE FROM scraping_runs/i.test(sql)) {
+          return { rows: [{ id: 'run-1' }] } as never;
+        }
+
+        if (/DELETE FROM scraping_jobs/i.test(sql)) {
+          return { rows: [{ id: 'job-1' }, { id: 'job-2' }] } as never;
+        }
+
+        return { rows: [] } as never;
+      },
+    } as never,
+  );
+
+  const result = await service.resetCatalogData();
+
+  assert.equal(result.inventoryDeleted, 2);
+  assert.equal(result.siteLinksDeleted, 1);
+  assert.equal(result.runSitesDeleted, 3);
+  assert.equal(result.runsDeleted, 1);
+  assert.equal(result.jobsDeleted, 2);
+  assert.equal(archiveCleared, true);
+  assert.ok(queries.some((sql) => /BEGIN/i.test(sql)));
+  assert.ok(queries.some((sql) => /COMMIT/i.test(sql)));
+});

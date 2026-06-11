@@ -117,6 +117,12 @@ export class ScrapingController {
     };
   }
 
+  @Post('scraping/inventory/reset')
+  @HttpCode(200)
+  async resetInventory() {
+    return this.catalogScrapingService.resetCatalogData();
+  }
+
   @Post('scraping/quick-run')
   @HttpCode(202)
   quickRunSingleSite(@Body() payload: SingleSiteCatalogScrapeRequestDto) {
@@ -765,6 +771,12 @@ function renderInventoryPage(): string {
 
           if (!products.length && currentOffset === 0) {
             renderRows([]);
+            inventory.total = Number(data.total ?? inventory.total ?? 0);
+            inventory.offset = 0;
+            inventory.hasMore = false;
+            setLoadMoreStatus('');
+            setScrollObserverEnabled(false);
+            return;
           } else if (products.length) {
             rows.insertAdjacentHTML('beforeend', renderRows(products));
           }

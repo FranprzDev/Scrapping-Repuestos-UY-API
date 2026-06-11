@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
@@ -48,6 +48,11 @@ export class ArchiveStoreService {
       imagesSaved: productsWithImages.filter((product) => product.imagePath).length,
       products: productsWithImages,
     };
+  }
+
+  async clearAll(): Promise<void> {
+    await rm(path.join(this.outputRoot, 'catalog'), { recursive: true, force: true });
+    await rm(path.join(this.outputRoot, 'images'), { recursive: true, force: true });
   }
 
   private async downloadImage(imageUrl: string, imageDir: string, productName?: string) {
