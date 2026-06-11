@@ -66,3 +66,32 @@ test('feyvi extrae la ficha de un producto desde su pagina detalle', () => {
   assert.equal(products[0].price, '7,263');
   assert.equal(products[0].sku, '22917172GMC');
 });
+
+test('feyvi descarta productos no automotrices aunque esten dentro de /repuestos/', () => {
+  const rule = findDomainRule('https://www.feyvi.com.uy/repuestos/computadoras/all-in-one/');
+  assert.ok(rule);
+
+  const html = `
+    <div class="col-tile">
+      <div class="ty-grid-list__item">
+        <div class="ty-grid-list__item-name">
+          <a class="product-title" href="https://www.feyvi.com.uy/repuestos/computadoras/all-in-one/equipo-all-in-one-chuwi-ryzen-5-45ghz-16gb-512gb-ssd-27-qhd-180hz-c-equ2012/">EQUIPO ALL IN ONE CHUWI RYZEN 5</a>
+        </div>
+        <div class="ty-grid-list__price qty-wrap">
+          <span class="ty-price">
+            <span class="ty-price-num">$</span>
+            <span class="ty-price-num">49,990</span>
+          </span>
+        </div>
+        <button>Añadir al carrito</button>
+      </div>
+    </div>
+  `;
+
+  const products = qualityGate(
+    extractProductsFromHtml(html, 'https://www.feyvi.com.uy/repuestos/computadoras/all-in-one/', 'domain', rule),
+    rule,
+  );
+
+  assert.equal(products.length, 0);
+});

@@ -1,7 +1,7 @@
 ﻿import { HTMLElement, parse } from 'node-html-parser';
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
-import { cleanText, inferCurrency, normalizePriceValue, resolveAvailability } from './product-quality';
+import { cleanText, inferCurrency, isAllowedCatalogUrl, normalizePriceValue, resolveAvailability } from './product-quality';
 
 const GENERIC_PRICE_SELECTORS = ['.price', '[class*="price"]', '[class*="precio"]', '.woocommerce-Price-amount'];
 
@@ -12,7 +12,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
 
   root.querySelectorAll('option[value]').forEach((option) => {
     const value = normalizeUrl(option.getAttribute('value'), baseUrl);
-    if (!value || rule.excludeUrlPatterns.some((pattern) => pattern.test(value))) {
+    if (!value || rule.excludeUrlPatterns.some((pattern) => pattern.test(value)) || !isAllowedCatalogUrl(value, baseUrl)) {
       return;
     }
 
@@ -30,7 +30,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
 
   root.querySelectorAll('a[href]').forEach((anchor) => {
     const href = normalizeUrl(anchor.getAttribute('href'), baseUrl);
-    if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href))) {
+    if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href)) || !isAllowedCatalogUrl(href, baseUrl)) {
       return;
     }
 
@@ -109,7 +109,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
   root.querySelectorAll('link[rel]').forEach((element) => {
     const rel = (element.getAttribute('rel') ?? '').toLowerCase();
     const href = normalizeUrl(element.getAttribute('href'), baseUrl);
-    if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href))) {
+    if (!href || rule.excludeUrlPatterns.some((pattern) => pattern.test(href)) || !isAllowedCatalogUrl(href, baseUrl)) {
       return;
     }
 
@@ -278,7 +278,7 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
 
   root.querySelectorAll('a[href]').forEach((anchor) => {
     const href = normalizeUrl(anchor.getAttribute('href'), pageUrl);
-    if (!href || seen.has(href)) {
+    if (!href || seen.has(href) || !isAllowedCatalogUrl(href, pageUrl)) {
       return;
     }
 
@@ -305,6 +305,10 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       ? extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card)
       : extractPriceFromNode(card);
     if (!productName) {
+      return;
+    }
+
+    if (rule.id === 'feyvi' && (!rawPrice || isFeyviUiLabel(productName, cardText, href))) {
       return;
     }
 
@@ -975,6 +979,26 @@ function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule
   return Boolean(price) || /comprar|agregar al carrito|consultar|en stock|agotado|sin stock|disponible|iva inc|producto|repuesto|articulo|ficha/i.test(
     normalizeComparableText(signals),
   );
+}
+
+function isFeyviUiLabel(productName: string, cardText: string, href: string): boolean {
+  const normalizedName = normalizeComparableText(productName);
+  const normalizedCardText = normalizeComparableText(cardText);
+  const normalizedHref = href.toLowerCase();
+
+  if (/^(ordenar por|total productos(?:\s+\d+)?|mostrar(?:\s+\d+)?|ver mas|ver mas productos|filtros?|resultados|categoria(?:s)?|pagina(?:\s+\d+)?)$/.test(normalizedName)) {
+    return true;
+  }
+
+  if (/^(ordenar por|total productos(?:\s+\d+)?|mostrar(?:\s+\d+)?|ver mas|ver mas productos|filtros?|resultados|categoria(?:s)?|pagina(?:\s+\d+)?)$/.test(normalizedCardText)) {
+    return true;
+  }
+
+  if (/sort(?:_|-)?by|orderby|filter|filters|pagination|page-\d+/i.test(normalizedHref)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isChapareiProductPage(pageUrl: string, root: HTMLElement): boolean {

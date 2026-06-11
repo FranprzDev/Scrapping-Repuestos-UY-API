@@ -15,7 +15,7 @@ test('getRunById expone trace y payload de sitios', async () => {
               strategy: 'test-strategy',
               sites_processed: 1,
               inventory_size: 2,
-              summary: { results: [{ site: 'https://example.com', status: 'success' }] },
+              summary: { results: [{ site: 'https://taxitor.uy/articulos/mostrar/1319', status: 'success' }] },
             },
           ],
         } as never;
@@ -25,10 +25,10 @@ test('getRunById expone trace y payload de sitios', async () => {
         return {
           rows: [
             {
-              site: 'https://example.com',
+              site: 'https://taxitor.uy/articulos/mostrar/1319',
               status: 'success',
               payload: {
-                site: 'https://example.com',
+                site: 'https://taxitor.uy/articulos/mostrar/1319',
                 trace: {
                   crawl: { discoveryMethod: 'sitemap', pagesDiscovered: 3, urlsDiscovered: 10 },
                   extract: { pagesProcessed: 10, urlsRequested: 10, rawProducts: 8, mergedProducts: 7 },
@@ -54,7 +54,7 @@ test('getRunById expone trace y payload de sitios', async () => {
 
   assert.ok(run);
   assert.equal(run?.runId, '11111111-1111-1111-1111-111111111111');
-  assert.equal(run?.sites[0]?.site, 'https://example.com');
+  assert.equal(run?.sites[0]?.site, 'https://taxitor.uy/articulos/mostrar/1319');
   assert.deepEqual(run?.sites[0]?.trace, {
     crawl: { discoveryMethod: 'sitemap', pagesDiscovered: 3, urlsDiscovered: 10 },
     extract: { pagesProcessed: 10, urlsRequested: 10, rawProducts: 8, mergedProducts: 7 },
@@ -73,7 +73,7 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
           return {
             provider: 'http',
             requestedAt: '2026-06-06T00:00:00.000Z',
-            raw: { discoveredUrls: ['https://example.com/producto/1'] },
+            raw: { discoveredUrls: ['https://taxitor.uy/articulos/mostrar/1319'] },
             normalizedProducts: [],
           };
         }
@@ -85,7 +85,7 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
             products: [
               {
                 name: 'Producto sin precio',
-                productUrl: 'https://example.com/producto/1',
+                productUrl: 'https://taxitor.uy/articulos/mostrar/1319',
                 brand: 'Marca',
               },
             ],
@@ -127,7 +127,7 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
   );
 
   const run = await service.scrapeCatalogWithPrices({
-    urls: ['https://example.com'],
+    urls: ['https://taxitor.uy/articulos/mostrar/1319'],
     maxPagesPerSite: 10,
     maxProductsPerSite: 10,
     siteConcurrency: 1,
@@ -135,7 +135,7 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
 
   assert.equal(run.inventorySize, 1);
   assert.equal(savedCatalogs.length, 1);
-  assert.equal(savedCatalogs[0]?.site, 'https://example.com');
+  assert.equal(savedCatalogs[0]?.site, 'https://taxitor.uy/articulos/mostrar/1319');
   assert.equal(savedCatalogs[0]?.products[0]?.productName, 'Producto sin precio');
   assert.equal(savedCatalogs[0]?.products[0]?.price, undefined);
   assert.ok(savedCatalogs[0]?.products[0]?.qualityWarnings?.includes('missing_price'));
@@ -155,9 +155,9 @@ test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
             requestedAt: '2026-06-06T00:00:00.000Z',
             raw: {
               discoveredUrls: [
-                'https://example.com/producto/1',
-                'https://example.com/producto/2',
-                'https://example.com/producto/3',
+                'https://taxitor.uy/articulos/mostrar/1319',
+                'https://taxitor.uy/articulos/mostrar/1320',
+                'https://taxitor.uy/articulos/mostrar/1321',
               ],
             },
             normalizedProducts: [],
@@ -205,17 +205,88 @@ test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
   );
 
   await service.scrapeCatalogWithPrices({
-    urls: ['https://example.com'],
+    urls: ['https://taxitor.uy/articulos/mostrar/1319'],
     maxPagesPerSite: 10,
     maxProductsPerSite: 1,
     siteConcurrency: 1,
   });
 
   assert.deepEqual(extractPayloadUrls, [
-    'https://example.com/producto/1',
-    'https://example.com/producto/2',
-    'https://example.com/producto/3',
+    'https://taxitor.uy/articulos/mostrar/1319',
+    'https://taxitor.uy/articulos/mostrar/1320',
+    'https://taxitor.uy/articulos/mostrar/1321',
   ]);
+});
+
+test('filtra urls externas y casas no admitidas antes de extraer', async () => {
+  let extractPayloadUrls: string[] = [];
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string, payload: { urls?: string[] }) {
+        if (task === 'crawl') {
+          return {
+            provider: 'http',
+            requestedAt: '2026-06-06T00:00:00.000Z',
+            raw: {
+              discoveredUrls: [
+                'https://www.mundopirotecnico.uy/catalogo/tortas-y-festivales/linea-tradicional/torta-rocky-41-tiros-nuevo-2023-mp1006/',
+                'https://api.whatsapp.com/send?text=Hola',
+                'https://taxitor.uy/articulos/mostrar/1319',
+              ],
+            },
+            normalizedProducts: [],
+          };
+        }
+
+        extractPayloadUrls = payload.urls ?? [];
+
+        return {
+          provider: 'http',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: { products: [] },
+          normalizedProducts: [],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 0;
+      },
+      async countBySite() {
+        return 0;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(site: string, products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }>) {
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  await service.scrapeCatalogWithPrices({
+    urls: ['https://taxitor.uy/articulos/mostrar/1319'],
+    maxPagesPerSite: 10,
+    maxProductsPerSite: 1,
+    siteConcurrency: 1,
+  });
+
+  assert.deepEqual(extractPayloadUrls, ['https://taxitor.uy/articulos/mostrar/1319']);
 });
 
 test('expone stats globales y por sitio', async () => {
@@ -260,4 +331,55 @@ test('expone stats globales y por sitio', async () => {
       { site: 'https://www.selvir.com.uy/product-category/carroceria/', total: 24 },
     ],
   });
+});
+
+test('pagina inventario con 200 items y calcula hasMore con el total', async () => {
+  let pagination: { limit?: number; offset?: number } | undefined;
+
+  const service = new CatalogScrapingService(
+    { runTask: async () => ({}) } as never,
+    {
+      async getFilteredPage(_filters: never, currentPagination: { limit?: number; offset?: number }) {
+        pagination = currentPagination;
+        return Array.from({ length: 200 }, (_, index) => ({
+          id: `id-${index}`,
+          site: 'https://taxitor.uy/articulos/mostrar/1319',
+          productName: `Producto ${index}`,
+          price: '100',
+          extractedAt: '2026-06-06T00:00:00.000Z',
+          provider: 'domain' as const,
+          createdAt: '2026-06-06T00:00:00.000Z',
+          updatedAt: '2026-06-06T00:00:00.000Z',
+          lastSeenAt: '2026-06-06T00:00:00.000Z',
+        }));
+      },
+      async countFiltered() {
+        return 250;
+      },
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 0;
+      },
+      async countBySite() {
+        return 0;
+      },
+    } as never,
+    { saveSiteCatalog: async () => ({ outputPath: '', total: 0, imagesSaved: 0, products: [] }) } as never,
+    { ensureCatalogTables: async () => {}, query: async () => ({ rows: [] }) } as never,
+  );
+
+  const page = await service.getCurrentInventory({ site: 'taxitor.uy' }, { limit: 200, offset: 0 });
+
+  assert.deepEqual(pagination, { limit: 200, offset: 0 });
+  assert.equal(page.products.length, 200);
+  assert.equal(page.hasMore, true);
+  assert.equal(page.total, 250);
 });
