@@ -12,6 +12,12 @@ export interface HttpResponseData {
   body: string;
 }
 
+export interface HttpRequestInit {
+  method?: 'GET' | 'POST';
+  headers?: Record<string, string>;
+  body?: string;
+}
+
 const HTTP_AGENT = new HttpAgent({
   keepAlive: true,
   maxSockets: 100,
@@ -27,9 +33,9 @@ const HTTPS_AGENT = new HttpsAgent({
   rejectUnauthorized: false,
 });
 
-export async function fetchHtml(url: string, redirects = 5): Promise<HttpResponseData> {
+export async function fetchHtml(url: string, redirects = 5, init: HttpRequestInit = {}): Promise<HttpResponseData> {
   const target = new URL(url);
-  const response = await requestUrl(target, redirects);
+  const response = await requestUrl(target, redirects, init);
 
   return {
     url,
@@ -40,21 +46,33 @@ export async function fetchHtml(url: string, redirects = 5): Promise<HttpRespons
   };
 }
 
-async function requestUrl(target: URL, redirects: number): Promise<HttpResponseData> {
+async function requestUrl(target: URL, redirects: number, init: HttpRequestInit): Promise<HttpResponseData> {
   const transport = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  const method = init.method ?? 'GET';
+  const body = init.body ?? '';
+  const headers: Record<string, string> = {
+    'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0; +hybrid-scraper)',
+    accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+    'accept-language': 'es-ES,es;q=0.9,en;q=0.7',
+    'accept-encoding': 'gzip, deflate, br',
+    connection: 'keep-alive',
+    ...init.headers,
+  };
+
+  if (method === 'POST' && !headers['content-type']) {
+    headers['content-type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+  }
+
+  if (method === 'POST' && !headers['content-length']) {
+    headers['content-length'] = Buffer.byteLength(body).toString();
+  }
 
   return new Promise<HttpResponseData>((resolve, reject) => {
     const req = transport(
       target,
       {
-        method: 'GET',
-        headers: {
-          'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0; +hybrid-scraper)',
-          accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-          'accept-language': 'es-ES,es;q=0.9,en;q=0.7',
-          'accept-encoding': 'gzip, deflate, br',
-          connection: 'keep-alive',
-        },
+        method,
+        headers,
         agent: target.protocol === 'https:' ? HTTPS_AGENT : HTTP_AGENT,
         rejectUnauthorized: false,
       },
@@ -65,7 +83,7 @@ async function requestUrl(target: URL, redirects: number): Promise<HttpResponseD
         if (statusCode >= 300 && statusCode < 400 && location && redirects > 0) {
           res.resume();
           const redirected = new URL(location, target);
-          resolve(requestUrl(redirected, redirects - 1));
+          resolve(requestUrl(redirected, redirects - 1, init));
           return;
         }
 
@@ -88,7 +106,7 @@ async function requestUrl(target: URL, redirects: number): Promise<HttpResponseD
     });
 
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 

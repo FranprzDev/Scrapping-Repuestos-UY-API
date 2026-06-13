@@ -424,6 +424,13 @@ export class CatalogScrapingService {
 }
 
 function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto) {
+  if (isSelvirSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 1000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   if (isFeyviSite(siteUrl)) {
     return {
       maxPagesPerSite: request.maxPagesPerSite ?? 5000,
@@ -440,6 +447,14 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
 function isFeyviSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'feyvi.com.uy';
+  } catch {
+    return false;
+  }
+}
+
+function isSelvirSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'selvir.com.uy';
   } catch {
     return false;
   }
