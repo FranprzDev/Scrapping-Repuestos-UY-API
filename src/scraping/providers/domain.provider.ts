@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { parse } from 'node-html-parser';
 import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from '../interfaces/scraping.types';
 import { extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
@@ -106,6 +107,16 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
+    if (rule.id === 'selvir') {
+      const response = await fetchHtml(sourceUrl);
+      return {
+        seedUrl: sourceUrl,
+        pages: [{ url: response.finalUrl, depth: 0, productCount: extractProductsFromHtml(response.body, response.finalUrl, this.name, rule).length }],
+        discoveredUrls: [sourceUrl],
+        discoveryMethod: 'selvir-http',
+      };
+    }
+
     if (rule.preferredMethod === 'api') {
       return {
         seedUrl: sourceUrl,
@@ -194,8 +205,20 @@ export class DomainProvider implements ScrapingProvider {
       let method = 'http';
 
       try {
-        const response = await fetchHtml(url);
-        usableProducts = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+        if (rule.id === 'selvir') {
+          const response = await fetchHtml(url);
+          const archiveSummary = extractSelvirArchiveSummary(response.body, response.finalUrl);
+
+          if (archiveSummary) {
+            usableProducts = await this.extractSelvirArchiveProducts(url, response, archiveSummary, maxItems, rule);
+            method = 'selvir-ajax';
+          } else {
+            usableProducts = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+          }
+        } else {
+          const response = await fetchHtml(url);
+          usableProducts = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+        }
       } catch (error) {
         this.logger.warn(`HTTP scrape fallido para ${url}: ${formatError(error)}`);
       }
@@ -251,6 +274,65 @@ export class DomainProvider implements ScrapingProvider {
 
     return dedupeProducts(products).slice(0, maxItems);
   }
+
+  private async extractSelvirArchiveProducts(
+    categoryUrl: string,
+    initialResponse: Awaited<ReturnType<typeof fetchHtml>>,
+    archiveSummary: { categoryLabel: string; totalResults?: number; totalPages?: number },
+    maxItems: number,
+    rule: DomainRule,
+  ): Promise<ProductRecord[]> {
+    const products = qualityGate(
+      extractProductsFromHtml(initialResponse.body, initialResponse.finalUrl, this.name, rule),
+      rule,
+    );
+    const totalPages = archiveSummary.totalPages ?? 1;
+    const pageUrlBase = initialResponse.finalUrl;
+
+    for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
+      const ajaxResponse = await fetchSelvirArchivePage(categoryUrl, archiveSummary.categoryLabel, page);
+      const ajaxPayload = parseSelvirAjaxResponse(ajaxResponse.body);
+      let batch = qualityGate(
+        extractProductsFromHtml(ajaxPayload.html, pageUrlBase, this.name, rule),
+        rule,
+      );
+
+      if (batch.length === 0) {
+        try {
+          const fallbackResponse = await fetchHtml(buildSelvirArchivePageUrl(pageUrlBase, page));
+          batch = qualityGate(
+            extractProductsFromHtml(fallbackResponse.body, fallbackResponse.finalUrl, this.name, rule),
+            rule,
+          );
+        } catch (error) {
+          this.logger.warn(`No se pudo leer pagina Selvir ${pageUrlBase} page=${page}: ${formatError(error)}`);
+        }
+      }
+
+      if (batch.length === 0) {
+        break;
+      }
+
+      const merged = dedupeProducts([...products, ...batch]).slice(0, maxItems);
+      if (merged.length <= products.length) {
+        break;
+      }
+
+      products.length = 0;
+      products.push(...merged);
+
+      if (ajaxPayload.last) {
+        break;
+      }
+    }
+
+    return dedupeProducts(products).slice(0, maxItems);
+  }
+}
+
+export function buildSelvirArchivePageUrl(baseUrl: string, page: number): string {
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return new URL(`page/${page}/`, normalizedBase).toString();
 }
 
 function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { totalRecords?: number; products: ProductRecord[] } {
@@ -305,6 +387,94 @@ function buildAcesurImageUrl(imageName: string): string | undefined {
   }
 
   return `https://acesur.uy/fotos_articulos/${imageName}`;
+}
+
+export function extractSelvirArchiveSummary(body: string, finalUrl: string): { categoryLabel: string; totalResults?: number; totalPages?: number } | undefined {
+  const root = parse(body);
+  const title = cleanSelvirLabel(
+    root.querySelector('h1')?.text
+      ?? root.querySelector('.woocommerce-breadcrumb')?.text
+      ?? root.querySelector('title')?.text,
+  );
+
+  if (!title) {
+    return undefined;
+  }
+
+  const text = root.text ?? '';
+  const resultsMatch =
+    text.match(/mostrando\s+\d+\s*[–-]\s*\d+\s+de\s+(\d+)\s+resultados/i)
+    ?? text.match(/mostrando\s+los\s+(\d+)\s+resultados/i);
+  if (!resultsMatch) {
+    return undefined;
+  }
+  const totalResults = resultsMatch ? Number(resultsMatch[1]) : undefined;
+  const totalPages = totalResults ? Math.max(1, Math.ceil(totalResults / 30)) : undefined;
+
+  if (/\/product\//i.test(finalUrl)) {
+    return undefined;
+  }
+
+  return {
+    categoryLabel: title,
+    totalResults,
+    totalPages,
+  };
+}
+
+async function fetchSelvirArchivePage(categoryUrl: string, categoryLabel: string, page: number) {
+  const body = new URLSearchParams({
+    action: 'infinite_scroll_archive_products',
+    category: categoryLabel,
+    page: String(page),
+    orderby: 'menu_order',
+  }).toString();
+
+  return fetchHtml('https://www.selvir.com.uy/wp-admin/admin-ajax.php', 3, {
+    method: 'POST',
+    body,
+    headers: {
+      origin: 'https://www.selvir.com.uy',
+      referer: categoryUrl,
+      'x-requested-with': 'XMLHttpRequest',
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    },
+  });
+}
+
+export function parseSelvirAjaxResponse(body: string): { html: string; cantArticulos?: number; last?: boolean } {
+  try {
+    const parsed = JSON.parse(body) as { d?: unknown; cantArticulos?: unknown; last?: unknown };
+    if (parsed && typeof parsed.d === 'string') {
+      return {
+        html: parsed.d,
+        cantArticulos: typeof parsed.cantArticulos === 'number' ? parsed.cantArticulos : undefined,
+        last: typeof parsed.last === 'boolean' ? parsed.last : undefined,
+      };
+    }
+  } catch {
+    // Selvir returns plain HTML on some responses; keep that path working.
+  }
+
+  return { html: body };
+}
+
+export function cleanSelvirLabel(value?: string): string | undefined {
+  const cleaned = value?.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return undefined;
+  }
+
+  let normalized = cleaned;
+  while (/^(?:Inicio|Home|Productos)\s*\/\s*/i.test(normalized)) {
+    normalized = normalized.replace(/^(?:Inicio|Home|Productos)\s*\/\s*/i, '');
+  }
+
+  return normalized
+    .replace(/\s+Orden predeterminado.*$/i, '')
+    .replace(/\s+archivos?\s*-\s*Selvir$/i, '')
+    .replace(/\s*-\s*Selvir$/i, '')
+    .trim() || undefined;
 }
 
 function uniqueStrings(values: string[]): string[] {

@@ -1,7 +1,7 @@
 import { ProductRecord } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
 
-const DEFAULT_NEGATIVE_AVAILABILITY = ['agotado', 'sin stock', 'out of stock', 'no disponible', 'consultar'];
+const DEFAULT_NEGATIVE_AVAILABILITY = ['agotado', 'sin stock', 'out of stock', 'no disponible'];
 const DEFAULT_POSITIVE_AVAILABILITY = ['en stock', 'disponible', 'agregar al carrito', 'anadir al carrito', 'comprar'];
 const INVALID_PRODUCT_NAMES = new Set([
   'productos',
@@ -214,7 +214,7 @@ export function qualityGate(products: ProductRecord[], rule?: DomainRule): Produ
       .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
       .filter((product) => {
         const warnings = product.qualityWarnings ?? [];
-        return !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
+        return product.availability !== 'out_of_stock' && !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
       }),
   );
 }

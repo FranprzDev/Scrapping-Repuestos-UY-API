@@ -3,8 +3,9 @@ import * as assert from 'node:assert/strict';
 import { findDomainRule } from './domain-rules';
 import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
+import { buildSelvirArchivePageUrl, cleanSelvirLabel, extractSelvirArchiveSummary, parseSelvirAjaxResponse } from '../providers/domain.provider';
 
-test('preserva productos agotados en cards tipo Chaparei', () => {
+test('rechaza productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
 
@@ -39,12 +40,7 @@ test('preserva productos agotados en cards tipo Chaparei', () => {
   `;
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
-  assert.equal(products.length, 1);
-  assert.equal(products[0].productName, 'ESPOLON -ORIGINAL-');
-  assert.equal(products[0].price, '12.463');
-  assert.equal(products[0].sourceUrl, 'https://www.chaparei.com/catalogo/carroceria/espolon-original-f0104160/');
-  assert.equal(products[0].availability, 'out_of_stock');
-  assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
+  assert.equal(products.length, 0);
 });
 
 test('acepta productos con carrito en detalle tipo Taxitor', () => {
@@ -363,14 +359,22 @@ test('extrae tarjetas Selvir reales sin mezclar titulo y precio entre productos'
   );
 });
 
-test.skip('limpia nombres y precios de listados Selvir', () => {
+test('limpia nombres y precios de listados Selvir', () => {
   const rule = findDomainRule('https://www.selvir.com.uy/amortiguadores/');
   assert.ok(rule);
 
   const html = `
-    <article>
+    <article class="product-item-container">
       <a href="/product/amortiguador-del-chery-beat-13/">
-        AMORTIGUADOR DEL CHERY BEAT 13 CÃ³digo 23152 $ 2.200 Disponible Comprar
+        <div class="product-info">
+          <div class="product-info-title">AMORTIGUADOR DEL CHERY BEAT 13 Código 23152 $ 2.200 Disponible Comprar</div>
+          <div class="product-info-price">
+            <span class="woocommerce-Price-amount amount">
+              <span class="woocommerce-Price-currencySymbol">$</span>
+              <span class="woocommerce-Price-currency">2.200</span>
+            </span>
+          </div>
+        </div>
       </a>
     </article>
   `;
@@ -528,6 +532,914 @@ test('rechaza labels de UI y enlaces externos aunque parezcan productos', () => 
   assert.equal(products.length, 0);
 });
 
+test('no confunde Consulte con agotado por defecto', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/product-category/suspension/');
+  assert.ok(rule);
+
+  const products = qualityGate([
+    {
+      productName: 'AMORTIGUADOR DEMO',
+      price: '1234',
+      availability: 'unknown',
+      sourceUrl: 'https://www.selvir.com.uy/product/amortiguador-demo/',
+      description: 'Consulte disponibilidad',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+    },
+  ], rule);
+
+  assert.equal(products.length, 1);
+});
+
+test('resume correctamente el archive de Selvir y limpia labels de categoria', () => {
+  const html = `
+    <html>
+      <head><title>Arranques y alternadores archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Arranques y alternadores Orden predeterminado</h1>
+          <div>Mostrando 1-30 de 405 resultados</div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/arranques-y-alternadores/');
+  assert.equal(summary?.categoryLabel, 'Arranques y alternadores');
+  assert.equal(summary?.totalResults, 405);
+  assert.equal(summary?.totalPages, 14);
+  assert.equal(cleanSelvirLabel('Inicio / Accesorios Orden predeterminado'), 'Accesorios');
+});
+
+test('resume Accesorios de Selvir con el conteo base esperado', () => {
+  const html = `
+    <html>
+      <head><title>Accesorios archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Accesorios Orden predeterminado</h1>
+          <div>Mostrando 1-30 de 506 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/accesorios/');
+  assert.equal(summary?.categoryLabel, 'Accesorios');
+  assert.equal(summary?.totalResults, 506);
+  assert.equal(summary?.totalPages, 17);
+});
+
+test('desempaqueta la respuesta ajax de Selvir y conserva el html util', () => {
+  const payload = parseSelvirAjaxResponse(JSON.stringify({
+    d: '<div class="product-item-container"><a href="/product/demo/">Demo</a></div>',
+    cantArticulos: 30,
+    last: false,
+  }));
+
+  assert.equal(payload.html.includes('product-item-container'), true);
+  assert.equal(payload.cantArticulos, 30);
+  assert.equal(payload.last, false);
+});
+
+test('acepta respuestas ajax de Selvir en html plano como fallback', () => {
+  const payload = parseSelvirAjaxResponse('<div class="product-item-container">Demo</div>');
+
+  assert.equal(payload.html.includes('product-item-container'), true);
+  assert.equal(payload.cantArticulos, undefined);
+  assert.equal(payload.last, undefined);
+});
+
+test('acepta respuestas ajax de Selvir vacias sin romper el desempaque', () => {
+  const payload = parseSelvirAjaxResponse(JSON.stringify({
+    d: '',
+    cantArticulos: 0,
+    last: false,
+  }));
+
+  assert.equal(payload.html, '');
+  assert.equal(payload.cantArticulos, 0);
+  assert.equal(payload.last, false);
+});
+
+test('construye la url de fallback de paginas Selvir', () => {
+  assert.equal(
+    buildSelvirArchivePageUrl('https://www.selvir.com.uy/limpieza-cuidado-y-emergencia/', 2),
+    'https://www.selvir.com.uy/limpieza-cuidado-y-emergencia/page/2/',
+  );
+});
+
+test('resume una categoria grande de Selvir con Cargar mas sin meter ruido extra', () => {
+  const html = `
+    <html>
+      <head><title>Carrocería archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Carrocería Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 23795 resultados</div>
+          <button>Cargar más</button>
+          <div>Se ha añadido el artículo al carrito.</div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/carroceria/');
+  assert.equal(summary?.categoryLabel, 'Carrocería');
+  assert.equal(summary?.totalResults, 23795);
+  assert.equal(summary?.totalPages, 794);
+});
+
+test('resume otra categoria grande de Selvir con el mismo patron', () => {
+  const html = `
+    <html>
+      <head><title>Motor archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Motor Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 5922 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/motor/');
+  assert.equal(summary?.categoryLabel, 'Motor');
+  assert.equal(summary?.totalResults, 5922);
+  assert.equal(summary?.totalPages, 198);
+});
+
+test('resume suspension de Selvir con el mismo archive summary', () => {
+  const html = `
+    <html>
+      <head><title>Suspensión archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Suspensión Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 5040 resultados</div>
+          <button>Cargar más</button>
+          <div>Consulte Disponibilidad</div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/suspension/');
+  assert.equal(summary?.categoryLabel, 'Suspensión');
+  assert.equal(summary?.totalResults, 5040);
+  assert.equal(summary?.totalPages, 168);
+});
+
+test('resume Bombas de Selvir con el mismo archive summary', () => {
+  const html = `
+    <html>
+      <head><title>Bombas archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Bombas Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 1619 resultados</div>
+          <button>Cargar más</button>
+          <div>Consulte Disponibilidad</div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/bombas/');
+  assert.equal(summary?.categoryLabel, 'Bombas');
+  assert.equal(summary?.totalResults, 1619);
+  assert.equal(summary?.totalPages, 54);
+});
+
+test('resume otras categorias del menu de Selvir sin arrastrar ruido de breadcrumb', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Aceites archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Home / Productos / Aceites Orden predeterminado</h1>
+              <div>Mostrando los 29 resultados</div>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/aceites/',
+      category: 'Aceites',
+      totalResults: 29,
+      totalPages: 1,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Tanques y flotadores archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Productos / Tanques y flotadores Orden predeterminado</h1>
+      <div>Mostrando 1–30 de 533 resultados</div>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/tanques-y-flotadores/',
+      category: 'Tanques y flotadores',
+      totalResults: 533,
+      totalPages: 18,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
+test('resume Selvir aunque el label util venga del breadcrumb y no del h1', () => {
+  const html = `
+    <html>
+      <head><title>Filtros y soportes archivos - Selvir</title></head>
+      <body>
+        <main>
+          <nav class="woocommerce-breadcrumb">Inicio / Productos / Filtros y soportes</nav>
+          <div>Mostrando 1–30 de 1105 resultados</div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/filtros-y-soportes/');
+  assert.equal(summary?.categoryLabel, 'Filtros y soportes');
+  assert.equal(summary?.totalResults, 1105);
+  assert.equal(summary?.totalPages, 37);
+});
+
+test('resume Tanques y flotadores de Selvir con el mismo archive summary', () => {
+  const html = `
+    <html>
+      <head><title>Tanques y flotadores archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Tanques y flotadores Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 533 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/tanques-y-flotadores/');
+  assert.equal(summary?.categoryLabel, 'Tanques y flotadores');
+  assert.equal(summary?.totalResults, 533);
+  assert.equal(summary?.totalPages, 18);
+});
+
+test('resume Lámparas de Selvir con breadcrumb compacto y conteo simple', () => {
+  const html = `
+    <html>
+      <head><title>Lámparas archivos - Selvir</title></head>
+      <body>
+        <main>
+          <nav class="woocommerce-breadcrumb">Inicio /Lámparas</nav>
+          <div>Orden predeterminado</div>
+          <div>Mostrando 1–30 de 171 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/lamparas/');
+  assert.equal(summary?.categoryLabel, 'Lámparas');
+  assert.equal(summary?.totalResults, 171);
+  assert.equal(summary?.totalPages, 6);
+});
+
+test('resume Herramientas de Selvir con breadcrumb simple y conteo estable', () => {
+  const html = `
+    <html>
+      <head><title>Herramientas archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Herramientas Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 878 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/product-category/herramientas/');
+  assert.equal(summary?.categoryLabel, 'Herramientas');
+  assert.equal(summary?.totalResults, 878);
+  assert.equal(summary?.totalPages, 30);
+});
+
+test('extrae productos de Ofertas de Selvir sin meter ruido de menu', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/ofertas/');
+  assert.ok(rule);
+
+  const html = `
+    <html>
+      <body>
+        <main>
+          <div class="product-item-container">
+            <a href="https://www.selvir.com.uy/product/silla-bebe-de-9-meses-a-12-anos-lila-y-blanca/">
+              <div class="product-info">
+                <div class="product-info-title">SILLA BEBE DE 9 MESES A 12 AÑOS LILA Y BLANCA</div>
+                <div class="product-info-price">
+                  <span class="woocommerce-Price-amount amount">
+                    <span class="woocommerce-Price-currencySymbol">$</span>
+                    <span class="woocommerce-Price-currency">2.735</span>
+                  </span>
+                </div>
+              </div>
+            </a>
+          </div>
+          <div class="product-item-container">
+            <a href="https://www.selvir.com.uy/product/taladro-a-bateria-13mm-20v-4a-cargador-2-baterias/">
+              <div class="product-info">
+                <div class="product-info-title">TALADRO A BATERIA 13mm 20V 4A +CARGADOR+2 BATERIAS</div>
+                <div class="product-info-price">
+                  <span class="woocommerce-Price-amount amount">
+                    <span class="woocommerce-Price-currencySymbol">$</span>
+                    <span class="woocommerce-Price-currency">6.085</span>
+                  </span>
+                </div>
+              </div>
+            </a>
+          </div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/ofertas/', 'domain', rule), rule);
+  assert.equal(products.length, 2);
+  assert.equal(products[0]?.productName, 'SILLA BEBE DE 9 MESES A 12 AÑOS LILA Y BLANCA');
+  assert.equal(products[1]?.productName, 'TALADRO A BATERIA 13mm 20V 4A +CARGADOR+2 BATERIAS');
+});
+
+test('no confunde Camiones con un archive Selvir', () => {
+  const html = `
+    <html>
+      <head><title>Camiones - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Camiones</h1>
+          <section>
+            <h2>¿Qué necesitas hoy?</h2>
+          </section>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/camiones/');
+  assert.equal(summary, undefined);
+});
+
+test('no confunde Limpieza y mantenimiento del vehículo con un archive Selvir', () => {
+  const html = `
+    <html>
+      <head><title>Limpieza y mantenimiento del vehículo - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Limpieza y mantenimiento del vehículo</h1>
+          <section>
+            <h2>Productos destacados</h2>
+          </section>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/limpieza-y-mantenimiento-del-vehiculo/');
+  assert.equal(summary, undefined);
+});
+
+test('no confunde la home de Selvir con un archive', () => {
+  const html = `
+    <html>
+      <head><title>Homepage - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Productos</h1>
+          <section>
+            <h2>Selecciona una marca</h2>
+          </section>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/');
+  assert.equal(summary, undefined);
+});
+
+test('no confunde una pagina generica de Productos con un archive Selvir', () => {
+  const html = `
+    <html>
+      <head><title>Productos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Productos</h1>
+          <p>Selecciona una marca para comenzar</p>
+          <div class="brand-list">
+            <a href="/?marca=ford">Ford</a>
+            <a href="/?marca=fiat">Fiat</a>
+            <a href="/?marca=vw">VW</a>
+          </div>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/productos/');
+  assert.equal(summary, undefined);
+});
+
+test('no convierte la lista de marcas y modelos de la home de Selvir en links de categoria', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <div class="brand-list">
+        <a href="/?marca=ford">FORD</a>
+        <a href="/?marca=fiat">FIAT</a>
+        <a href="/?marca=vw">VW</a>
+      </div>
+      <div class="model-list">
+        <a href="/?modelo=focus">FOCUS</a>
+        <a href="/?modelo=uno">UNO</a>
+      </div>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  assert.equal(links.categoryLinks.length, 0);
+  assert.equal(links.productLinks.length, 0);
+});
+
+test('no convierte links de marca y modelo de la home de Selvir en links de categoria aunque parezcan navegables', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <div class="brand-list">
+        <a href="/?marca=ford">FORD</a>
+        <a href="/?marca=fiat">FIAT</a>
+      </div>
+      <div class="model-list">
+        <a href="/?modelo=focus">FOCUS</a>
+        <a href="/?modelo=uno">UNO</a>
+      </div>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  assert.equal(links.categoryLinks.length, 0);
+  assert.equal(links.productLinks.length, 0);
+});
+
+test('ignora enlaces de marca y modelo en Selvir aunque aparezcan dentro de un bloque navegable', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <div class="brand-list">
+        <a href="/?marca=ford">Ford</a>
+        <a href="/?marca=fiat">Fiat</a>
+        <a href="/?marca=vw">VW</a>
+      </div>
+      <div class="model-list">
+        <a href="/?modelo=focus">Focus</a>
+        <a href="/?modelo=uno">Uno</a>
+        <a href="/?modelo=fiesta">Fiesta</a>
+      </div>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  assert.equal(links.categoryLinks.some((url) => url.includes('marca=')), false);
+  assert.equal(links.categoryLinks.some((url) => url.includes('modelo=')), false);
+  assert.equal(links.productLinks.some((url) => url.includes('marca=')), false);
+  assert.equal(links.productLinks.some((url) => url.includes('modelo=')), false);
+});
+
+test('descubre el enlace Ver todos los productos de la home de Selvir sin duplicarlo', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <a href="/productos/">Ver todos los productos</a>
+      <div class="brand-list">
+        <a href="/?marca=ford">Ford</a>
+      </div>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/productos/'), false);
+  assert.equal(links.productLinks.includes('https://www.selvir.com.uy/productos/'), false);
+});
+
+test('descubre las categorias reales de Selvir desde la home y no incluye hubs ajenos', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <a href="/product-category/accesorios/">Accesorios</a>
+      <a href="/product-category/arranques-y-alternadores/">Arranques y alternadores</a>
+      <a href="/product-category/carroceria/">Carrocería</a>
+      <a href="/product-category/filtros-y-soportes/">Filtros y soportes</a>
+      <a href="/productos/">Ver todos los productos</a>
+      <a href="/camiones/">Camiones</a>
+      <a href="/blog/">Blog</a>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/product-category/accesorios/'), true);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/product-category/arranques-y-alternadores/'), true);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/product-category/carroceria/'), true);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/product-category/filtros-y-soportes/'), true);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/productos/'), false);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/camiones/'), false);
+  assert.equal(links.categoryLinks.includes('https://www.selvir.com.uy/blog/'), false);
+});
+
+test('cubre todas las categorias reales de Selvir que expone la home', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <a href="/product-category/accesorios/">Accesorios</a>
+      <a href="/product-category/aceites/">Aceites</a>
+      <a href="/product-category/arranques-y-alternadores/">Arranques y alternadores</a>
+      <a href="/product-category/bombas/">Bombas</a>
+      <a href="/product-category/carroceria/">Carrocería</a>
+      <a href="/product-category/correas/">Correas</a>
+      <a href="/product-category/diferencial-y-cardan/">Diferencial Y Cardan</a>
+      <a href="/product-category/direccion/">Dirección</a>
+      <a href="/product-category/filtros-y-soportes/">Filtros y soportes</a>
+      <a href="/product-category/freno-y-embrague/">Freno y embrague</a>
+      <a href="/product-category/herramientas/">Herramientas</a>
+      <a href="/product-category/lamparas/">Lámparas</a>
+      <a href="/product-category/limpieza-cuidado-y-emergencia/">Limpieza, cuidado y emergencia</a>
+      <a href="/product-category/mangones-y-canos/">Mangones Y Caños</a>
+      <a href="/product-category/motor/">Motor</a>
+      <a href="/product-category/neumaticos/">Neumáticos</a>
+      <a href="/product-category/otros/">Otros</a>
+      <a href="/product-category/sensores/">Sensores</a>
+      <a href="/product-category/suspension/">Suspensión</a>
+      <a href="/product-category/tanques-y-flotadores/">Tanques y flotadores</a>
+    </main>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.selvir.com.uy/', rule);
+  const discovered = new Set(links.categoryLinks);
+
+  const expected = [
+    'https://www.selvir.com.uy/product-category/accesorios/',
+    'https://www.selvir.com.uy/product-category/aceites/',
+    'https://www.selvir.com.uy/product-category/arranques-y-alternadores/',
+    'https://www.selvir.com.uy/product-category/bombas/',
+    'https://www.selvir.com.uy/product-category/carroceria/',
+    'https://www.selvir.com.uy/product-category/correas/',
+    'https://www.selvir.com.uy/product-category/diferencial-y-cardan/',
+    'https://www.selvir.com.uy/product-category/direccion/',
+    'https://www.selvir.com.uy/product-category/filtros-y-soportes/',
+    'https://www.selvir.com.uy/product-category/freno-y-embrague/',
+    'https://www.selvir.com.uy/product-category/herramientas/',
+    'https://www.selvir.com.uy/product-category/lamparas/',
+    'https://www.selvir.com.uy/product-category/limpieza-cuidado-y-emergencia/',
+    'https://www.selvir.com.uy/product-category/mangones-y-canos/',
+    'https://www.selvir.com.uy/product-category/motor/',
+    'https://www.selvir.com.uy/product-category/neumaticos/',
+    'https://www.selvir.com.uy/product-category/otros/',
+    'https://www.selvir.com.uy/product-category/sensores/',
+    'https://www.selvir.com.uy/product-category/suspension/',
+    'https://www.selvir.com.uy/product-category/tanques-y-flotadores/',
+  ];
+
+  for (const url of expected) {
+    assert.equal(discovered.has(url), true, `missing category link ${url}`);
+  }
+});
+
+test('no confunde Blog y Contacto de Selvir con archives', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Blog - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Blog</h1>
+              <section>
+                <p>Noticias y novedades</p>
+              </section>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/blog/',
+    },
+    {
+      html: `
+        <html>
+          <head><title>Contacto - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Contacto</h1>
+              <section>
+                <p>Escribinos y te ayudamos</p>
+              </section>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/contacto/',
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary, undefined);
+  }
+});
+
+test('resume Otros de Selvir con archive simple y conteo estable', () => {
+  const html = `
+    <html>
+      <head><title>Otros archivos - Selvir</title></head>
+      <body>
+        <main>
+          <h1>Inicio / Otros Orden predeterminado</h1>
+          <div>Mostrando 1–30 de 61 resultados</div>
+          <button>Cargar más</button>
+        </main>
+      </body>
+    </html>
+  `;
+
+  const summary = extractSelvirArchiveSummary(html, 'https://www.selvir.com.uy/otros/');
+  assert.equal(summary?.categoryLabel, 'Otros');
+  assert.equal(summary?.totalResults, 61);
+  assert.equal(summary?.totalPages, 3);
+});
+
+test('resume Diferencial Y Cardan y Aceites Varios de Selvir con el mismo archive summary', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Diferencial Y Cardan archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Diferencial Y Cardan Orden predeterminado</h1>
+              <div>Mostrando 1–30 de 230 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/diferencial-y-cardan/',
+      category: 'Diferencial Y Cardan',
+      totalResults: 230,
+      totalPages: 8,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Aceites Varios archivos - Selvir</title></head>
+          <body>
+            <main>
+              <nav class="woocommerce-breadcrumb">Inicio / Productos / Aceites Varios</nav>
+              <div>Mostrando los 2 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/aceites-varios/',
+      category: 'Aceites Varios',
+      totalResults: 2,
+      totalPages: 1,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
+test('resume Correas y Mangones Y Caños de Selvir sin perder la categoria', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Correas archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Correas Orden predeterminado</h1>
+              <div>Mostrando 1–30 de 735 resultados</div>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/correas/',
+      category: 'Correas',
+      totalResults: 735,
+      totalPages: 25,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Mangones Y Caños archivos - Selvir</title></head>
+          <body>
+            <main>
+              <nav class="woocommerce-breadcrumb">Inicio / Productos / Mangones Y Caños</nav>
+              <div>Mostrando 1-30 de 80 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/mangones-y-canos/',
+      category: 'Mangones Y Caños',
+      totalResults: 80,
+      totalPages: 3,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
+test('resume Direccion y Freno y embrague como categorias validas de Selvir', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Dirección archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Productos / Dirección Orden predeterminado</h1>
+              <div>Mostrando 1–30 de 2260 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/direccion/',
+      category: 'Dirección',
+      totalResults: 2260,
+      totalPages: 76,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Freno y embrague archivos - Selvir</title></head>
+          <body>
+            <main>
+              <nav class="woocommerce-breadcrumb">Inicio / Productos / Freno y embrague</nav>
+              <div>Mostrando 1-30 de 3595 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/freno-y-embrague/',
+      category: 'Freno y embrague',
+      totalResults: 3595,
+      totalPages: 120,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
+test('resume Aceites y Sensores de Selvir con el mismo archive summary', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Aceites archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Aceites Orden predeterminado</h1>
+              <div>Mostrando los 29 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/aceites/',
+      category: 'Aceites',
+      totalResults: 29,
+      totalPages: 1,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Sensores archivos - Selvir</title></head>
+          <body>
+            <main>
+              <nav class="woocommerce-breadcrumb">Inicio / Productos / Sensores</nav>
+              <div>Mostrando 1–30 de 289 resultados</div>
+              <button>Cargar más</button>
+              <div>Consulte Disponibilidad</div>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/sensores/',
+      category: 'Sensores',
+      totalResults: 289,
+      totalPages: 10,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
+test('resume Neumaticos y Limpieza de Selvir sin romper acentos ni comas', () => {
+  const cases = [
+    {
+      html: `
+        <html>
+          <head><title>Neumáticos archivos - Selvir</title></head>
+          <body>
+            <main>
+              <h1>Inicio / Productos / Neumáticos Orden predeterminado</h1>
+              <div>Mostrando 1–30 de 69 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/neumaticos/',
+      category: 'Neumáticos',
+      totalResults: 69,
+      totalPages: 3,
+    },
+    {
+      html: `
+        <html>
+          <head><title>Limpieza, cuidado y emergencia archivos - Selvir</title></head>
+          <body>
+            <main>
+              <nav class="woocommerce-breadcrumb">Inicio / Productos / Limpieza, cuidado y emergencia</nav>
+              <div>Mostrando 1-30 de 50 resultados</div>
+              <button>Cargar más</button>
+            </main>
+          </body>
+        </html>
+      `,
+      url: 'https://www.selvir.com.uy/product-category/limpieza-cuidado-y-emergencia/',
+      category: 'Limpieza, cuidado y emergencia',
+      totalResults: 50,
+      totalPages: 2,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const summary = extractSelvirArchiveSummary(testCase.html, testCase.url);
+    assert.equal(summary?.categoryLabel, testCase.category);
+    assert.equal(summary?.totalResults, testCase.totalResults);
+    assert.equal(summary?.totalPages, testCase.totalPages);
+  }
+});
+
 test('deduplica por sourceUrl sin perder datos utiles', () => {
   const products = dedupeProducts([
     {
@@ -576,4 +1488,3 @@ test('resume warnings de calidad por tipo', () => {
     not_sellable: 2,
   });
 });
-

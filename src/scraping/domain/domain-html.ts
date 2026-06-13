@@ -69,7 +69,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
         return;
       }
 
-      if (pathname === '/' || pathname === '') {
+      if (pathname === '/' || pathname === '' || pathname === '/productos/') {
         return;
       }
 
@@ -426,7 +426,7 @@ function extractSelvirListingNameV2(anchor: HTMLElement, card: HTMLElement, card
 
   return cleanText(
     source
-      .replace(/\b(?:C[oÃ³]digo|CÃƒÂ³digo)\b[\s:#-]*[\w.-]+\b.*$/i, '')
+      .replace(/\bC[oó]d(?:igo)?\b[\s:#-]*[\w.-]+\b.*$/i, '')
       .replace(/\b(?:Disponible|Consulte|Comprar|A[Ã±n]adir al carrito|Agotado|Sin stock|Out of stock|No disponible)\b.*$/i, '')
       .replace(/\$\s*[\d.,]+.*$/i, '')
       .replace(/\s+/g, ' '),

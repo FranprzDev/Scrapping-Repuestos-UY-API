@@ -218,6 +218,69 @@ test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
   ]);
 });
 
+test('eleva el limite de productos por sitio para Selvir', async () => {
+  let extractMaxItems: number | undefined;
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string, payload: { maxItems?: number }) {
+        if (task === 'crawl') {
+          return {
+            provider: 'http',
+            requestedAt: '2026-06-06T00:00:00.000Z',
+            raw: { discoveredUrls: ['https://www.selvir.com.uy/product-category/carroceria/'] },
+            normalizedProducts: [],
+          };
+        }
+
+        extractMaxItems = payload.maxItems;
+
+        return {
+          provider: 'http',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: { products: [] },
+          normalizedProducts: [],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 0 };
+      },
+      async countAll() {
+        return 0;
+      },
+      async countBySite() {
+        return 0;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(site: string, products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }>) {
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  await service.scrapeCatalogWithPrices({
+    urls: ['https://www.selvir.com.uy/product-category/carroceria/'],
+    siteConcurrency: 1,
+  });
+
+  assert.equal(extractMaxItems, 100000);
+});
+
 test('filtra urls externas y casas no admitidas antes de extraer', async () => {
   let extractPayloadUrls: string[] = [];
 
