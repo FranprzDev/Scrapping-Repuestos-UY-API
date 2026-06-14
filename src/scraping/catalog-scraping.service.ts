@@ -85,6 +85,9 @@ export class CatalogScrapingService {
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const rule = findDomainRule(url);
         const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
+        this.logger.log(
+          `[run:${runId}] site_extract site=${url} crawlProvider=${crawlProvider} extractProvider=${extracted.provider} targetUrls=${targetUrls.length} rawProducts=${extractedProducts.length} normalizedProducts=${extracted.normalizedProducts.length} mergedProducts=${mergedProducts.length}`,
+        );
         if (cachedTargetUrls.length > 0 && mergedProducts.length === 0) {
           const crawlPayload: ScrapingOperationPayload = {
             url,
@@ -107,6 +110,11 @@ export class CatalogScrapingService {
 
         const refreshedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const refreshedMergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, refreshedProducts), rule);
+        if (refreshedMergedProducts.length === 0) {
+          this.logger.warn(
+            `[run:${runId}] site_empty site=${url} crawlProvider=${crawlProvider} extractProvider=${extracted.provider} targetUrls=${targetUrls.length} rawProducts=${refreshedProducts.length} normalizedProducts=${extracted.normalizedProducts.length}`,
+          );
+        }
         const trace = buildSiteTrace(crawlRaw, extracted.raw, refreshedProducts, refreshedMergedProducts);
         if (refreshedMergedProducts.length > 0) {
           await this.saveSiteLinks(url, targetUrls, refreshedMergedProducts, runAt);

@@ -125,7 +125,7 @@ export const DOMAIN_RULES: DomainRule[] = [
   {
     id: 'feyvi',
     hostnames: ['feyvi.com.uy', 'www.feyvi.com.uy'],
-    preferredMethod: 'playwright-fallback',
+    preferredMethod: 'http',
     productUrlPatterns: [/^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){2}[^/]+\/?$/i],
     categoryUrlPatterns: [
       /^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){1,2}(?:page-\d+\/)?$/i,

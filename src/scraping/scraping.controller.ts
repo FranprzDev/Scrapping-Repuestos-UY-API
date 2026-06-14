@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
-import { ADMITTED_HOUSES } from './domain/domain-rules';
+import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
 import { CatalogScrapingService } from './catalog-scraping.service';
 import { JobQueueService } from './jobs/job.queue';
 import { type ScrapingOperationPayload } from './interfaces/scraping.types';
@@ -94,8 +94,11 @@ export class ScrapingController {
 
   @Post('scraping/catalog/run')
   @HttpCode(202)
-  async runCatalog(@Body() payload: CatalogScrapeRequestDto) {
-    const job = await this.jobQueueService.enqueue('catalog-run', payload as unknown as ScrapingOperationPayload);
+  async runCatalog(@Body() payload: CatalogScrapeRequestDto, @Query('exclude_sites') excludeSites?: string) {
+    const job = await this.jobQueueService.enqueue('catalog-run', {
+      ...payload,
+      urls: resolveCatalogSites(payload.urls, excludeSites),
+    } as unknown as ScrapingOperationPayload);
     return {
       message: 'Scraping encolado',
       jobId: job.id,
@@ -105,9 +108,9 @@ export class ScrapingController {
 
   @Post('scraping/inventory/refresh')
   @HttpCode(202)
-  async refreshInventory() {
+  async refreshInventory(@Query('exclude_sites') excludeSites?: string) {
     const job = await this.jobQueueService.enqueue('catalog-run', {
-      urls: [...DEFAULT_CATALOG_SITES],
+      urls: resolveCatalogSites(undefined, excludeSites),
     } as unknown as ScrapingOperationPayload);
 
     return {
@@ -139,9 +142,9 @@ export class ScrapingController {
 
   @Post('start-scrapping-uy')
   @HttpCode(202)
-  async startScrappingUy(@Body() payload: CatalogScrapeRequestDto) {
+  async startScrappingUy(@Body() payload: CatalogScrapeRequestDto, @Query('exclude_sites') excludeSites?: string) {
     const job = await this.jobQueueService.enqueue('catalog-run', {
-      urls: payload.urls?.length ? payload.urls : [...DEFAULT_CATALOG_SITES],
+      urls: resolveCatalogSites(payload.urls, excludeSites),
       maxPagesPerSite: payload.maxPagesPerSite,
       maxProductsPerSite: payload.maxProductsPerSite,
       siteConcurrency: payload.siteConcurrency,
@@ -815,6 +818,48 @@ function renderInventoryPage(): string {
     </script>
   </body>
 </html>`;
+}
+
+export function resolveCatalogSites(requestedUrls?: string[], excludeSites?: string): string[] {
+  const sites = requestedUrls?.length ? requestedUrls : [...DEFAULT_CATALOG_SITES];
+  const excludedSites = parseExcludedSites(excludeSites);
+
+  if (!excludedSites.size) {
+    return sites;
+  }
+
+  return sites.filter((siteUrl) => !isExcludedCatalogSite(siteUrl, excludedSites));
+}
+
+function parseExcludedSites(value?: string): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(/[,\s]+/g)
+      .map((entry) => normalizeSiteToken(entry))
+      .filter(Boolean),
+  );
+}
+
+function isExcludedCatalogSite(siteUrl: string, excludedSites: Set<string>): boolean {
+  try {
+    const rule = findDomainRule(siteUrl);
+    const hostname = new URL(siteUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const aliases = new Set(
+      [
+        hostname,
+        rule?.id,
+        INVENTORY_HOUSE_LABELS[hostname]?.toLowerCase(),
+      ].filter((value): value is string => Boolean(value)),
+    );
+
+    return Array.from(aliases).some((alias) => excludedSites.has(normalizeSiteToken(alias)));
+  } catch {
+    return false;
+  }
+}
+
+function normalizeSiteToken(value: string): string {
+  return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
 }
 
 function renderStatsPage(): string {
