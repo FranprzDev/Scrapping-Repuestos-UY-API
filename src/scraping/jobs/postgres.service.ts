@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import { Pool, type QueryConfig, type QueryResult, type QueryResultRow } from 'pg';
 
 @Injectable()
 export class PostgresService implements OnModuleDestroy {
@@ -16,8 +16,21 @@ export class PostgresService implements OnModuleDestroy {
     });
   }
 
-  async query<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
-    return this.pool.query<T>(sql, params);
+  async query<T extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    params: unknown[] = [],
+    timeoutMs?: number,
+  ): Promise<QueryResult<T>> {
+    const queryConfig: QueryConfig & { query_timeout?: number } = {
+      text: sql,
+      values: params,
+    };
+
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      queryConfig.query_timeout = timeoutMs;
+    }
+
+    return this.pool.query<T>(queryConfig);
   }
 
   async ensureJobsTable(): Promise<void> {

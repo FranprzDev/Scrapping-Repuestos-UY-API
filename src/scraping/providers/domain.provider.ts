@@ -259,26 +259,15 @@ export class DomainProvider implements ScrapingProvider {
     this.logger.log(`Acesur extract start seed=${seedUrl} customerCode=${customerCode ? 'yes' : 'no'}`);
     const rubros = await fetchAcesurRubros(uuid, customerCode);
     this.logger.log(`Acesur rubros found count=${rubros.length}`);
-    const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
-    const products: ProductRecord[] = [];
-
-    for (const seed of categorySeeds) {
-      if (products.length >= maxItems) {
-        break;
-      }
-
-      const batch = await crawlAcesurCategory(uuid, seed, seedUrl, this.name, maxItems - products.length, this.logger, customerCode);
-      if (batch.length === 0) {
-        continue;
-      }
-
-      products.push(...batch);
-      if (products.length >= maxItems) {
-        break;
-      }
-    }
-
-    return dedupeProducts(products).slice(0, maxItems);
+    return extractAcesurProductsByRubro(rubros, {
+      uuid,
+      seedUrl,
+      provider: this.name,
+      maxItems,
+      logger: this.logger,
+      customerCode,
+      crawlCategory: crawlAcesurCategory,
+    });
   }
 
   private async extractSelvirArchiveProducts(
@@ -454,6 +443,50 @@ export function parseAcesurFilterOptions(body: string): string[] {
     .filter((item) => String(item.tipo ?? '').toUpperCase() === 'B')
     .map((item) => String(item.codigo ?? '').trim())
     .filter(Boolean);
+}
+
+export async function extractAcesurProductsByRubro(
+  rubros: string[],
+  options: {
+    uuid: string;
+    seedUrl: string;
+    provider: 'domain';
+    maxItems: number;
+    logger: Logger;
+    customerCode?: string;
+    crawlCategory: typeof crawlAcesurCategory;
+  },
+): Promise<ProductRecord[]> {
+  const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
+  const products: ProductRecord[] = [];
+
+  for (const seed of categorySeeds) {
+    if (products.length >= options.maxItems) {
+      break;
+    }
+
+    try {
+      const batch = await options.crawlCategory(
+        options.uuid,
+        seed,
+        options.seedUrl,
+        options.provider,
+        options.maxItems - products.length,
+        options.logger,
+        options.customerCode,
+      );
+
+      if (batch.length === 0) {
+        continue;
+      }
+
+      products.push(...batch);
+    } catch (error) {
+      options.logger.warn(`Acesur rubro fallido rubro=${seed.primerFiltro || 'todos'}: ${formatError(error)}`);
+    }
+  }
+
+  return dedupeProducts(products).slice(0, options.maxItems);
 }
 
 async function crawlAcesurCategory(
