@@ -8,6 +8,7 @@ import { qualityGate } from './product-quality';
 test('feyvi detecta producto y paginacion desde una card de listado', () => {
   const rule = findDomainRule('https://www.feyvi.com.uy/repuestos/acabamiento-exterior/');
   assert.ok(rule);
+  assert.equal(rule.preferredMethod, 'http');
 
   const html = `
     <div class="col-tile">

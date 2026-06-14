@@ -92,6 +92,7 @@ Query opcional:
 - `POST /start-scrapping-uy`
 
 `POST /scraping/catalog/run` encola un job y responde `202 Accepted` con `jobId`.
+Los endpoints de refresh aceptan `exclude_sites` en query string para omitir casas por `id`, hostname o label, por ejemplo `?exclude_sites=feyvi,selvir`.
 
 Body opcional:
 
