@@ -154,10 +154,6 @@ Los catalogos archivados se escriben en:
 
 - `output/catalog/<site-key>.json`
 
-Las imagenes descargadas se escriben en:
-
-- `output/images/<site-key>/`
-
 ## Estado de esta fase
 
 - Persistencia real en DB: pendiente.

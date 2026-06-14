@@ -1729,3 +1729,23 @@ test('parsea rubros de Acesur y arma endpoints con filtros', () => {
   assert.match(endpoint, /primer_filtro=FRENO/);
   assert.match(endpoint, /segundo_filtro=PASTILLAS/);
 });
+
+test('arma endpoints de Acesur con codigo de cliente cuando existe', () => {
+  const endpoint = buildAcesurEndpoint(
+    '1172c02e-5ed8-415c-8020-7ecc522dca51',
+    2,
+    {
+      primerFiltro: 'AMORTIGUADOR DE PUERTA',
+    },
+    'franutn23@gmail.com',
+  );
+
+  assert.match(endpoint, /uuid=1172c02e-5ed8-415c-8020-7ecc522dca51/);
+  assert.match(
+    endpoint,
+    /uuid_carro=1172c02e-5ed8-415c-8020-7ecc522dca51%7Cfranutn23%40gmail\.com/,
+  );
+  assert.match(endpoint, /codigo_cliente=franutn23%40gmail\.com/);
+  assert.match(endpoint, /primer_filtro=AMORTIGUADOR\+DE\+PUERTA/);
+  assert.match(endpoint, /pagina=2/);
+});

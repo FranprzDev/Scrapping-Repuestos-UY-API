@@ -16,7 +16,7 @@ test('filtra casas excluidas del refresh por query', () => {
 test('respeta urls enviadas en el body y aplica exclusion por hostname o id', () => {
   const sites = resolveCatalogSites(
     [
-      'https://taxitor.uy/',
+      'https://taxitor.uy/articulos/filtro/1/-/-/',
       'https://acesur.uy/escritorio/ofertas/INTERNET',
       'https://www.selvir.com.uy/product-category/carroceria/',
     ],
@@ -24,7 +24,7 @@ test('respeta urls enviadas en el body y aplica exclusion por hostname o id', ()
   );
 
   assert.deepEqual(sites, [
-    'https://taxitor.uy/',
+    'https://taxitor.uy/articulos/filtro/1/-/-/',
     'https://acesur.uy/escritorio/ofertas/INTERNET',
   ]);
 });

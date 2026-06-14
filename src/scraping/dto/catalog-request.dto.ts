@@ -1,7 +1,7 @@
 import { IsArray, IsInt, IsOptional, IsUrl, Min } from 'class-validator';
 
 export const BASE_CATALOG_SITES = [
-  'https://taxitor.uy/',
+  'https://taxitor.uy/articulos/filtro/1/-/-/',
   'https://acesur.uy/escritorio/ofertas/INTERNET',
   'https://www.chaparei.com/productos/?m=171',
   'https://www.selvir.com.uy/product-category/carroceria/',

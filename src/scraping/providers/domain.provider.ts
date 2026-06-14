@@ -255,7 +255,8 @@ export class DomainProvider implements ScrapingProvider {
 
   private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
     const uuid = randomUUID();
-    const rubros = await fetchAcesurRubros(uuid);
+    const customerCode = process.env.ACESUR_CUSTOMER_CODE?.trim();
+    const rubros = await fetchAcesurRubros(uuid, customerCode);
     const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
     const products: ProductRecord[] = [];
 
@@ -264,7 +265,7 @@ export class DomainProvider implements ScrapingProvider {
         break;
       }
 
-      const batch = await crawlAcesurCategory(uuid, seed, seedUrl, this.name, maxItems - products.length, this.logger);
+      const batch = await crawlAcesurCategory(uuid, seed, seedUrl, this.name, maxItems - products.length, this.logger, customerCode);
       if (batch.length === 0) {
         continue;
       }
@@ -458,12 +459,13 @@ async function crawlAcesurCategory(
   provider: 'domain',
   maxItems: number,
   logger: Logger,
+  customerCode?: string,
 ): Promise<ProductRecord[]> {
   if (maxItems <= 0) {
     return [];
   }
 
-  const firstPage = await fetchHtml(buildAcesurEndpoint(uuid, 1, filters));
+  const firstPage = await fetchHtml(buildAcesurEndpoint(uuid, 1, filters, customerCode));
   const firstBatch = parseAcesurApi(firstPage.body, sourceUrl, provider);
   const total = Number(firstBatch.totalRecords ?? firstBatch.products.length);
   const totalPages = Math.max(1, Math.ceil(total / 20));
@@ -471,7 +473,7 @@ async function crawlAcesurCategory(
 
   for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
     try {
-      const response = await fetchHtml(buildAcesurEndpoint(uuid, page, filters));
+      const response = await fetchHtml(buildAcesurEndpoint(uuid, page, filters, customerCode));
       const batch = parseAcesurApi(response.body, sourceUrl, provider);
       if (batch.products.length === 0) {
         break;
@@ -487,17 +489,14 @@ async function crawlAcesurCategory(
   return products;
 }
 
-async function fetchAcesurRubros(uuid: string): Promise<string[]> {
-  const response = await fetchHtml(buildAcesurFilterEndpoint(uuid, 1, {}));
+async function fetchAcesurRubros(uuid: string, customerCode?: string): Promise<string[]> {
+  const response = await fetchHtml(buildAcesurFilterEndpoint(uuid, 1, {}, customerCode));
   const rubros = parseAcesurFilterOptions(response.body);
   return rubros.filter((value) => value.toUpperCase() !== 'TODOS');
 }
 
-export function buildAcesurEndpoint(uuid: string, page: number, filters: { primerFiltro?: string; segundoFiltro?: string; tercerFiltro?: string; cuartoFiltro?: string } = {}): string {
+export function buildAcesurEndpoint(uuid: string, page: number, filters: { primerFiltro?: string; segundoFiltro?: string; tercerFiltro?: string; cuartoFiltro?: string } = {}, customerCode?: string): string {
   return buildAcesurUrl('app_obtener_productos.php', uuid, {
-    ofertas: 'INTERNET',
-    seccion: 'menu',
-    texto: '',
     pagina: String(page),
     order_by: '',
     tipo_orden: '',
@@ -506,31 +505,33 @@ export function buildAcesurEndpoint(uuid: string, page: number, filters: { prime
     segundo_filtro: filters.segundoFiltro ?? '',
     tercer_filtro: filters.tercerFiltro ?? '',
     cuarto_filtro: filters.cuartoFiltro ?? '',
-  });
+  }, customerCode);
 }
 
 function buildAcesurFilterEndpoint(
   uuid: string,
   filterNumber: 1 | 2 | 3 | 4,
   filters: { primero?: string; segundo?: string; tercero?: string; ultimo?: string } = {},
+  customerCode?: string,
 ): string {
   return buildAcesurUrl(`app_obtener_buscador_${filterNumber}_filtro.php`, uuid, {
     ultimo: filters.ultimo ?? '',
     primero: filters.primero ?? '',
     segundo: filters.segundo ?? '',
     tercero: filters.tercero ?? '',
-  });
+  }, customerCode);
 }
 
 function buildAcesurUrl(
   path: string,
   uuid: string,
   params: Record<string, string>,
+  customerCode?: string,
 ): string {
   const query = new URLSearchParams({
     uuid,
-    uuid_carro: `${uuid}|`,
-    codigo_cliente: '',
+    uuid_carro: `${uuid}|${customerCode ?? ''}`,
+    codigo_cliente: customerCode ?? '',
     pais: '',
     ...params,
   });

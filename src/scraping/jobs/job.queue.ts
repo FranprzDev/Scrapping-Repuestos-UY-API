@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { randomUUID } from 'node:crypto';
 import { ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
 import { CatalogScrapeRequestDto } from '../dto/catalog-request.dto';
-import { CatalogScrapingService } from '../catalog-scraping.service';
+import { CatalogScrapingService, type CatalogSiteProgress, type CatalogProductSummary } from '../catalog-scraping.service';
 import { ScrapingService } from '../scraping.service';
 import { PostgresService } from './postgres.service';
 
@@ -14,10 +14,21 @@ export interface ScrapingJob {
   payload: ScrapingOperationPayload;
   status: JobStatus;
   provider?: string;
-  result?: unknown;
+  summary?: ScrapingJobSummary;
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ScrapingJobSummary {
+  currentSite?: string;
+  stage?: CatalogSiteProgress['stage'];
+  quantityScrapped?: number;
+  timeWorkingMs?: number;
+  lastScrapedProduct?: CatalogProductSummary;
+  progress?: {
+    sites: CatalogSiteProgress[];
+  };
 }
 
 type ScrapingJobRow = {
@@ -125,8 +136,17 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const result = await this.runClaimedJob(claimed.task, claimed.payload);
+      const result = await this.runClaimedJob(claimed.id, claimed.task, claimed.payload);
       const provider = extractProvider(result);
+      const current = await this.postgresService.query<{ result: unknown | null }>(
+        `
+        SELECT result
+        FROM scraping_jobs
+        WHERE id = $1
+        `,
+        [claimed.id],
+      );
+      const finalResult = mergeJobResultWithProgress(result, current.rows[0]?.result);
       await this.postgresService.query(
         `
         UPDATE scraping_jobs
@@ -136,7 +156,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
             updated_at = NOW()
         WHERE id = $1
         `,
-        [claimed.id, provider, JSON.stringify(result)],
+        [claimed.id, provider, JSON.stringify(finalResult)],
       );
     } catch (error) {
       await this.postgresService.query(
@@ -155,14 +175,40 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     this.tick();
   }
 
-  private async runClaimedJob(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<unknown> {
+  private async runClaimedJob(jobId: string, task: ScrapingTask, payload: ScrapingOperationPayload): Promise<unknown> {
     if (task === 'catalog-run') {
-      return this.catalogScrapingService.scrapeCatalogWithPrices(payload as CatalogScrapeRequestDto);
+      return this.catalogScrapingService.scrapeCatalogWithPrices(payload as CatalogScrapeRequestDto, async (progress) => {
+        await this.updateProcessingProgress(jobId, progress);
+      });
     }
 
     const providerOverride = typeof payload.providerOverride === 'string' ? payload.providerOverride : undefined;
     const normalizedPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'providerOverride'));
     return this.scrapingService.runTask(task, normalizedPayload, providerOverride);
+  }
+
+  private async updateProcessingProgress(jobId: string, progress: CatalogSiteProgress): Promise<void> {
+    const current = await this.postgresService.query<{ result: unknown | null }>(
+      `
+      SELECT result
+      FROM scraping_jobs
+      WHERE id = $1
+      `,
+      [jobId],
+    );
+
+    const sites = normalizeProgressSites(current.rows[0]?.result);
+    sites.set(progress.site, progress);
+
+    await this.postgresService.query(
+      `
+      UPDATE scraping_jobs
+      SET result = $2::jsonb,
+          updated_at = NOW()
+      WHERE id = $1
+      `,
+      [jobId, JSON.stringify({ progress: { sites: serializeProgressSites(sites) } })],
+    );
   }
 
   private async claimNextQueuedJob(): Promise<ScrapingJob | undefined> {
@@ -213,7 +259,7 @@ function mapRowToJob(row: ScrapingJobRow): ScrapingJob {
     payload: row.payload,
     status: row.status,
     provider: row.provider ?? undefined,
-    result: row.result ?? undefined,
+    summary: buildJobSummary(row.result),
     error: row.error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -236,4 +282,89 @@ function extractProvider(result: unknown): string | null {
 
   const provider = (result as { provider?: unknown }).provider;
   return typeof provider === 'string' ? provider : null;
+}
+
+function normalizeProgressSites(result: unknown): Map<string, CatalogSiteProgress> {
+  const sites = new Map<string, CatalogSiteProgress>();
+
+  if (typeof result !== 'object' || !result) {
+    return sites;
+  }
+
+  const progress = (result as { progress?: unknown }).progress;
+  if (typeof progress !== 'object' || !progress) {
+    return sites;
+  }
+
+  const rawSites = (progress as { sites?: unknown[] }).sites;
+  if (!Array.isArray(rawSites)) {
+    return sites;
+  }
+
+  for (const entry of rawSites) {
+    if (entry && typeof entry === 'object' && typeof (entry as CatalogSiteProgress).site === 'string') {
+      const progressEntry = entry as CatalogSiteProgress;
+      sites.set(progressEntry.site, progressEntry);
+    }
+  }
+
+  return sites;
+}
+
+function mergeJobResultWithProgress(result: unknown, existingResult: unknown): unknown {
+  const mergedSites = normalizeProgressSites(existingResult);
+
+  if (typeof result !== 'object' || !result) {
+    return mergedSites.size > 0 ? { progress: { sites: serializeProgressSites(mergedSites) } } : result;
+  }
+
+  const current = result as Record<string, unknown>;
+  const currentSites = normalizeProgressSites(current.progress);
+
+  for (const [site, progress] of currentSites) {
+    mergedSites.set(site, progress);
+  }
+
+  return {
+    ...current,
+    progress: {
+      sites: serializeProgressSites(mergedSites),
+    },
+  };
+}
+
+function serializeProgressSites(sites: Map<string, CatalogSiteProgress>): CatalogSiteProgress[] {
+  return Array.from(sites.values()).sort((left, right) => left.site.localeCompare(right.site));
+}
+
+function buildJobSummary(result: unknown): ScrapingJobSummary | undefined {
+  if (typeof result !== 'object' || !result) {
+    return undefined;
+  }
+
+  const current = result as {
+    runId?: unknown;
+    requestedAt?: unknown;
+    strategy?: unknown;
+    sitesProcessed?: unknown;
+    inventorySize?: unknown;
+    progress?: unknown;
+  };
+  const progress = current.progress && typeof current.progress === 'object'
+    ? (current.progress as { sites?: unknown[] })
+    : undefined;
+  const rawSites = progress?.sites;
+  const sites = Array.isArray(rawSites)
+    ? rawSites.filter((entry): entry is CatalogSiteProgress => Boolean(entry) && typeof entry === 'object' && typeof (entry as CatalogSiteProgress).site === 'string')
+    : [];
+  const lastSite = [...sites].reverse().find((site: CatalogSiteProgress) => site.lastScrapedProduct);
+
+  return {
+    currentSite: lastSite?.site,
+    stage: lastSite?.stage,
+    quantityScrapped: typeof lastSite?.quantityScrapped === 'number' ? lastSite.quantityScrapped : undefined,
+    timeWorkingMs: typeof lastSite?.timeWorkingMs === 'number' ? lastSite.timeWorkingMs : undefined,
+    lastScrapedProduct: lastSite?.lastScrapedProduct,
+    progress: sites.length > 0 ? { sites } : undefined,
+  };
 }
