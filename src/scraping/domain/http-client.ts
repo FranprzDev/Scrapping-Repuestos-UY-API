@@ -16,6 +16,8 @@ export interface HttpRequestInit {
   method?: 'GET' | 'POST';
   headers?: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 const HTTP_AGENT = new HttpAgent({
@@ -50,6 +52,8 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
   const transport = target.protocol === 'https:' ? httpsRequest : httpRequest;
   const method = init.method ?? 'GET';
   const body = init.body ?? '';
+  const timeoutMs = init.timeoutMs ?? Number(process.env.SCRAPING_HTTP_TIMEOUT_MS ?? 45000);
+  const timeoutSignal = init.signal ?? AbortSignal.timeout(timeoutMs);
   const headers: Record<string, string> = {
     'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0; +hybrid-scraper)',
     accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
@@ -75,6 +79,7 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
         headers,
         agent: target.protocol === 'https:' ? HTTPS_AGENT : HTTP_AGENT,
         rejectUnauthorized: false,
+        signal: timeoutSignal,
       },
       (res) => {
         const statusCode = res.statusCode ?? 0;
@@ -100,10 +105,6 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
           .catch(reject);
       },
     );
-
-    req.setTimeout(45000, () => {
-      req.destroy(new Error(`Timeout leyendo ${target.toString()}`));
-    });
 
     req.on('error', reject);
     req.end(body);
