@@ -75,7 +75,8 @@ export class CatalogScrapingService {
           rawProducts: 0,
           normalizedProducts: 0,
         });
-        const cachedTargetUrls = await this.getCachedTargetUrls(url);
+        const bypassCachedLinks = isTaxitorSite(url);
+        const cachedTargetUrls = bypassCachedLinks ? [] : await this.getCachedTargetUrls(url);
         let crawlProvider = 'cached-links';
         let crawlRequestedAt = runAt;
         let crawled:

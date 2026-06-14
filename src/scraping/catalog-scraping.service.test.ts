@@ -143,6 +143,89 @@ test('preserva productos sin precio en la extraccion del servicio', async () => 
   assert.equal(inventoryUpserts[0]?.[0]?.productName, 'Producto sin precio');
 });
 
+test('Taxitor refresca discovery aunque ya existan links cacheados', async () => {
+  let crawlCalls = 0;
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string, payload: { urls?: string[]; url?: string }) {
+        if (task === 'crawl') {
+          crawlCalls += 1;
+          return {
+            provider: 'http',
+            requestedAt: '2026-06-06T00:00:00.000Z',
+            raw: {
+              discoveredUrls: ['https://taxitor.uy/articulos/mostrar/1319'],
+            },
+            normalizedProducts: [],
+          };
+        }
+
+        return {
+          provider: 'http',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: {
+            products: [
+              {
+                name: 'Producto Taxitor',
+                productUrl: 'https://taxitor.uy/articulos/mostrar/1319',
+                price: '100',
+              },
+            ],
+          },
+          normalizedProducts: [],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [
+          {
+            site: 'https://taxitor.uy/articulos/filtro/1/-/-/',
+            url: 'https://taxitor.uy/articulos/mostrar/1319',
+            source: 'crawl',
+            firstSeenAt: '2026-06-06T00:00:00.000Z',
+            lastSeenAt: '2026-06-06T00:00:00.000Z',
+            hitCount: 1,
+          },
+        ];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 0, updated: 0, totalForSite: 1 };
+      },
+      async countAll() {
+        return 1;
+      },
+      async countBySite() {
+        return 1;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(site: string, products: Array<{ productName?: string; price?: string; qualityWarnings?: string[] }>) {
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  await service.scrapeCatalogWithPrices({
+    urls: ['https://taxitor.uy/articulos/filtro/1/-/-/'],
+    maxPagesPerSite: 10,
+    maxProductsPerSite: 10,
+    siteConcurrency: 1,
+  });
+
+  assert.equal(crawlCalls, 1);
+});
+
 test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
   let extractPayloadUrls: string[] = [];
 
