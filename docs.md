@@ -5,12 +5,12 @@ Lista de los sitios que hoy tenemos en el radar para scraping.
 ## Ya bien resueltos
 
 - `Taxitor` - `https://taxitor.uy/`
+- `Acesur` - `https://acesur.uy/escritorio/ofertas/INTERNET`
 - `Selvir` - `https://www.selvir.com.uy/`
 - `Feyvi` - `https://www.feyvi.com.uy/`
 
 ## Activos para mantener o ampliar
 
-- `Acesur` - `https://acesur.uy/escritorio/ofertas/INTERNET`
 - `Chaparei` - `https://www.chaparei.com/productos/?m=171`
 
 ## Seeds y categorias actuales
