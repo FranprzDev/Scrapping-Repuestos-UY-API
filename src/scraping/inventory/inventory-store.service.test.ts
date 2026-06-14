@@ -26,8 +26,8 @@ test('getStats agrupa por host base y no por url completa', async () => {
 
   assert.equal(stats.total, 5);
   assert.deepEqual(stats.bySite, [
-    { site: 'www.chaparei.com', total: 3 },
-    { site: 'www.selvir.com.uy', total: 2 },
+    { site: 'www.chaparei.com', siteLabel: 'Chaparei', total: 3 },
+    { site: 'www.selvir.com.uy', siteLabel: 'Selvir', total: 2 },
   ]);
   assert.ok(queries.some((sql) => sql.includes('split_part')));
   assert.ok(queries.some((sql) => sql.includes("replace(replace(lower(site), 'https://', ''), 'http://', '')")));

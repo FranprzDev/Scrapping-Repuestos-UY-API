@@ -1079,6 +1079,7 @@ function renderStatsPage(): string {
 
       function normalizeSiteLabel(site) {
         const value = String(site ?? '').toLowerCase();
+        if (value.includes('feyvi')) return 'Feyvi';
         if (value.includes('chaparei')) return 'Chaparei';
         if (value.includes('taxitor')) return 'Taxitor';
         if (value.includes('acesur')) return 'Acesur';
@@ -1104,7 +1105,7 @@ function renderStatsPage(): string {
 
         const max = Math.max(...bySite.map((item) => Number(item?.total ?? 0)), 1);
         siteList.innerHTML = bySite.map((item) => {
-          const site = normalizeSiteLabel(item?.site);
+          const site = item?.siteLabel || normalizeSiteLabel(item?.site);
           const count = Number(item?.total ?? 0);
           const width = Math.max(4, Math.round((count / max) * 100));
           return '<div class="site-item">' +

@@ -1,5 +1,6 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
+import { ADMITTED_HOUSES } from '../domain/domain-rules';
 import { PostgresService } from '../jobs/postgres.service';
 
 export interface StoredProduct extends ProductRecord {
@@ -36,6 +37,7 @@ export interface InventoryStats {
   total: number;
   bySite: Array<{
     site: string;
+    siteLabel: string;
     total: number;
   }>;
 }
@@ -137,6 +139,14 @@ export class InventoryStoreService implements OnModuleInit {
   }
 
   async getStats(): Promise<InventoryStats> {
+    const siteLabels = new Map<string, string>();
+    for (const house of ADMITTED_HOUSES) {
+      siteLabels.set(house.canonicalHostname, house.label);
+      for (const hostname of house.hostnames) {
+        siteLabels.set(hostname, house.label);
+      }
+    }
+
     const [total, bySite] = await Promise.all([
       this.countAll(),
       this.postgresService.query<{ site: string; total: string }>(`
@@ -157,6 +167,7 @@ export class InventoryStoreService implements OnModuleInit {
       total,
       bySite: bySite.rows.map((row) => ({
         site: row.site,
+        siteLabel: siteLabels.get(normalizeStatsSiteKey(row.site)) ?? normalizeStatsSiteKey(row.site),
         total: Number(row.total ?? 0),
       })),
     };
@@ -192,6 +203,10 @@ function buildProductKey(site: string, product: ProductRecord): string | undefin
 function normalizeKeyPart(value?: string): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function normalizeStatsSiteKey(value: string): string {
+  return value.trim().toLowerCase().replace(/^www\./, '');
 }
 
 function buildInventoryQuery(filters: InventoryQueryFilters, pagination: InventoryQueryPagination = {}) {
