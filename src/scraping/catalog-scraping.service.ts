@@ -424,6 +424,13 @@ export class CatalogScrapingService {
 }
 
 function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto) {
+  if (isAcesurSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 1000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   if (isTaxitorSite(siteUrl)) {
     return {
       maxPagesPerSite: request.maxPagesPerSite ?? 1000,
@@ -470,6 +477,14 @@ function isSelvirSite(siteUrl: string): boolean {
 function isTaxitorSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'taxitor.uy';
+  } catch {
+    return false;
+  }
+}
+
+function isAcesurSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'acesur.uy';
   } catch {
     return false;
   }

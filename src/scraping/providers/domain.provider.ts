@@ -255,23 +255,22 @@ export class DomainProvider implements ScrapingProvider {
 
   private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
     const uuid = randomUUID();
-    const firstPage = await fetchHtml(buildAcesurEndpoint(uuid, 1));
-    const firstBatch = parseAcesurApi(firstPage.body, seedUrl, this.name);
-    const total = Number(firstBatch.totalRecords ?? firstBatch.products.length);
-    const totalPages = Math.max(1, Math.ceil(total / 20));
-    const products = [...firstBatch.products];
+    const rubros = await fetchAcesurRubros(uuid);
+    const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
+    const products: ProductRecord[] = [];
 
-    for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
-      try {
-        const response = await fetchHtml(buildAcesurEndpoint(uuid, page));
-        const batch = parseAcesurApi(response.body, seedUrl, this.name);
-        if (batch.products.length === 0) {
-          break;
-        }
+    for (const seed of categorySeeds) {
+      if (products.length >= maxItems) {
+        break;
+      }
 
-        products.push(...batch.products);
-      } catch (error) {
-        this.logger.warn(`Fallo leyendo Acesur pagina ${page}: ${formatError(error)}`);
+      const batch = await crawlAcesurCategory(uuid, seed, seedUrl, this.name, maxItems - products.length, this.logger);
+      if (batch.length === 0) {
+        continue;
+      }
+
+      products.push(...batch);
+      if (products.length >= maxItems) {
         break;
       }
     }
@@ -402,7 +401,7 @@ export function buildSelvirArchivePageUrl(baseUrl: string, page: number): string
   return new URL(`page/${page}/`, normalizedBase).toString();
 }
 
-function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { totalRecords?: number; products: ProductRecord[] } {
+export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { totalRecords?: number; products: ProductRecord[] } {
   const parsed = JSON.parse(body) as { cantidad_registros?: string; productos?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
   const items = Array.isArray(parsed) ? parsed : parsed.productos ?? [];
   const totalRecords = Number((Array.isArray(parsed) ? undefined : parsed.cantidad_registros) ?? 0);
@@ -444,8 +443,99 @@ function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { 
   return { totalRecords, products };
 }
 
-function buildAcesurEndpoint(uuid: string, page: number): string {
-  return `https://acesur.uy/app_endpoints_v4/app_obtener_productos.php?uuid=${uuid}&uuid_carro=${uuid}%7C&codigo_cliente=&pais=&ofertas=INTERNET&seccion=menu&texto=&pagina=${page}&order_by=&tipo_orden=&sucursal_pedido=`;
+export function parseAcesurFilterOptions(body: string): string[] {
+  const parsed = JSON.parse(body) as Array<{ tipo?: string; codigo?: string }>;
+  return parsed
+    .filter((item) => String(item.tipo ?? '').toUpperCase() === 'B')
+    .map((item) => String(item.codigo ?? '').trim())
+    .filter(Boolean);
+}
+
+async function crawlAcesurCategory(
+  uuid: string,
+  filters: { primerFiltro: string; segundoFiltro?: string; tercerFiltro?: string; cuartoFiltro?: string },
+  sourceUrl: string,
+  provider: 'domain',
+  maxItems: number,
+  logger: Logger,
+): Promise<ProductRecord[]> {
+  if (maxItems <= 0) {
+    return [];
+  }
+
+  const firstPage = await fetchHtml(buildAcesurEndpoint(uuid, 1, filters));
+  const firstBatch = parseAcesurApi(firstPage.body, sourceUrl, provider);
+  const total = Number(firstBatch.totalRecords ?? firstBatch.products.length);
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const products = [...firstBatch.products];
+
+  for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
+    try {
+      const response = await fetchHtml(buildAcesurEndpoint(uuid, page, filters));
+      const batch = parseAcesurApi(response.body, sourceUrl, provider);
+      if (batch.products.length === 0) {
+        break;
+      }
+
+      products.push(...batch.products);
+    } catch (error) {
+      logger.warn(`Fallo leyendo Acesur pagina ${page} (${filters.primerFiltro || 'todos'}): ${formatError(error)}`);
+      break;
+    }
+  }
+
+  return products;
+}
+
+async function fetchAcesurRubros(uuid: string): Promise<string[]> {
+  const response = await fetchHtml(buildAcesurFilterEndpoint(uuid, 1, {}));
+  const rubros = parseAcesurFilterOptions(response.body);
+  return rubros.filter((value) => value.toUpperCase() !== 'TODOS');
+}
+
+export function buildAcesurEndpoint(uuid: string, page: number, filters: { primerFiltro?: string; segundoFiltro?: string; tercerFiltro?: string; cuartoFiltro?: string } = {}): string {
+  return buildAcesurUrl('app_obtener_productos.php', uuid, {
+    ofertas: 'INTERNET',
+    seccion: 'menu',
+    texto: '',
+    pagina: String(page),
+    order_by: '',
+    tipo_orden: '',
+    sucursal_pedido: '',
+    primer_filtro: filters.primerFiltro ?? '',
+    segundo_filtro: filters.segundoFiltro ?? '',
+    tercer_filtro: filters.tercerFiltro ?? '',
+    cuarto_filtro: filters.cuartoFiltro ?? '',
+  });
+}
+
+function buildAcesurFilterEndpoint(
+  uuid: string,
+  filterNumber: 1 | 2 | 3 | 4,
+  filters: { primero?: string; segundo?: string; tercero?: string; ultimo?: string } = {},
+): string {
+  return buildAcesurUrl(`app_obtener_buscador_${filterNumber}_filtro.php`, uuid, {
+    ultimo: filters.ultimo ?? '',
+    primero: filters.primero ?? '',
+    segundo: filters.segundo ?? '',
+    tercero: filters.tercero ?? '',
+  });
+}
+
+function buildAcesurUrl(
+  path: string,
+  uuid: string,
+  params: Record<string, string>,
+): string {
+  const query = new URLSearchParams({
+    uuid,
+    uuid_carro: `${uuid}|`,
+    codigo_cliente: '',
+    pais: '',
+    ...params,
+  });
+
+  return `https://acesur.uy/app_endpoints_v4/${path}?${query.toString()}`;
 }
 
 function buildAcesurImageUrl(imageName: string): string | undefined {

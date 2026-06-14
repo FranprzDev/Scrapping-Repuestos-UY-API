@@ -10,6 +10,7 @@ import {
   extractTaxitorPaginationSummary,
   parseSelvirAjaxResponse,
 } from '../providers/domain.provider';
+import { buildAcesurEndpoint, parseAcesurFilterOptions } from '../providers/domain.provider';
 
 test('rechaza productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
@@ -1705,4 +1706,26 @@ test('resume warnings de calidad por tipo', () => {
     missing_price: 1,
     not_sellable: 2,
   });
+});
+
+test('parsea rubros de Acesur y arma endpoints con filtros', () => {
+  const rubros = parseAcesurFilterOptions(
+    JSON.stringify([
+      { tipo: 'A', codigo: 'Todos' },
+      { tipo: 'B', codigo: 'FRENO' },
+      { tipo: 'B', codigo: 'MOTOR' },
+    ]),
+  );
+
+  assert.deepEqual(rubros, ['FRENO', 'MOTOR']);
+
+  const endpoint = buildAcesurEndpoint('uuid-demo', 3, {
+    primerFiltro: 'FRENO',
+    segundoFiltro: 'PASTILLAS',
+  });
+
+  assert.match(endpoint, /app_obtener_productos\.php/);
+  assert.match(endpoint, /pagina=3/);
+  assert.match(endpoint, /primer_filtro=FRENO/);
+  assert.match(endpoint, /segundo_filtro=PASTILLAS/);
 });
