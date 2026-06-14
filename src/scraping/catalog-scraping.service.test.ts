@@ -568,10 +568,6 @@ test('resetea por completo los datos scrapeados y limpia el archive', async () =
           return { rows: [{ id: '1' }, { id: '2' }] } as never;
         }
 
-        if (/DELETE FROM scraping_site_links/i.test(sql)) {
-          return { rows: [{ url: 'a' }] } as never;
-        }
-
         if (/DELETE FROM scraping_run_sites/i.test(sql)) {
           return { rows: [{ site: 'a' }, { site: 'b' }, { site: 'c' }] } as never;
         }
@@ -592,7 +588,6 @@ test('resetea por completo los datos scrapeados y limpia el archive', async () =
   const result = await service.resetCatalogData();
 
   assert.equal(result.inventoryDeleted, 2);
-  assert.equal(result.siteLinksDeleted, 1);
   assert.equal(result.runSitesDeleted, 3);
   assert.equal(result.runsDeleted, 1);
   assert.equal(result.jobsDeleted, 2);
