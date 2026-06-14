@@ -192,6 +192,16 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
     return candidates;
   }
 
+  if (rule.id === 'taxitor') {
+    const detailProduct = extractDetailProduct(root, pageUrl, provider, rule);
+    if (detailProduct) {
+      candidates.push(detailProduct);
+    } else {
+      candidates.push(...extractTaxitorListProducts(root, pageUrl, provider, rule));
+    }
+    return candidates;
+  }
+
   const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   if (!isDetailPage) {
@@ -329,6 +339,59 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       provider,
     });
   });
+
+  return products;
+}
+
+function extractTaxitorListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  const products: ProductRecord[] = [];
+  const cards = queryAll(root, '.single-product-wrapper');
+
+  for (const card of cards) {
+    const sourceUrl = firstNonEmpty([
+      normalizeUrl(firstAttributeValue(card, ['a[href*="/articulos/mostrar/"]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(card, ['h3 a[href]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(card, ['h2 a[href]'], 'href'), pageUrl),
+    ]);
+
+    const productName = firstNonEmpty([
+      cleanText(firstElementText(card, ['h3 a'])),
+      cleanText(firstElementText(card, ['h2 a'])),
+      cleanText(firstElementText(card, ['[class*="title"]'])),
+      cleanText(firstAttributeValue(card, ['img'], 'alt')),
+    ]);
+    const rawPrice = firstNonEmpty([
+      cleanText(firstElementText(card, ['.product-price'])),
+      cleanText(firstElementText(card, ['[class*="price"]'])),
+      extractPriceFromNode(card),
+    ]);
+
+    if (!sourceUrl || !productName || !rawPrice) {
+      continue;
+    }
+
+    const comparableName = normalizeComparableText(productName);
+    if (/^(catalogo|cat[aá]logo|inicio|home|menu|ver mas|mostrar|pagina)$/i.test(comparableName)) {
+      continue;
+    }
+
+    products.push({
+      productName,
+      price: normalizePriceValue(rawPrice),
+      currency: inferCurrency(rawPrice),
+      description: cleanText(firstElementText(card, ['.product-description', '.product-meta-data'])),
+      imageUrl: normalizeUrl(firstNonEmpty(attributeValues(card, ['img'], 'src')), pageUrl),
+      sourceUrl,
+      availability:
+        resolveAvailability(cleanText(card.text) ?? '', rule) === 'in_stock'
+          ? 'in_stock'
+          : resolveAvailability(cleanText(card.text) ?? '', rule) === 'out_of_stock'
+            ? 'out_of_stock'
+            : undefined,
+      extractedAt: new Date().toISOString(),
+      provider,
+    });
+  }
 
   return products;
 }
@@ -942,6 +1005,22 @@ function isSemanticCategoryLink(href: string, cardText: string): boolean {
 function isLikelyDetailPage(root: HTMLElement, pageUrl: string, rule: DomainRule): boolean {
   if (rule.id === 'chaparei' && queryAll(root, 'article.prod_item').length > 1) {
     return false;
+  }
+
+  if (rule.id === 'taxitor') {
+    const paginationLinkCount = queryAll(root, 'ul.pagination a[href]').length;
+    const productLinkCount = queryAll(root, 'a[href]').reduce((count, anchor) => {
+      const href = normalizeUrl(anchor.getAttribute('href'), pageUrl);
+      if (!href || !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+        return count;
+      }
+
+      return count + 1;
+    }, 0);
+
+    if (paginationLinkCount > 0 || productLinkCount > 1) {
+      return false;
+    }
   }
 
   if (rule.id === 'feyvi') {

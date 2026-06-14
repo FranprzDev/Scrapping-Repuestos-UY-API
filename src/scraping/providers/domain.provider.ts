@@ -5,7 +5,7 @@ import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvid
 import { extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
 import { fetchHtml } from '../domain/http-client';
-import { dedupeProducts, inferCurrency, normalizePriceValue, qualityGate } from '../domain/product-quality';
+import { cleanText, dedupeProducts, inferCurrency, normalizePriceValue, qualityGate } from '../domain/product-quality';
 import { PlaywrightProvider } from './playwright.provider';
 
 @Injectable()
@@ -115,6 +115,10 @@ export class DomainProvider implements ScrapingProvider {
         discoveredUrls: [sourceUrl],
         discoveryMethod: 'selvir-http',
       };
+    }
+
+    if (rule.id === 'taxitor') {
+      return await this.crawlTaxitor(sourceUrl, limit, rule);
     }
 
     if (rule.preferredMethod === 'api') {
@@ -328,6 +332,69 @@ export class DomainProvider implements ScrapingProvider {
 
     return dedupeProducts(products).slice(0, maxItems);
   }
+
+  private async crawlTaxitor(sourceUrl: string, limit: number, rule: DomainRule) {
+    const pages: Array<{ url: string; depth: number; productCount: number }> = [];
+    const discoveredUrls: string[] = [];
+    const seenPageUrls = new Set<string>();
+    const collectedProducts: ProductRecord[] = [];
+    let nextUrl: string | undefined = sourceUrl;
+
+    while (nextUrl && pages.length < limit) {
+      if (seenPageUrls.has(nextUrl)) {
+        break;
+      }
+
+      seenPageUrls.add(nextUrl);
+
+      try {
+        const response = await fetchHtml(nextUrl);
+        const pageProducts = qualityGate(
+          extractProductsFromHtml(response.body, response.finalUrl, this.name, rule),
+          rule,
+        );
+        const pagination = extractTaxitorPaginationSummary(response.body, response.finalUrl);
+
+        if (pageProducts.length === 0) {
+          break;
+        }
+
+        const mergedProducts = dedupeProducts([...collectedProducts, ...pageProducts]);
+        if (mergedProducts.length <= collectedProducts.length) {
+          break;
+        }
+
+        collectedProducts.length = 0;
+        collectedProducts.push(...mergedProducts);
+        pages.push({
+          url: response.finalUrl,
+          depth: pages.length,
+          productCount: pageProducts.length,
+        });
+        discoveredUrls.push(response.finalUrl);
+
+        if (!pagination.nextPageUrl || seenPageUrls.has(pagination.nextPageUrl)) {
+          break;
+        }
+
+        nextUrl = pagination.nextPageUrl;
+      } catch (error) {
+        this.logger.warn(`No se pudo leer pagina Taxitor ${nextUrl}: ${formatError(error)}`);
+        break;
+      }
+    }
+
+    if (discoveredUrls.length === 0) {
+      discoveredUrls.push(sourceUrl);
+    }
+
+    return {
+      seedUrl: sourceUrl,
+      pages,
+      discoveredUrls,
+      discoveryMethod: 'taxitor-http',
+    };
+  }
 }
 
 export function buildSelvirArchivePageUrl(baseUrl: string, page: number): string {
@@ -422,6 +489,58 @@ export function extractSelvirArchiveSummary(body: string, finalUrl: string): { c
   };
 }
 
+export function extractTaxitorPaginationSummary(body: string, finalUrl: string): {
+  currentPage?: number;
+  nextPageUrl?: string;
+  lastPageUrl?: string;
+} {
+  const root = parse(body);
+  const paginationLinks = root.querySelectorAll('ul.pagination a[href]');
+  const currentPage = parseTaxitorPageNumber(
+    cleanText(root.querySelector('ul.pagination li.active span')?.text)
+      ?? cleanText(root.querySelector('li.active span')?.text),
+  );
+
+  let nextPageUrl: string | undefined;
+  let lastPageUrl: string | undefined;
+  let fallbackNextPage: { pageNumber: number; href: string } | undefined;
+
+  for (const anchor of paginationLinks) {
+    const href = normalizeTaxitorPaginationUrl(anchor.getAttribute('href'), finalUrl);
+    if (!href) {
+      continue;
+    }
+
+    const rel = (anchor.getAttribute('rel') ?? '').toLowerCase();
+    const pageNumber = parseTaxitorPageNumber(anchor.getAttribute('data-ci-pagination-page'));
+    const label = cleanText(anchor.text);
+
+    if (rel.includes('next')) {
+      nextPageUrl = href;
+    }
+
+    if (rel.includes('last') || label === '»') {
+      lastPageUrl = href;
+    }
+
+    if (!nextPageUrl && typeof currentPage === 'number' && typeof pageNumber === 'number' && pageNumber > currentPage) {
+      if (!fallbackNextPage || pageNumber < fallbackNextPage.pageNumber) {
+        fallbackNextPage = { pageNumber, href };
+      }
+    }
+
+    if (!lastPageUrl && typeof pageNumber === 'number' && label === '»') {
+      lastPageUrl = href;
+    }
+  }
+
+  return {
+    currentPage,
+    nextPageUrl: nextPageUrl ?? fallbackNextPage?.href,
+    lastPageUrl,
+  };
+}
+
 async function fetchSelvirArchivePage(categoryUrl: string, categoryLabel: string, page: number) {
   const body = new URLSearchParams({
     action: 'infinite_scroll_archive_products',
@@ -479,6 +598,28 @@ export function cleanSelvirLabel(value?: string): string | undefined {
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeTaxitorPaginationUrl(value: string | undefined, baseUrl: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function parseTaxitorPageNumber(value: string | undefined): number | undefined {
+  const cleaned = cleanText(value);
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {

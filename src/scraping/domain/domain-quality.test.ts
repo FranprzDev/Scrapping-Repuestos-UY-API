@@ -3,7 +3,13 @@ import * as assert from 'node:assert/strict';
 import { findDomainRule } from './domain-rules';
 import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
-import { buildSelvirArchivePageUrl, cleanSelvirLabel, extractSelvirArchiveSummary, parseSelvirAjaxResponse } from '../providers/domain.provider';
+import {
+  buildSelvirArchivePageUrl,
+  cleanSelvirLabel,
+  extractSelvirArchiveSummary,
+  extractTaxitorPaginationSummary,
+  parseSelvirAjaxResponse,
+} from '../providers/domain.provider';
 
 test('rechaza productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
@@ -59,6 +65,218 @@ test('acepta productos con carrito en detalle tipo Taxitor', () => {
   assert.equal(products.length, 1);
   assert.equal(products[0].productName, 'ABRAZADERA METALICA');
   assert.equal(isSellableProduct(products[0], rule), true);
+});
+
+test('detecta la paginacion Taxitor desde rel=next y data-ci-pagination-page', () => {
+  const html = `
+    <nav aria-label="navigation " class="py-2 my-2">
+      <ul class="pagination pagination-md">
+        <li class="active"><span>1<span></span></span></li>
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30" data-ci-pagination-page="2">2</a></li>
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/60" data-ci-pagination-page="3">3</a></li>
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30" data-ci-pagination-page="2" rel="next">›</a></li>
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/28170" data-ci-pagination-page="940">»</a></li>
+      </ul>
+    </nav>
+  `;
+
+  const summary = extractTaxitorPaginationSummary(html, 'https://taxitor.uy/articulos/filtro/1/-/-/');
+
+  assert.equal(summary.currentPage, 1);
+  assert.equal(summary.nextPageUrl, 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30');
+  assert.equal(summary.lastPageUrl, 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/28170');
+});
+
+test('detecta el fin Taxitor cuando ya no hay next', () => {
+  const html = `
+    <nav aria-label="navigation " class="py-2 my-2">
+      <ul class="pagination pagination-md">
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/28140" data-ci-pagination-page="939" rel="prev">‹</a></li>
+        <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/" data-ci-pagination-page="1" rel="start">1</a></li>
+        <li class="active"><span>940<span></span></span></li>
+      </ul>
+    </nav>
+  `;
+
+  const summary = extractTaxitorPaginationSummary(html, 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/28170');
+
+  assert.equal(summary.currentPage, 940);
+  assert.equal(summary.nextPageUrl, undefined);
+  assert.equal(summary.lastPageUrl, undefined);
+});
+
+test('extrae listados Taxitor y evita confundir la paginacion con un detalle', () => {
+  const rule = findDomainRule('https://taxitor.uy/articulos/filtro/1/-/-/');
+  assert.ok(rule);
+
+  const html = `
+    <main>
+      <div class="row">
+        <div class="col-12 col-sm-6 col-md-4 col-xl-4">
+          <div class="single-product-wrapper p-4">
+            <div class="product-img pb-3">
+              <a href="https://taxitor.uy/articulos/mostrar/1319">
+                <img src="https://taxitor.uy/articulos/resize_image/1319.jpg" alt="">
+              </a>
+            </div>
+            <div class="product-description">
+              <div class="product-meta-data">
+                <h3 class="pixelato-inner-title">
+                  <a href="https://taxitor.uy/articulos/mostrar/1319">
+                    ABRAZADERA CREMALLERA SUPRENS 13MM-19MM x 100 SURTIDAS 20%DCTO
+                  </a>
+                </h3>
+                <p class="product-price">
+                  $ 39.74
+                  <span class="ti-1" style="color:red">Antes:</span>
+                </p>
+              </div>
+              <div class="product-buttons">
+                <button>Agregar al carrito</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <nav aria-label="navigation " class="py-2 my-2">
+        <ul class="pagination pagination-md">
+          <li class="active"><span>1<span></span></span></li>
+          <li><a href="https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30" data-ci-pagination-page="2" rel="next">›</a></li>
+        </ul>
+      </nav>
+    </main>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://taxitor.uy/articulos/filtro/1/-/-/', 'domain', rule), rule);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'ABRAZADERA CREMALLERA SUPRENS 13MM-19MM x 100 SURTIDAS 20%DCTO');
+  assert.equal(products[0].price, '39.74');
+  assert.equal(products[0].sourceUrl, 'https://taxitor.uy/articulos/mostrar/1319');
+});
+
+test('no duplica productos Taxitor al unir paginas consecutivas', () => {
+  const rule = findDomainRule('https://taxitor.uy/articulos/filtro/1/-/-/');
+  assert.ok(rule);
+
+  const page1 = `
+    <main>
+      <div class="single-product-wrapper p-4">
+        <div class="product-img pb-3">
+          <a href="https://taxitor.uy/articulos/mostrar/1319"><img src="https://taxitor.uy/articulos/resize_image/1319.jpg" alt=""></a>
+        </div>
+        <div class="product-description">
+          <h3 class="pixelato-inner-title"><a href="https://taxitor.uy/articulos/mostrar/1319">ABRAZADERA CREMALLERA SUPRENS 13MM-19MM x 100 SURTIDAS 20%DCTO</a></h3>
+          <p class="product-price">$ 39.74</p>
+        </div>
+      </div>
+      <div class="single-product-wrapper p-4">
+        <div class="product-img pb-3">
+          <a href="https://taxitor.uy/articulos/mostrar/1320"><img src="https://taxitor.uy/articulos/resize_image/1320.jpg" alt=""></a>
+        </div>
+        <div class="product-description">
+          <h3 class="pixelato-inner-title"><a href="https://taxitor.uy/articulos/mostrar/1320">ABRAZADERA METALICA 20-25</a></h3>
+          <p class="product-price">$ 48.10</p>
+        </div>
+      </div>
+    </main>
+  `;
+
+  const page2 = `
+    <main>
+      <div class="single-product-wrapper p-4">
+        <div class="product-img pb-3">
+          <a href="https://taxitor.uy/articulos/mostrar/1319"><img src="https://taxitor.uy/articulos/resize_image/1319.jpg" alt=""></a>
+        </div>
+        <div class="product-description">
+          <h3 class="pixelato-inner-title"><a href="https://taxitor.uy/articulos/mostrar/1319">ABRAZADERA CREMALLERA SUPRENS 13MM-19MM x 100 SURTIDAS 20%DCTO</a></h3>
+          <p class="product-price">$ 39.74</p>
+        </div>
+      </div>
+      <div class="single-product-wrapper p-4">
+        <div class="product-img pb-3">
+          <a href="https://taxitor.uy/articulos/mostrar/1321"><img src="https://taxitor.uy/articulos/resize_image/1321.jpg" alt=""></a>
+        </div>
+        <div class="product-description">
+          <h3 class="pixelato-inner-title"><a href="https://taxitor.uy/articulos/mostrar/1321">ABRAZADERA METALICA 25-30</a></h3>
+          <p class="product-price">$ 51.25</p>
+        </div>
+      </div>
+    </main>
+  `;
+
+  const merged = dedupeProducts([
+    ...qualityGate(extractProductsFromHtml(page1, 'https://taxitor.uy/articulos/filtro/1/-/-/', 'domain', rule), rule),
+    ...qualityGate(extractProductsFromHtml(page2, 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30', 'domain', rule), rule),
+  ]);
+
+  assert.equal(merged.length, 3);
+  assert.deepEqual(
+    merged.map((product) => product.sourceUrl),
+    [
+      'https://taxitor.uy/articulos/mostrar/1319',
+      'https://taxitor.uy/articulos/mostrar/1320',
+      'https://taxitor.uy/articulos/mostrar/1321',
+    ],
+  );
+});
+
+test('Taxitor live crawl devuelve un producto correcto por cada pagina recorrida', async () => {
+  const rule = findDomainRule('https://taxitor.uy/articulos/filtro/1/-/-/');
+  assert.ok(rule);
+
+  const pages = [
+    {
+      url: 'https://taxitor.uy/articulos/filtro/1/-/-/',
+      expected: {
+        productName: 'ABRAZADERA CREMALLERA SUPRENS 13MM-19MM x 100 SURTIDAS 20%DCTO',
+        sourceUrl: 'https://taxitor.uy/articulos/mostrar/1319',
+        price: '39.74',
+      },
+    },
+    {
+      url: 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/30',
+      expected: {
+        productName: 'ACEITE FEBI (10W40 X LITRO ) 15000KM IVECO MB SCANIA VOLVO',
+        sourceUrl: 'https://taxitor.uy/articulos/mostrar/34049FB',
+        price: '328.36',
+      },
+    },
+    {
+      url: 'https://taxitor.uy/articulos/filtro/1/-/-/-/-/-/-/60',
+      expected: {
+        productName: 'ACOPLE MOVIMIENTO CAMBIOS VW SENDA CAÑON TL7465AC U EXPOYER EX1002096',
+        sourceUrl: 'https://taxitor.uy/articulos/mostrar/807711559',
+        price: '524.26',
+      },
+    },
+  ] as const;
+
+  for (const page of pages) {
+    const response = await fetch(page.url, {
+      headers: {
+        'user-agent': 'Mozilla/5.0',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        referer: 'https://taxitor.uy/',
+      },
+    });
+
+    assert.equal(response.status, 200, `expected 200 for ${page.url}`);
+
+    const html = await response.text();
+    const products = qualityGate(extractProductsFromHtml(html, response.url, 'domain', rule), rule);
+    const matched = products.find(
+      (product) =>
+        product.productName === page.expected.productName &&
+        product.sourceUrl === page.expected.sourceUrl &&
+        product.price === page.expected.price,
+    );
+
+    assert.ok(matched, `expected a valid product on ${page.url}`);
+    assert.equal(matched?.sourceUrl, page.expected.sourceUrl);
+    assert.equal(matched?.productName, page.expected.productName);
+    assert.equal(matched?.price, page.expected.price);
+  }
 });
 
 test('acepta detalle de Chaparei con boton comprar y agotado oculto', () => {
