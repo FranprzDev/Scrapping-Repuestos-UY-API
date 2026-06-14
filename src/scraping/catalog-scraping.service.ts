@@ -10,6 +10,18 @@ import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
 
+export interface CatalogSiteProgress {
+  site: string;
+  url?: string;
+  status: 'success' | 'error';
+  timeWorkingMs: number;
+  quantityScrapped: number;
+  pagesUsedForExtract: number;
+  rawProducts: number;
+  normalizedProducts: number;
+  message?: string;
+}
+
 @Injectable()
 export class CatalogScrapingService {
   private readonly logger = new Logger(CatalogScrapingService.name);
@@ -25,7 +37,10 @@ export class CatalogScrapingService {
     private readonly postgresService: PostgresService,
   ) {}
 
-  async scrapeCatalogWithPrices(request: CatalogScrapeRequestDto) {
+  async scrapeCatalogWithPrices(
+    request: CatalogScrapeRequestDto,
+    onSiteProgress?: (progress: CatalogSiteProgress) => Promise<void> | void,
+  ) {
     const requestedUrls = request.urls?.length ? request.urls : [...DEFAULT_CATALOG_SITES];
     const urls = requestedUrls.filter(isAdmittedHouseUrl);
     const siteConcurrency = request.siteConcurrency ?? 2;
@@ -121,6 +136,16 @@ export class CatalogScrapingService {
         }
         const archived = await this.archiveStoreService.saveSiteCatalog(url, refreshedMergedProducts, runAt, trace);
         const inventory = await this.inventoryStoreService.upsertSiteProducts(url, archived.products, runAt);
+        await onSiteProgress?.({
+          site: url,
+          url,
+          status: 'success',
+          timeWorkingMs: Date.now() - siteStartedAt,
+          quantityScrapped: refreshedMergedProducts.length,
+          pagesUsedForExtract: targetUrls.length,
+          rawProducts: refreshedProducts.length,
+          normalizedProducts: extracted.normalizedProducts.length,
+        });
         this.logger.log(
           `[run:${runId}] site_done site=${url} status=success products=${refreshedMergedProducts.length} durationMs=${Date.now() - siteStartedAt}`,
         );
@@ -141,12 +166,22 @@ export class CatalogScrapingService {
           },
           archive: {
             outputPath: archived.outputPath,
-            imagesSaved: archived.imagesSaved,
           },
           trace,
           inventory,
         };
       } catch (error) {
+        await onSiteProgress?.({
+          site: url,
+          url,
+          status: 'error',
+          timeWorkingMs: Date.now() - siteStartedAt,
+          quantityScrapped: 0,
+          pagesUsedForExtract: 0,
+          rawProducts: 0,
+          normalizedProducts: 0,
+          message: formatSiteError(error),
+        });
         this.logger.warn(
           `[run:${runId}] site_done site=${url} status=error durationMs=${Date.now() - siteStartedAt} message=${formatSiteError(error)}`,
         );
