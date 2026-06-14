@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { JobQueueService } from './job.queue';
+import type { CatalogSiteProgress } from '../catalog-scraping.service';
 
 test('conserva el progreso por sitio dentro del resultado final del job', async () => {
   let claimedCalls = 0;
@@ -182,4 +183,76 @@ test('expone un resumen compacto del job con el ultimo producto scrapeado', asyn
   assert.equal(job?.summary?.lastScrapedProduct?.sourceUrl, 'https://taxitor.uy/producto/bomba-aceite');
   assert.equal(job?.summary?.progress?.sites[0]?.quantityScrapped, 18);
   assert.equal((job as { result?: unknown }).result, undefined);
+});
+
+test('el progreso fallido no aborta el job', async () => {
+  let completed = false;
+  const progressQueries: string[] = [];
+  const postgresService = {
+    async ensureJobsTable() {},
+    async query(sql: string, params: unknown[] = [], timeoutMs?: number) {
+      if (/SELECT result\s+FROM scraping_jobs/i.test(sql)) {
+        return {
+          rows: [
+            {
+              result: null,
+            },
+          ],
+        } as never;
+      }
+
+      if (/UPDATE scraping_jobs\s+SET result = \$2::jsonb/i.test(sql)) {
+        progressQueries.push(`${timeoutMs ?? 0}`);
+        throw new Error('progress write failed');
+      }
+
+      if (/UPDATE scraping_jobs\s+SET status = 'done'/i.test(sql)) {
+        completed = true;
+        return { rows: [] } as never;
+      }
+
+      if (/BEGIN|COMMIT|ROLLBACK/i.test(sql)) {
+        return { rows: [] } as never;
+      }
+
+      return { rows: [] } as never;
+    },
+  };
+
+  const service = new JobQueueService(
+    {} as never,
+    {
+      async scrapeCatalogWithPrices(_payload: unknown, onSiteProgress?: (progress: CatalogSiteProgress) => Promise<void>) {
+        await onSiteProgress?.({
+          site: 'https://taxitor.uy/articulos/filtro/1/-/-/',
+          url: 'https://taxitor.uy/articulos/filtro/1/-/-/',
+          status: 'success',
+          stage: 'extracting',
+          timeWorkingMs: 10,
+          quantityScrapped: 1,
+          pagesUsedForExtract: 1,
+          rawProducts: 1,
+          normalizedProducts: 1,
+        });
+
+        return {
+          provider: 'http',
+          runId: 'run-progress-failure',
+          sitesProcessed: 1,
+        };
+      },
+    } as never,
+    postgresService as never,
+  );
+
+  (service as any).claimNextQueuedJob = async () => ({
+    id: 'job-progress-failure',
+    task: 'catalog-run',
+    payload: { urls: ['https://taxitor.uy/articulos/filtro/1/-/-/'] },
+  });
+
+  await (service as any).processNext();
+
+  assert.equal(completed, true);
+  assert.ok(progressQueries.length > 0);
 });

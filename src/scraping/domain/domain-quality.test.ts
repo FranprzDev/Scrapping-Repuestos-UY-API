@@ -1,16 +1,19 @@
 ﻿import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
+import { Logger } from '@nestjs/common';
 import { findDomainRule } from './domain-rules';
 import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
   buildSelvirArchivePageUrl,
   cleanSelvirLabel,
+  extractAcesurProductsByRubro,
   extractSelvirArchiveSummary,
   extractTaxitorPaginationSummary,
   parseSelvirAjaxResponse,
+  buildAcesurEndpoint,
+  parseAcesurFilterOptions,
 } from '../providers/domain.provider';
-import { buildAcesurEndpoint, parseAcesurFilterOptions } from '../providers/domain.provider';
 
 test('rechaza productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
@@ -1748,4 +1751,39 @@ test('arma endpoints de Acesur con codigo de cliente cuando existe', () => {
   assert.match(endpoint, /codigo_cliente=franutn23%40gmail\.com/);
   assert.match(endpoint, /primer_filtro=AMORTIGUADOR\+DE\+PUERTA/);
   assert.match(endpoint, /pagina=2/);
+});
+
+test('Acesur sigue con el siguiente rubro si uno falla', async () => {
+  const warns: string[] = [];
+  const products = await extractAcesurProductsByRubro(['FRENO', 'MOTOR'], {
+    uuid: 'uuid-demo',
+    seedUrl: 'https://acesur.example/catalogo',
+    provider: 'domain',
+    maxItems: 10,
+    logger: {
+      log() {},
+      warn(message: string) {
+        warns.push(message);
+      },
+    } as unknown as Logger,
+    crawlCategory: async (_uuid, filters, _sourceUrl, _provider, _maxItems) => {
+      if (filters.primerFiltro === 'FRENO') {
+        throw new Error('rubro roto');
+      }
+
+      return [
+        {
+          productName: 'Producto MOTOR',
+          price: '100',
+          sourceUrl: 'https://acesur.example/producto/motor',
+          extractedAt: '2026-06-14T00:00:00.000Z',
+          provider: 'domain',
+        },
+      ];
+    },
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'Producto MOTOR');
+  assert.match(warns.join('\n'), /Acesur rubro fallido rubro=FRENO/);
 });

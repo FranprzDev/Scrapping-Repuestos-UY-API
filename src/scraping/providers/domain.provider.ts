@@ -256,27 +256,18 @@ export class DomainProvider implements ScrapingProvider {
   private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
     const uuid = randomUUID();
     const customerCode = process.env.ACESUR_CUSTOMER_CODE?.trim();
+    this.logger.log(`Acesur extract start seed=${seedUrl} customerCode=${customerCode ? 'yes' : 'no'}`);
     const rubros = await fetchAcesurRubros(uuid, customerCode);
-    const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
-    const products: ProductRecord[] = [];
-
-    for (const seed of categorySeeds) {
-      if (products.length >= maxItems) {
-        break;
-      }
-
-      const batch = await crawlAcesurCategory(uuid, seed, seedUrl, this.name, maxItems - products.length, this.logger, customerCode);
-      if (batch.length === 0) {
-        continue;
-      }
-
-      products.push(...batch);
-      if (products.length >= maxItems) {
-        break;
-      }
-    }
-
-    return dedupeProducts(products).slice(0, maxItems);
+    this.logger.log(`Acesur rubros found count=${rubros.length}`);
+    return extractAcesurProductsByRubro(rubros, {
+      uuid,
+      seedUrl,
+      provider: this.name,
+      maxItems,
+      logger: this.logger,
+      customerCode,
+      crawlCategory: crawlAcesurCategory,
+    });
   }
 
   private async extractSelvirArchiveProducts(
@@ -348,6 +339,7 @@ export class DomainProvider implements ScrapingProvider {
       seenPageUrls.add(nextUrl);
 
       try {
+        this.logger.log(`Taxitor fetch page=${nextUrl}`);
         const response = await fetchHtml(nextUrl);
         const pageProducts = qualityGate(
           extractProductsFromHtml(response.body, response.finalUrl, this.name, rule),
@@ -371,6 +363,7 @@ export class DomainProvider implements ScrapingProvider {
           depth: pages.length,
           productCount: pageProducts.length,
         });
+        this.logger.log(`Taxitor page_ok page=${response.finalUrl} products=${pageProducts.length}`);
         discoveredUrls.push(response.finalUrl);
 
         if (!pagination.nextPageUrl || seenPageUrls.has(pagination.nextPageUrl)) {
@@ -452,6 +445,50 @@ export function parseAcesurFilterOptions(body: string): string[] {
     .filter(Boolean);
 }
 
+export async function extractAcesurProductsByRubro(
+  rubros: string[],
+  options: {
+    uuid: string;
+    seedUrl: string;
+    provider: 'domain';
+    maxItems: number;
+    logger: Logger;
+    customerCode?: string;
+    crawlCategory: typeof crawlAcesurCategory;
+  },
+): Promise<ProductRecord[]> {
+  const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
+  const products: ProductRecord[] = [];
+
+  for (const seed of categorySeeds) {
+    if (products.length >= options.maxItems) {
+      break;
+    }
+
+    try {
+      const batch = await options.crawlCategory(
+        options.uuid,
+        seed,
+        options.seedUrl,
+        options.provider,
+        options.maxItems - products.length,
+        options.logger,
+        options.customerCode,
+      );
+
+      if (batch.length === 0) {
+        continue;
+      }
+
+      products.push(...batch);
+    } catch (error) {
+      options.logger.warn(`Acesur rubro fallido rubro=${seed.primerFiltro || 'todos'}: ${formatError(error)}`);
+    }
+  }
+
+  return dedupeProducts(products).slice(0, options.maxItems);
+}
+
 async function crawlAcesurCategory(
   uuid: string,
   filters: { primerFiltro: string; segundoFiltro?: string; tercerFiltro?: string; cuartoFiltro?: string },
@@ -465,17 +502,21 @@ async function crawlAcesurCategory(
     return [];
   }
 
+  logger.log(`Acesur fetch page=1 rubro=${filters.primerFiltro || 'todos'}`);
   const firstPage = await fetchHtml(buildAcesurEndpoint(uuid, 1, filters, customerCode));
   const firstBatch = parseAcesurApi(firstPage.body, sourceUrl, provider);
   const total = Number(firstBatch.totalRecords ?? firstBatch.products.length);
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const products = [...firstBatch.products];
+  logger.log(`Acesur page=1 rubro=${filters.primerFiltro || 'todos'} total=${total} firstBatch=${firstBatch.products.length}`);
 
   for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
     try {
+      logger.log(`Acesur fetch page=${page} rubro=${filters.primerFiltro || 'todos'}`);
       const response = await fetchHtml(buildAcesurEndpoint(uuid, page, filters, customerCode));
       const batch = parseAcesurApi(response.body, sourceUrl, provider);
       if (batch.products.length === 0) {
+        logger.warn(`Acesur empty page=${page} rubro=${filters.primerFiltro || 'todos'}`);
         break;
       }
 
