@@ -21,11 +21,10 @@ export interface ScrapingJob {
 }
 
 export interface ScrapingJobSummary {
-  runId?: string;
-  requestedAt?: string;
-  strategy?: string;
-  sitesProcessed?: number;
-  inventorySize?: number;
+  currentSite?: string;
+  stage?: CatalogSiteProgress['stage'];
+  quantityScrapped?: number;
+  timeWorkingMs?: number;
   lastScrapedProduct?: CatalogProductSummary;
   progress?: {
     sites: CatalogSiteProgress[];
@@ -358,15 +357,14 @@ function buildJobSummary(result: unknown): ScrapingJobSummary | undefined {
   const sites = Array.isArray(rawSites)
     ? rawSites.filter((entry): entry is CatalogSiteProgress => Boolean(entry) && typeof entry === 'object' && typeof (entry as CatalogSiteProgress).site === 'string')
     : [];
-  const lastProduct = [...sites].reverse().find((site: CatalogSiteProgress) => site.lastScrapedProduct)?.lastScrapedProduct;
+  const lastSite = [...sites].reverse().find((site: CatalogSiteProgress) => site.lastScrapedProduct);
 
   return {
-    runId: typeof current.runId === 'string' ? current.runId : undefined,
-    requestedAt: typeof current.requestedAt === 'string' ? current.requestedAt : undefined,
-    strategy: typeof current.strategy === 'string' ? current.strategy : undefined,
-    sitesProcessed: typeof current.sitesProcessed === 'number' ? current.sitesProcessed : undefined,
-    inventorySize: typeof current.inventorySize === 'number' ? current.inventorySize : undefined,
-    lastScrapedProduct: lastProduct,
+    currentSite: lastSite?.site,
+    stage: lastSite?.stage,
+    quantityScrapped: typeof lastSite?.quantityScrapped === 'number' ? lastSite.quantityScrapped : undefined,
+    timeWorkingMs: typeof lastSite?.timeWorkingMs === 'number' ? lastSite.timeWorkingMs : undefined,
+    lastScrapedProduct: lastSite?.lastScrapedProduct,
     progress: sites.length > 0 ? { sites } : undefined,
   };
 }

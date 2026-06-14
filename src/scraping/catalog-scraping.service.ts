@@ -14,6 +14,7 @@ export interface CatalogSiteProgress {
   site: string;
   url?: string;
   status: 'success' | 'error';
+  stage?: 'starting' | 'crawling' | 'extracting' | 'saving' | 'done' | 'error';
   timeWorkingMs: number;
   quantityScrapped: number;
   pagesUsedForExtract: number;
@@ -63,6 +64,17 @@ export class CatalogScrapingService {
       const siteStartedAt = Date.now();
       this.logger.log(`[run:${runId}] site_started site=${url}`);
       try {
+        await onSiteProgress?.({
+          site: url,
+          url,
+          status: 'success',
+          stage: 'starting',
+          timeWorkingMs: 0,
+          quantityScrapped: 0,
+          pagesUsedForExtract: 0,
+          rawProducts: 0,
+          normalizedProducts: 0,
+        });
         const cachedTargetUrls = await this.getCachedTargetUrls(url);
         let crawlProvider = 'cached-links';
         let crawlRequestedAt = runAt;
@@ -84,6 +96,17 @@ export class CatalogScrapingService {
           : undefined;
 
         if (!targetUrls.length) {
+          await onSiteProgress?.({
+            site: url,
+            url,
+            status: 'success',
+            stage: 'crawling',
+            timeWorkingMs: Date.now() - siteStartedAt,
+            quantityScrapped: 0,
+            pagesUsedForExtract: 0,
+            rawProducts: 0,
+            normalizedProducts: 0,
+          });
           const crawlPayload: ScrapingOperationPayload = {
             url,
             limit: maxPagesPerSite,
@@ -104,6 +127,17 @@ export class CatalogScrapingService {
           url,
         };
 
+        await onSiteProgress?.({
+          site: url,
+          url,
+          status: 'success',
+          stage: 'extracting',
+          timeWorkingMs: Date.now() - siteStartedAt,
+          quantityScrapped: 0,
+          pagesUsedForExtract: targetUrls.length,
+          rawProducts: 0,
+          normalizedProducts: 0,
+        });
         let extracted = await this.scrapingService.runTask('extract', extractPayload);
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const rule = findDomainRule(url);
@@ -140,6 +174,18 @@ export class CatalogScrapingService {
         }
         const trace = buildSiteTrace(crawlRaw, extracted.raw, refreshedProducts, refreshedMergedProducts);
         if (refreshedMergedProducts.length > 0) {
+          await onSiteProgress?.({
+            site: url,
+            url,
+            status: 'success',
+            stage: 'saving',
+            timeWorkingMs: Date.now() - siteStartedAt,
+            quantityScrapped: refreshedMergedProducts.length,
+            pagesUsedForExtract: targetUrls.length,
+            rawProducts: refreshedProducts.length,
+            normalizedProducts: extracted.normalizedProducts.length,
+            lastScrapedProduct: summarizeProduct(refreshedMergedProducts.at(-1)),
+          });
           await this.saveSiteLinks(url, targetUrls, refreshedMergedProducts, runAt);
         }
         const archived = await this.archiveStoreService.saveSiteCatalog(url, refreshedMergedProducts, runAt, trace);
@@ -148,6 +194,7 @@ export class CatalogScrapingService {
           site: url,
           url,
           status: 'success',
+          stage: 'done',
           timeWorkingMs: Date.now() - siteStartedAt,
           quantityScrapped: refreshedMergedProducts.length,
           pagesUsedForExtract: targetUrls.length,
@@ -184,6 +231,7 @@ export class CatalogScrapingService {
           site: url,
           url,
           status: 'error',
+          stage: 'error',
           timeWorkingMs: Date.now() - siteStartedAt,
           quantityScrapped: 0,
           pagesUsedForExtract: 0,

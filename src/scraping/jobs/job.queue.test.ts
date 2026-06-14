@@ -134,6 +134,7 @@ test('expone un resumen compacto del job con el ultimo producto scrapeado', asyn
                     {
                       site: 'https://taxitor.uy/',
                       status: 'success',
+                      stage: 'done',
                       timeWorkingMs: 1234,
                       quantityScrapped: 18,
                       pagesUsedForExtract: 5,
@@ -173,7 +174,10 @@ test('expone un resumen compacto del job con el ultimo producto scrapeado', asyn
   assert.equal(job?.id, 'job-2');
   assert.equal(job?.status, 'done');
   assert.equal(job?.provider, 'http');
-  assert.equal(job?.summary?.runId, 'run-2');
+  assert.equal(job?.summary?.currentSite, 'https://taxitor.uy/');
+  assert.equal(job?.summary?.stage, 'done');
+  assert.equal(job?.summary?.quantityScrapped, 18);
+  assert.equal(job?.summary?.timeWorkingMs, 1234);
   assert.equal(job?.summary?.lastScrapedProduct?.productName, 'BOMBA ACEITE');
   assert.equal(job?.summary?.lastScrapedProduct?.sourceUrl, 'https://taxitor.uy/producto/bomba-aceite');
   assert.equal(job?.summary?.progress?.sites[0]?.quantityScrapped, 18);
