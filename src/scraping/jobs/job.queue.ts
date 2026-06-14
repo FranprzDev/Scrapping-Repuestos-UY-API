@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { randomUUID } from 'node:crypto';
 import { ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
 import { CatalogScrapeRequestDto } from '../dto/catalog-request.dto';
-import { CatalogScrapingService, type CatalogSiteProgress } from '../catalog-scraping.service';
+import { CatalogScrapingService, type CatalogSiteProgress, type CatalogProductSummary } from '../catalog-scraping.service';
 import { ScrapingService } from '../scraping.service';
 import { PostgresService } from './postgres.service';
 
@@ -14,10 +14,22 @@ export interface ScrapingJob {
   payload: ScrapingOperationPayload;
   status: JobStatus;
   provider?: string;
-  result?: unknown;
+  summary?: ScrapingJobSummary;
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ScrapingJobSummary {
+  runId?: string;
+  requestedAt?: string;
+  strategy?: string;
+  sitesProcessed?: number;
+  inventorySize?: number;
+  lastScrapedProduct?: CatalogProductSummary;
+  progress?: {
+    sites: CatalogSiteProgress[];
+  };
 }
 
 type ScrapingJobRow = {
@@ -248,7 +260,7 @@ function mapRowToJob(row: ScrapingJobRow): ScrapingJob {
     payload: row.payload,
     status: row.status,
     provider: row.provider ?? undefined,
-    result: row.result ?? undefined,
+    summary: buildJobSummary(row.result),
     error: row.error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -324,4 +336,37 @@ function mergeJobResultWithProgress(result: unknown, existingResult: unknown): u
 
 function serializeProgressSites(sites: Map<string, CatalogSiteProgress>): CatalogSiteProgress[] {
   return Array.from(sites.values()).sort((left, right) => left.site.localeCompare(right.site));
+}
+
+function buildJobSummary(result: unknown): ScrapingJobSummary | undefined {
+  if (typeof result !== 'object' || !result) {
+    return undefined;
+  }
+
+  const current = result as {
+    runId?: unknown;
+    requestedAt?: unknown;
+    strategy?: unknown;
+    sitesProcessed?: unknown;
+    inventorySize?: unknown;
+    progress?: unknown;
+  };
+  const progress = current.progress && typeof current.progress === 'object'
+    ? (current.progress as { sites?: unknown[] })
+    : undefined;
+  const rawSites = progress?.sites;
+  const sites = Array.isArray(rawSites)
+    ? rawSites.filter((entry): entry is CatalogSiteProgress => Boolean(entry) && typeof entry === 'object' && typeof (entry as CatalogSiteProgress).site === 'string')
+    : [];
+  const lastProduct = [...sites].reverse().find((site: CatalogSiteProgress) => site.lastScrapedProduct)?.lastScrapedProduct;
+
+  return {
+    runId: typeof current.runId === 'string' ? current.runId : undefined,
+    requestedAt: typeof current.requestedAt === 'string' ? current.requestedAt : undefined,
+    strategy: typeof current.strategy === 'string' ? current.strategy : undefined,
+    sitesProcessed: typeof current.sitesProcessed === 'number' ? current.sitesProcessed : undefined,
+    inventorySize: typeof current.inventorySize === 'number' ? current.inventorySize : undefined,
+    lastScrapedProduct: lastProduct,
+    progress: sites.length > 0 ? { sites } : undefined,
+  };
 }

@@ -19,7 +19,15 @@ export interface CatalogSiteProgress {
   pagesUsedForExtract: number;
   rawProducts: number;
   normalizedProducts: number;
+  lastScrapedProduct?: CatalogProductSummary;
   message?: string;
+}
+
+export interface CatalogProductSummary {
+  productName?: string;
+  sourceUrl?: string;
+  price?: string;
+  brand?: string;
 }
 
 @Injectable()
@@ -145,6 +153,7 @@ export class CatalogScrapingService {
           pagesUsedForExtract: targetUrls.length,
           rawProducts: refreshedProducts.length,
           normalizedProducts: extracted.normalizedProducts.length,
+          lastScrapedProduct: summarizeProduct(refreshedMergedProducts.at(-1)),
         });
         this.logger.log(
           `[run:${runId}] site_done site=${url} status=success products=${refreshedMergedProducts.length} durationMs=${Date.now() - siteStartedAt}`,
@@ -560,6 +569,19 @@ function formatSiteError(error: unknown): string {
   }
 
   return String(error);
+}
+
+function summarizeProduct(product: ProductRecord | undefined): CatalogProductSummary | undefined {
+  if (!product) {
+    return undefined;
+  }
+
+  return {
+    productName: product.productName,
+    sourceUrl: product.sourceUrl,
+    price: product.price,
+    brand: product.brand,
+  };
 }
 
 function collectTargetUrls(raw: unknown, fallbackUrl: string): string[] {
