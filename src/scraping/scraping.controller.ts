@@ -211,6 +211,13 @@ export class ScrapingController {
 function buildPublicJobView(job: ScrapingJob) {
   const requestSites = normalizeJobSites(job.payload);
   const progress = normalizeJobProgress(job.summary?.progress, job.updatedAt);
+  const progressSummary = progress
+    ? {
+        completedSites: progress.completedSites,
+        totalSites: progress.totalSites,
+        activeSite: progress.activeSite,
+      }
+    : undefined;
 
   return {
     id: job.id,
@@ -227,7 +234,12 @@ function buildPublicJobView(job: ScrapingJob) {
       maxProductsPerSite: numberOrUndefined(job.payload.maxProductsPerSite),
       siteConcurrency: numberOrUndefined(job.payload.siteConcurrency),
     },
-    progress,
+    progress: progress
+      ? {
+          ...progress,
+          summary: progressSummary,
+        }
+      : undefined,
     counts: {
       sitesProcessed: progress?.completedSites ?? 0,
       activeSites: progress?.sites.filter((site) => site.status === 'processing').length ?? 0,
