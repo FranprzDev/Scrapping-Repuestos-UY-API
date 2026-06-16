@@ -237,6 +237,7 @@ function buildPublicJobView(job: ScrapingJob) {
     progress: progress
       ? {
           ...progress,
+          lastUpdateAt: progress.updatedAt,
           summary: progressSummary,
         }
       : undefined,
