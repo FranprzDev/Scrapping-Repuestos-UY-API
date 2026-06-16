@@ -2,6 +2,7 @@ import { ArchiveStoreService } from './archive/archive-store.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
+import { type CatalogJobProgress, type CatalogJobProgressReporter, type CatalogJobSiteProgress } from './interfaces/job-progress.types';
 import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
 import { countQualityWarnings, isAllowedCatalogUrl, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
@@ -505,7 +506,7 @@ function isAcesurSite(siteUrl: string): boolean {
   }
 }
 
-async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const safeLimit = Math.max(1, Math.min(limit, 20));
   const results: R[] = new Array(items.length);
   let cursor = 0;
@@ -518,7 +519,7 @@ async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item
         return;
       }
 
-      results[index] = await worker(items[index]);
+      results[index] = await worker(items[index], index);
     }
   });
 
@@ -526,6 +527,70 @@ async function runWithConcurrency<T, R>(items: T[], limit: number, worker: (item
   return results;
 }
 
+function createCatalogProgress(urls: string[], updatedAt: string): CatalogJobProgress {
+  return {
+    totalSites: urls.length,
+    completedSites: 0,
+    activeSite: undefined,
+    updatedAt,
+    sites: urls.map((site) => ({
+      site,
+      label: labelCatalogSite(site),
+      stage: 'queued',
+      status: 'queued',
+      updatedAt,
+    })),
+  };
+}
+
+function updateCatalogProgressSite(progress: CatalogJobProgress, index: number, patch: Partial<CatalogJobSiteProgress>): void {
+  const current = progress.sites[index];
+  if (!current) {
+    return;
+  }
+
+  progress.sites[index] = {
+    ...current,
+    ...patch,
+  };
+}
+
+function labelCatalogSite(site: string): string {
+  const value = site.toLowerCase();
+  if (value.includes('acesur.uy')) {
+    return 'Acesur (API)';
+  }
+
+  try {
+    return new URL(site).hostname.replace(/^www\./, '');
+  } catch {
+    return site;
+  }
+}
+
+async function reportCatalogProgress(reporter: CatalogJobProgressReporter | undefined, progress: CatalogJobProgress): Promise<void> {
+  if (!reporter) {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const completedSites = progress.sites.filter((site: CatalogJobSiteProgress) => site.status === 'success' || site.status === 'error').length;
+  const snapshot: CatalogJobProgress = {
+    ...progress,
+    completedSites,
+    updatedAt,
+    sites: progress.sites.map((site: CatalogJobSiteProgress) => ({
+      ...site,
+      updatedAt: site.updatedAt || updatedAt,
+    })),
+  };
+
+  try {
+    await reporter.update(snapshot);
+  } catch {
+    // Progress updates are best-effort. The job should continue even if the store is temporarily unavailable.
+  }
+}
 function formatSiteError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
