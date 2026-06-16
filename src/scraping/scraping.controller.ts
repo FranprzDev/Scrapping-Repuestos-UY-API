@@ -322,7 +322,6 @@ function tryGetHostname(value: string): string | undefined {
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
-
 function renderInventoryPage(): string {
   return `<!doctype html>
 <html lang="es">
@@ -958,7 +957,11 @@ function parseExcludedSites(value?: string): Set<string> {
 function isExcludedCatalogSite(siteUrl: string, excludedSites: Set<string>): boolean {
   try {
     const rule = findDomainRule(siteUrl);
-    const hostname = new URL(siteUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const hostname = tryGetHostname(siteUrl);
+    if (!hostname) {
+      return false;
+    }
+
     const aliases = new Set(
       [
         hostname,
