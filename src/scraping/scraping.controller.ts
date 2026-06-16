@@ -3,7 +3,7 @@ import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrape
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
 import { CatalogScrapingService } from './catalog-scraping.service';
-import { JobQueueService } from './jobs/job.queue';
+import { JobQueueService, type ScrapingJob, type ScrapingJobSummary } from './jobs/job.queue';
 import { type ScrapingOperationPayload } from './interfaces/scraping.types';
 import { ScrapingService } from './scraping.service';
 
@@ -204,10 +204,137 @@ export class ScrapingController {
       throw new NotFoundException('Job no encontrado');
     }
 
-    return job;
+    return buildPublicJobView(job);
   }
 }
 
+function buildPublicJobView(job: ScrapingJob) {
+  const requestSites = normalizeJobSites(job.payload);
+  const progress = normalizeJobProgress(job.summary?.progress, job.updatedAt);
+  const progressSummary = progress
+    ? {
+        completedSites: progress.completedSites,
+        totalSites: progress.totalSites,
+        activeSite: progress.activeSite,
+      }
+    : undefined;
+
+  return {
+    id: job.id,
+    task: job.task,
+    status: job.status,
+    provider: job.provider,
+    error: job.error,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    request: {
+      sites: requestSites,
+      totalSites: requestSites.length,
+      maxPagesPerSite: numberOrUndefined(job.payload.maxPagesPerSite),
+      maxProductsPerSite: numberOrUndefined(job.payload.maxProductsPerSite),
+      siteConcurrency: numberOrUndefined(job.payload.siteConcurrency),
+    },
+    progress: progress
+      ? {
+          ...progress,
+          lastUpdateAt: progress.updatedAt,
+          summary: progressSummary,
+        }
+      : undefined,
+    counts: {
+      sitesProcessed: progress?.completedSites ?? 0,
+      activeSites: progress?.sites.filter((site) => site.status === 'processing').length ?? 0,
+      totalProductsScraped: progress
+        ? progress.sites.reduce((total, site) => total + (numberOrUndefined(site.quantityScrapped) ?? 0), 0)
+        : 0,
+    },
+  };
+}
+
+function normalizeJobSites(payload: ScrapingOperationPayload) {
+  const urls = Array.isArray(payload.urls) ? payload.urls : [];
+  return urls.map((url) => formatCatalogSite(url));
+}
+
+function normalizeJobProgress(progress: ScrapingJobSummary['progress'] | undefined, jobUpdatedAt: string) {
+  if (!progress || typeof progress !== 'object') {
+    return undefined;
+  }
+
+  const rawSites = (progress as { sites?: unknown[] }).sites;
+  const sites = Array.isArray(rawSites)
+    ? rawSites.filter((entry): entry is Record<string, unknown> & { site: string } => Boolean(entry) && typeof entry === 'object' && typeof (entry as { site?: unknown }).site === 'string')
+    : [];
+
+  if (sites.length === 0) {
+    return undefined;
+  }
+
+  const normalizedSites = sites.map((site) => {
+    const catalogSite = formatCatalogSite(site.site);
+    const normalizedSite: Record<string, unknown> = {
+      ...site,
+      site: catalogSite.site,
+    };
+
+    if ('url' in catalogSite) {
+      normalizedSite.url = catalogSite.url;
+    } else {
+      delete normalizedSite.url;
+    }
+
+    return normalizedSite as typeof site & { site: string };
+  });
+  const completedSites = normalizedSites.filter((site) => site.status === 'success' || site.status === 'error').length;
+  const activeSite = normalizedSites.find((site) => site.status === 'processing')?.site;
+
+  return {
+    sites: normalizedSites,
+    totalSites: normalizedSites.length,
+    completedSites,
+    activeSite,
+    updatedAt: jobUpdatedAt,
+  };
+}
+
+function formatCatalogSite(url: string) {
+  const hostname = tryGetHostname(url);
+  const rule = hostname ? findDomainRule(url) : undefined;
+  const siteLabel = getCatalogSiteLabel(url, hostname, rule?.id);
+
+  if (rule?.id === 'acesur') {
+    return { site: siteLabel };
+  }
+
+  return {
+    site: siteLabel,
+    url,
+  };
+}
+
+function getCatalogSiteLabel(url: string, hostname: string | undefined, ruleId: string | undefined): string {
+  if (ruleId === 'acesur') {
+    return 'Acesur (API)';
+  }
+
+  if (hostname && INVENTORY_HOUSE_LABELS[hostname]) {
+    return INVENTORY_HOUSE_LABELS[hostname];
+  }
+
+  return hostname ?? url;
+}
+
+function tryGetHostname(value: string): string | undefined {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
 function renderInventoryPage(): string {
   return `<!doctype html>
 <html lang="es">
@@ -843,7 +970,11 @@ function parseExcludedSites(value?: string): Set<string> {
 function isExcludedCatalogSite(siteUrl: string, excludedSites: Set<string>): boolean {
   try {
     const rule = findDomainRule(siteUrl);
-    const hostname = new URL(siteUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const hostname = tryGetHostname(siteUrl);
+    if (!hostname) {
+      return false;
+    }
+
     const aliases = new Set(
       [
         hostname,

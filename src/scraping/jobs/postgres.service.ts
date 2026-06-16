@@ -41,12 +41,15 @@ export class PostgresService implements OnModuleDestroy {
         payload JSONB NOT NULL,
         status TEXT NOT NULL,
         provider TEXT NULL,
+        progress JSONB NULL,
         result JSONB NULL,
         error TEXT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+
+    await this.query(`ALTER TABLE scraping_jobs ADD COLUMN IF NOT EXISTS progress JSONB NULL;`);
 
     await this.query(`CREATE INDEX IF NOT EXISTS scraping_jobs_status_created_idx ON scraping_jobs(status, created_at);`);
   }
