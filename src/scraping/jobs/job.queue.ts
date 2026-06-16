@@ -53,6 +53,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private activeWorkers = 0;
   private timer: NodeJS.Timeout | undefined;
   private shuttingDown = false;
+  private readonly progressUpdateChains = new Map<string, Promise<void>>();
 
   constructor(
     @Inject(ScrapingService)
@@ -175,6 +176,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Job ${claimed.id} falló: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       clearInterval(heartbeat);
+      this.progressUpdateChains.delete(claimed.id);
     }
 
     this.tick();
@@ -193,8 +195,23 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async updateProcessingProgress(jobId: string, progress: CatalogSiteProgress): Promise<void> {
-    try {
-      const current = await this.postgresService.query<{ result: unknown | null }>(
+    const previous = this.progressUpdateChains.get(jobId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.persistProcessingProgress(jobId, progress));
+
+    const tracked = next.catch((error) => {
+      this.logger.warn(
+        `No se pudo persistir progreso del job ${jobId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+
+    this.progressUpdateChains.set(jobId, tracked.then(() => undefined, () => undefined));
+    await tracked;
+  }
+
+  private async persistProcessingProgress(jobId: string, progress: CatalogSiteProgress): Promise<void> {
+    const current = await this.postgresService.query<{ result: unknown | null }>(
         `
         SELECT result
         FROM scraping_jobs
@@ -204,24 +221,19 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
         this.progressQueryTimeoutMs,
       );
 
-      const sites = normalizeProgressSites(current.rows[0]?.result);
-      sites.set(progress.site, progress);
+    const sites = normalizeProgressSites(current.rows[0]?.result);
+    sites.set(progress.site, progress);
 
-      await this.postgresService.query(
-        `
-        UPDATE scraping_jobs
-        SET result = $2::jsonb,
-            updated_at = NOW()
-        WHERE id = $1
-        `,
-        [jobId, JSON.stringify({ progress: { sites: serializeProgressSites(sites) } })],
-        this.progressQueryTimeoutMs,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `No se pudo persistir progreso del job ${jobId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await this.postgresService.query(
+      `
+      UPDATE scraping_jobs
+      SET result = $2::jsonb,
+          updated_at = NOW()
+      WHERE id = $1
+      `,
+      [jobId, JSON.stringify({ progress: { sites: serializeProgressSites(sites) } })],
+      this.progressQueryTimeoutMs,
+    );
   }
 
   private startProcessingHeartbeat(jobId: string): NodeJS.Timeout {
