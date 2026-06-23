@@ -73,6 +73,22 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'chaparei') {
+      if (shouldUsePlaywrightForChaparei()) {
+        const fallback = await this.playwrightProvider.run('crawl', { ...payload, url: sourceUrl, limit });
+        const raw = fallback.raw as {
+          seedUrl?: string;
+          pages?: Array<{ url: string; depth?: number; title?: string; links?: string[]; products?: ProductRecord[] }>;
+          discoveredUrls?: string[];
+        };
+
+        return {
+          seedUrl: raw.seedUrl ?? sourceUrl,
+          pages: raw.pages ?? [],
+          discoveredUrls: raw.discoveredUrls ?? [],
+          discoveryMethod: 'chaparei-playwright',
+        };
+      }
+
       const response = await fetchHtml(sourceUrl);
       const { productLinks, categoryLinks } = extractCandidateLinks(response.body, response.finalUrl, rule);
       const nestedCategoryLinks = await mapWithConcurrency(
@@ -201,6 +217,16 @@ export class DomainProvider implements ScrapingProvider {
         urls: [sourceUrl],
         pages: [{ url: sourceUrl, method: 'api', productCount: products.length }],
         products: qualityGate(products, rule).slice(0, maxItems),
+      };
+    }
+
+    if (rule.id === 'chaparei' && shouldUsePlaywrightForChaparei()) {
+      const fallback = await this.playwrightProvider.run('extract', { ...payload, urls, url: sourceUrl, maxItems });
+      return {
+        urls,
+        pages: [],
+        products: qualityGate(fallback.normalizedProducts, rule).slice(0, maxItems),
+        fallback: 'playwright',
       };
     }
 
@@ -768,6 +794,10 @@ function formatError(error: unknown): string {
 
 function isChapareiDetailUrl(url: string): boolean {
   return /\/catalogo\/[^/?#]+\/.+\/?$/i.test(url);
+}
+
+function shouldUsePlaywrightForChaparei(): boolean {
+  return process.env.CHAPAREI_PROVIDER?.trim().toLowerCase() === 'playwright';
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
