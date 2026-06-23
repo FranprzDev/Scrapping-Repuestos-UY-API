@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { DEFAULT_CATALOG_SITES } from './dto/catalog-request.dto';
+import { DEFAULT_CATALOG_SITES, SELVIR_CATALOG_SITES } from './dto/catalog-request.dto';
 import { resolveCatalogSites } from './scraping.controller';
 
 test('filtra casas excluidas del refresh por query', () => {
@@ -31,4 +31,13 @@ test('respeta urls enviadas en el body y aplica exclusion por hostname o id', ()
 
 test('sin exclusiones devuelve el set por defecto', () => {
   assert.deepEqual(resolveCatalogSites(undefined), [...DEFAULT_CATALOG_SITES]);
+});
+
+test('incluye todas las categorias raiz de Selvir en el refresh por defecto', () => {
+  const sites = resolveCatalogSites(undefined);
+
+  assert.deepEqual(
+    sites.filter((site) => site.includes('selvir.com.uy')),
+    [...SELVIR_CATALOG_SITES],
+  );
 });
