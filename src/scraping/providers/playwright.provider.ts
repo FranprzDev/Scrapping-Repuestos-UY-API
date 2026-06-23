@@ -48,9 +48,16 @@ export class PlaywrightProvider implements ScrapingProvider {
   }
 
   private async launchBrowser(): Promise<Browser> {
+    const remoteEndpoint = resolveRemoteBrowserEndpoint();
     const executablePath = resolveBrowserExecutablePath();
 
     try {
+      if (remoteEndpoint) {
+        return await chromium.connectOverCDP(remoteEndpoint, {
+          timeout: clampNumber(Number(process.env.BROWSERLESS_CONNECT_TIMEOUT_MS), 1000, 120000, 45000),
+        });
+      }
+
       return await chromium.launch({
         headless: true,
         executablePath,
@@ -58,7 +65,9 @@ export class PlaywrightProvider implements ScrapingProvider {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new InternalServerErrorException(
-        `No se pudo iniciar Playwright Chromium. Verifica el navegador instalado o corre \`npx playwright install chromium\`. Detalle: ${message}`,
+        remoteEndpoint
+          ? `No se pudo conectar a Browserless/Chromium remoto. Verifica BROWSERLESS_WS_ENDPOINT o BROWSERLESS_TOKEN. Detalle: ${message}`
+          : `No se pudo iniciar Playwright Chromium. Verifica el navegador instalado o corre \`npx playwright install chromium\`. Detalle: ${message}`,
       );
     }
   }
@@ -200,6 +209,22 @@ export class PlaywrightProvider implements ScrapingProvider {
       await context.close().catch(() => undefined);
     }
   }
+}
+
+function resolveRemoteBrowserEndpoint(): string | undefined {
+  const explicitEndpoint = process.env.BROWSERLESS_WS_ENDPOINT?.trim();
+  if (explicitEndpoint) {
+    return explicitEndpoint;
+  }
+
+  const token = process.env.BROWSERLESS_TOKEN?.trim();
+  if (!token) {
+    return undefined;
+  }
+
+  const host = (process.env.BROWSERLESS_HOST?.trim() || 'wss://production-sfo.browserless.io').replace(/\/+$/, '');
+  const separator = host.includes('?') ? '&' : '?';
+  return `${host}${separator}token=${encodeURIComponent(token)}`;
 }
 
 function formatError(error: unknown): string {
