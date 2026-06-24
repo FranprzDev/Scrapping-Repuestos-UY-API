@@ -51,3 +51,36 @@ test('getFilteredPage limita el resultado a 200 y aplica offset', async () => {
   assert.ok(capturedSql.includes('OFFSET $2'));
   assert.deepEqual(capturedParams, [200, 15]);
 });
+
+test('getFilteredPage normaliza el filtro por sitio sin depender de www', async () => {
+  let capturedSql = '';
+  let capturedParams: unknown[] = [];
+
+  const service = new InventoryStoreService({
+    async query(sql: string, params?: unknown[]) {
+      capturedSql = sql;
+      capturedParams = params ?? [];
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({ site: 'selvir.com.uy' }, {});
+
+  assert.ok(capturedSql.includes('ANY($1::text[])'));
+  assert.deepEqual(capturedParams, [['selvir.com.uy']]);
+});
+
+test('getFilteredPage acepta nombre visible de la casa como filtro', async () => {
+  let capturedParams: unknown[] = [];
+
+  const service = new InventoryStoreService({
+    async query(_sql: string, params?: unknown[]) {
+      capturedParams = params ?? [];
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({ site: 'Selvir' }, {});
+
+  assert.deepEqual(capturedParams, [['selvir.com.uy']]);
+});

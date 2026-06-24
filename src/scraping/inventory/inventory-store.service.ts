@@ -141,6 +141,8 @@ export class InventoryStoreService implements OnModuleInit {
   async getStats(): Promise<InventoryStats> {
     const siteLabels = new Map<string, string>();
     for (const house of ADMITTED_HOUSES) {
+      siteLabels.set(house.id, house.label);
+      siteLabels.set(normalizeSiteAlias(house.label), house.label);
       siteLabels.set(house.canonicalHostname, house.label);
       for (const hostname of house.hostnames) {
         siteLabels.set(hostname, house.label);
@@ -151,10 +153,14 @@ export class InventoryStoreService implements OnModuleInit {
       this.countAll(),
       this.postgresService.query<{ site: string; total: string }>(`
         SELECT
-          split_part(
-            replace(replace(lower(site), 'https://', ''), 'http://', ''),
-            '/',
-            1
+          regexp_replace(
+            split_part(
+              replace(replace(lower(site), 'https://', ''), 'http://', ''),
+              '/',
+              1
+            ),
+            '^www\\.',
+            ''
           ) AS site,
           COUNT(*)::text AS total
         FROM scraping_inventory
@@ -275,8 +281,13 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   const params: unknown[] = [];
 
   if (filters.site?.trim()) {
-    params.push(normalizeSiteHost(filters.site.trim()));
-    conditions.push(`split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1) = $${params.length}`);
+    const matchedHosts = resolveInventorySiteHosts(filters.site.trim());
+    if (!matchedHosts.length) {
+      conditions.push('FALSE');
+    } else {
+      params.push(matchedHosts);
+      conditions.push(`${normalizedInventorySiteHostExpression()} = ANY($${params.length}::text[])`);
+    }
   }
 
   const search = filters.search?.trim();
@@ -349,6 +360,40 @@ function normalizeState(value?: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function resolveInventorySiteHosts(site: string): string[] {
+  const normalizedInput = normalizeSiteAlias(site);
+  const matchedHouse = ADMITTED_HOUSES.find((house) =>
+    getInventorySiteAliases(house).some((alias) => normalizeSiteAlias(alias) === normalizedInput),
+  );
+
+  if (matchedHouse) {
+    return Array.from(
+      new Set([matchedHouse.canonicalHostname, ...matchedHouse.hostnames].map((alias) => normalizeSiteHost(alias)).filter(Boolean)),
+    );
+  }
+
+  const normalizedHost = normalizeSiteHost(site);
+  return normalizedHost ? [normalizedHost] : [];
+}
+
+function getInventorySiteAliases(house: (typeof ADMITTED_HOUSES)[number]): string[] {
+  return [house.id, house.label, house.canonicalHostname, ...house.hostnames];
+}
+
+function normalizedInventorySiteHostExpression(): string {
+  return `
+    regexp_replace(
+      split_part(
+        replace(replace(lower(site), 'https://', ''), 'http://', ''),
+        '/',
+        1
+      ),
+      '^www\\.',
+      ''
+    )
+  `;
+}
+
 function normalizeSiteHost(site: string): string {
   try {
     return new URL(site).hostname.replace(/^www\./, '').toLowerCase();
@@ -360,6 +405,16 @@ function normalizeSiteHost(site: string): string {
       .replace(/^www\./, '')
       .split('/')[0];
   }
+}
+
+function normalizeSiteAlias(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '')
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 function buildOrderByClause(priceOrder?: string): string {

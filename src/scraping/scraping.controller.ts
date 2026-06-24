@@ -9,11 +9,13 @@ import { ScrapingService } from './scraping.service';
 
 const INVENTORY_HOUSE_OPTIONS = ADMITTED_HOUSES.map((house) => ({
   label: house.label,
-  value: house.canonicalHostname,
+  value: house.id,
 }));
 
 const INVENTORY_HOUSE_LABELS: Record<string, string> = Object.fromEntries(
   ADMITTED_HOUSES.flatMap((house) => [
+    [house.id, house.label],
+    [house.label.toLowerCase(), house.label],
     [house.canonicalHostname, house.label],
     ...house.hostnames.map((hostname) => [hostname, house.label] as const),
   ]),
