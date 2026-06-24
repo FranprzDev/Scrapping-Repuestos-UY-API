@@ -8,12 +8,14 @@ import { type ScrapingOperationPayload } from './interfaces/scraping.types';
 import { ScrapingService } from './scraping.service';
 
 const INVENTORY_HOUSE_OPTIONS = ADMITTED_HOUSES.map((house) => ({
+  id: house.id,
   label: house.label,
-  value: house.canonicalHostname,
 }));
 
 const INVENTORY_HOUSE_LABELS: Record<string, string> = Object.fromEntries(
   ADMITTED_HOUSES.flatMap((house) => [
+    [house.id, house.label],
+    [house.label.toLowerCase(), house.label],
     [house.canonicalHostname, house.label],
     ...house.hostnames.map((hostname) => [hostname, house.label] as const),
   ]),
@@ -768,7 +770,7 @@ function renderInventoryPage(): string {
 
       function renderHouseOptions() {
         const current = houseFilter.value;
-        houseFilter.innerHTML = '<option value="">Todas las casas</option>' + HOUSE_OPTIONS.map((item) => '<option value="' + escapeHtml(item.value) + '">' + escapeHtml(item.label) + '</option>').join('');
+        houseFilter.innerHTML = '<option value="">Todas las casas</option>' + HOUSE_OPTIONS.map((item) => '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(item.label) + '</option>').join('');
         houseFilter.value = current;
       }
 
