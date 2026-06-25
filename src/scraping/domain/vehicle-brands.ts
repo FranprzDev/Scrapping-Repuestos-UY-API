@@ -17,7 +17,7 @@ export interface InferredVehicleBrand {
 export const OTHER_VEHICLE_BRAND_ID = 'otros';
 
 export const VEHICLE_BRANDS: VehicleBrandDefinition[] = [
-  brand('fiat', 'Fiat'),
+  brand('fiat', 'Fiat', ['fi']),
   brand('toyota', 'Toyota'),
   brand('chevrolet', 'Chevrolet', ['chevy']),
   brand('ford', 'Ford'),
