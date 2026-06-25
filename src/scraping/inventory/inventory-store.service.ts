@@ -53,11 +53,13 @@ export interface VehicleBrandInventoryStats {
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
+  private readonly vehicleBrandBackfillChunkSize = 500;
 
   constructor(@Inject(PostgresService) private readonly postgresService: PostgresService) {}
 
   async onModuleInit(): Promise<void> {
     await this.postgresService.ensureCatalogTables();
+    await this.backfillVehicleBrandRelations();
   }
 
   async upsertSiteProducts(site: string, products: ProductRecord[], runAt: string) {
@@ -258,6 +260,53 @@ export class InventoryStoreService implements OnModuleInit {
         rows.map((row) => row.evidence),
       ],
     );
+  }
+
+  private async backfillVehicleBrandRelations(): Promise<void> {
+    while (true) {
+      const pending = await this.postgresService.query<{ id: string; product: ProductRecord }>(
+        `
+        SELECT inventory.id, inventory.product
+        FROM scraping_inventory inventory
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM scraping_inventory_vehicle_brands vehicle_brand_link
+          WHERE vehicle_brand_link.inventory_id = inventory.id
+        )
+        ORDER BY inventory.updated_at DESC
+        LIMIT $1
+        `,
+        [this.vehicleBrandBackfillChunkSize],
+      );
+
+      if (pending.rows.length === 0) {
+        return;
+      }
+
+      const items = pending.rows.map((row) => {
+        const vehicleBrands = inferVehicleBrands(row.product);
+        const enrichedProduct: ProductRecord = {
+          ...row.product,
+          compatibleBrands: vehicleBrands.map((brand) => brand.label),
+        };
+        return {
+          id: row.id,
+          product: JSON.stringify(enrichedProduct),
+          vehicleBrands,
+        };
+      });
+
+      await this.postgresService.query(
+        `
+        UPDATE scraping_inventory inventory
+        SET product = item.product::jsonb
+        FROM unnest($1::text[], $2::text[]) AS item(id, product)
+        WHERE inventory.id = item.id
+        `,
+        [items.map((item) => item.id), items.map((item) => item.product)],
+      );
+      await this.syncVehicleBrandRelations(items);
+    }
   }
 }
 

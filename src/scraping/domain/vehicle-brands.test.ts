@@ -8,6 +8,7 @@ test('normaliza aliases de marcas de vehiculo', () => {
   assert.equal(normalizeVehicleBrandId('V.W.'), 'volkswagen');
   assert.equal(normalizeVehicleBrandId('Mercedes'), 'mercedes-benz');
   assert.equal(normalizeVehicleBrandId('MB'), 'mercedes-benz');
+  assert.equal(normalizeVehicleBrandId('FI'), 'fiat');
 });
 
 test('infiere multiples marcas compatibles desde el producto', () => {
