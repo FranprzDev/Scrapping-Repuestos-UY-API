@@ -277,6 +277,10 @@ export class CatalogScrapingService {
     return this.inventoryStoreService.getStats();
   }
 
+  async getVehicleBrandStats() {
+    return this.inventoryStoreService.getVehicleBrandStats();
+  }
+
   async resetCatalogData() {
     await this.postgresService.query('BEGIN');
     try {

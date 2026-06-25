@@ -1,6 +1,7 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES } from '../domain/domain-rules';
+import { inferVehicleBrands, normalizeVehicleBrandId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 
 export interface StoredProduct extends ProductRecord {
@@ -26,6 +27,7 @@ export interface InventoryQueryFilters {
   priceState?: string;
   availability?: string;
   priceOrder?: string;
+  vehicleBrand?: string;
 }
 
 export interface InventoryQueryPagination {
@@ -40,6 +42,12 @@ export interface InventoryStats {
     siteLabel: string;
     total: number;
   }>;
+}
+
+export interface VehicleBrandInventoryStats {
+  id: string;
+  label: string;
+  total: number;
 }
 
 @Injectable()
@@ -58,7 +66,12 @@ export class InventoryStoreService implements OnModuleInit {
 
     const payload = products
       .map((product) => {
-        const key = buildProductKey(site, product);
+        const vehicleBrands = inferVehicleBrands(product);
+        const enrichedProduct: ProductRecord = {
+          ...product,
+          compatibleBrands: vehicleBrands.map((brand) => brand.label),
+        };
+        const key = buildProductKey(site, enrichedProduct);
         if (!key) {
           return undefined;
         }
@@ -66,10 +79,11 @@ export class InventoryStoreService implements OnModuleInit {
         return {
           id: key,
           site,
-          product: JSON.stringify(product),
+          product: JSON.stringify(enrichedProduct),
+          vehicleBrands,
         };
       })
-      .filter((item): item is { id: string; site: string; product: string } => Boolean(item));
+      .filter((item): item is { id: string; site: string; product: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item));
 
     for (let index = 0; index < payload.length; index += this.upsertChunkSize) {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
@@ -96,6 +110,8 @@ export class InventoryStoreService implements OnModuleInit {
           updated += 1;
         }
       }
+
+      await this.syncVehicleBrandRelations(chunk);
     }
 
     const totalForSite = await this.countBySite(site);
@@ -183,6 +199,65 @@ export class InventoryStoreService implements OnModuleInit {
     const { sql, params } = buildInventoryCountQuery(filters);
     const result = await this.postgresService.query<{ total: string }>(sql, params);
     return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async getVehicleBrandStats(): Promise<VehicleBrandInventoryStats[]> {
+    const result = await this.postgresService.query<{ id: string; label: string; total: string }>(`
+      SELECT
+        brand.id,
+        brand.label,
+        COUNT(link.inventory_id)::text AS total
+      FROM vehicle_brands brand
+      LEFT JOIN scraping_inventory_vehicle_brands link
+        ON link.brand_id = brand.id
+      WHERE brand.active = TRUE
+      GROUP BY brand.id, brand.label
+      ORDER BY brand.label ASC
+    `);
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      label: row.label,
+      total: Number(row.total ?? 0),
+    }));
+  }
+
+  private async syncVehicleBrandRelations(items: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }>): Promise<void> {
+    const inventoryIds = items.map((item) => item.id);
+    await this.postgresService.query(
+      'DELETE FROM scraping_inventory_vehicle_brands WHERE inventory_id = ANY($1::text[])',
+      [inventoryIds],
+    );
+
+    const rows = items.flatMap((item) =>
+      item.vehicleBrands.map((brand) => ({
+        inventoryId: item.id,
+        brandId: brand.id,
+        confidence: brand.confidence,
+        evidence: brand.evidence ?? null,
+      })),
+    );
+
+    if (rows.length === 0) {
+      return;
+    }
+
+    await this.postgresService.query(
+      `
+      INSERT INTO scraping_inventory_vehicle_brands (inventory_id, brand_id, confidence, evidence)
+      SELECT item.inventory_id, item.brand_id, item.confidence, item.evidence
+      FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS item(inventory_id, brand_id, confidence, evidence)
+      ON CONFLICT (inventory_id, brand_id)
+      DO UPDATE SET confidence = EXCLUDED.confidence,
+                    evidence = EXCLUDED.evidence
+      `,
+      [
+        rows.map((row) => row.inventoryId),
+        rows.map((row) => row.brandId),
+        rows.map((row) => row.confidence),
+        rows.map((row) => row.evidence),
+      ],
+    );
   }
 }
 
@@ -347,6 +422,21 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   } else if (availability === 'unknown') {
     conditions.push(`
       COALESCE(NULLIF(BTRIM(LOWER(product->>'availability')), ''), 'unknown') = 'unknown'
+    `);
+  }
+
+  const vehicleBrand = normalizeVehicleBrandId(filters.vehicleBrand);
+  if (filters.vehicleBrand?.trim() && !vehicleBrand) {
+    conditions.push('FALSE');
+  } else if (vehicleBrand) {
+    params.push(vehicleBrand);
+    conditions.push(`
+      EXISTS (
+        SELECT 1
+        FROM scraping_inventory_vehicle_brands vehicle_brand_link
+        WHERE vehicle_brand_link.inventory_id = scraping_inventory.id
+          AND vehicle_brand_link.brand_id = $${params.length}
+      )
     `);
   }
 
