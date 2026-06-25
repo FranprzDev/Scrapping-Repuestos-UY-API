@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { InventoryStoreService } from './inventory-store.service';
+import type { ProductRecord } from '../interfaces/scraping.types';
 
 test('getStats agrupa por host base y no por url completa', async () => {
   const queries: string[] = [];
@@ -146,4 +147,49 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   const relationInsert = queries.find((query) => /INSERT INTO scraping_inventory_vehicle_brands/i.test(query.sql));
   assert.ok(relationInsert);
   assert.deepEqual(relationInsert.params[1], ['citroen', 'peugeot']);
+});
+
+test('onModuleInit rellena marcas relacionales para inventario existente', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let pendingServed = false;
+
+  const service = new InventoryStoreService({
+    async ensureCatalogTables() {
+      queries.push({ sql: 'ensureCatalogTables', params: [] });
+    },
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+
+      if (/SELECT inventory.id, inventory.product/i.test(sql)) {
+        if (pendingServed) {
+          return { rows: [] } as never;
+        }
+        pendingServed = true;
+        return {
+          rows: [{
+            id: 'existing-fiat',
+            product: {
+              productName: 'HORQUILLA ARRANQUE FI',
+              sourceUrl: 'https://example.com/fiat',
+              extractedAt: new Date().toISOString(),
+              provider: 'domain',
+            },
+          }],
+        } as never;
+      }
+
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.onModuleInit();
+
+  const productUpdate = queries.find((query) => /UPDATE scraping_inventory inventory/i.test(query.sql));
+  assert.ok(productUpdate);
+  const updatedProduct = JSON.parse((productUpdate.params[1] as string[])[0]) as ProductRecord;
+  assert.deepEqual(updatedProduct.compatibleBrands, ['Fiat']);
+
+  const relationInsert = queries.find((query) => /INSERT INTO scraping_inventory_vehicle_brands/i.test(query.sql));
+  assert.ok(relationInsert);
+  assert.deepEqual(relationInsert.params[1], ['fiat']);
 });
