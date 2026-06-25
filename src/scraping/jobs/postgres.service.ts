@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Pool, type QueryConfig, type QueryResult, type QueryResultRow } from 'pg';
+import { VEHICLE_BRANDS } from '../domain/vehicle-brands';
 
 @Injectable()
 export class PostgresService implements OnModuleDestroy {
@@ -68,6 +69,39 @@ export class PostgresService implements OnModuleDestroy {
     await this.query(`CREATE INDEX IF NOT EXISTS scraping_inventory_site_idx ON scraping_inventory(site);`);
 
     await this.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_brands (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE
+      );
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_brand_aliases (
+        brand_id TEXT NOT NULL REFERENCES vehicle_brands(id) ON DELETE CASCADE,
+        alias TEXT NOT NULL,
+        PRIMARY KEY (brand_id, alias)
+      );
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS scraping_inventory_vehicle_brands (
+        inventory_id TEXT NOT NULL REFERENCES scraping_inventory(id) ON DELETE CASCADE,
+        brand_id TEXT NOT NULL REFERENCES vehicle_brands(id),
+        confidence TEXT NOT NULL,
+        evidence TEXT NULL,
+        PRIMARY KEY (inventory_id, brand_id)
+      );
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS scraping_inventory_vehicle_brands_brand_idx
+      ON scraping_inventory_vehicle_brands (brand_id, inventory_id);
+    `);
+
+    await this.seedVehicleBrands();
+
+    await this.query(`
       CREATE TABLE IF NOT EXISTS scraping_runs (
         id UUID PRIMARY KEY,
         requested_at TIMESTAMPTZ NOT NULL,
@@ -90,9 +124,46 @@ export class PostgresService implements OnModuleDestroy {
     `);
   }
 
+  private async seedVehicleBrands(): Promise<void> {
+    const brandIds = VEHICLE_BRANDS.map((brand) => brand.id);
+    const brandLabels = VEHICLE_BRANDS.map((brand) => brand.label);
+    await this.query(
+      `
+      INSERT INTO vehicle_brands (id, label, active)
+      SELECT item.id, item.label, TRUE
+      FROM unnest($1::text[], $2::text[]) AS item(id, label)
+      ON CONFLICT (id)
+      DO UPDATE SET label = EXCLUDED.label,
+                    active = TRUE
+      `,
+      [brandIds, brandLabels],
+    );
+
+    const aliasBrandIds = VEHICLE_BRANDS.flatMap((brand) => brand.aliases.map(() => brand.id));
+    const aliases = VEHICLE_BRANDS.flatMap((brand) => brand.aliases.map((alias) => normalizeAlias(alias)));
+    await this.query(
+      `
+      INSERT INTO vehicle_brand_aliases (brand_id, alias)
+      SELECT item.brand_id, item.alias
+      FROM unnest($1::text[], $2::text[]) AS item(brand_id, alias)
+      ON CONFLICT (brand_id, alias) DO NOTHING
+      `,
+      [aliasBrandIds, aliases],
+    );
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
   }
+}
+
+function normalizeAlias(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 function resolveConnectionString(): string | undefined {

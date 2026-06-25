@@ -166,6 +166,7 @@ export class ScrapingController {
     @Query('priceState') priceState?: string,
     @Query('availability') availability?: string,
     @Query('priceOrder') priceOrder?: string,
+    @Query('vehicleBrand') vehicleBrand?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
@@ -175,10 +176,16 @@ export class ScrapingController {
       priceState,
       availability,
       priceOrder,
+      vehicleBrand,
     }, {
       limit: Number(limit),
       offset: Number(offset),
     });
+  }
+
+  @Get('scraping/inventory/vehicle-brands')
+  getVehicleBrands() {
+    return this.catalogScrapingService.getVehicleBrandStats();
   }
 
   @Get('scraping/runs')
@@ -648,6 +655,12 @@ function renderInventoryPage(): string {
                     <option value="desc">Mayor precio</option>
                   </select>
                 </div>
+                <div class="field">
+                  <label class="field-label" for="vehicleBrandFilter">Marca vehiculo</label>
+                  <select id="vehicleBrandFilter">
+                    <option value="">Todas las marcas</option>
+                  </select>
+                </div>
               </div>
             </div>
             <div id="loader" class="loader" aria-live="polite" aria-busy="true">
@@ -687,12 +700,14 @@ function renderInventoryPage(): string {
         search: '',
         house: '',
         priceOrder: '',
+        vehicleBrand: '',
       };
 
       const rows = document.getElementById('rows');
       const search = document.getElementById('search');
       const houseFilter = document.getElementById('houseFilter');
       const priceOrderFilter = document.getElementById('priceOrderFilter');
+      const vehicleBrandFilter = document.getElementById('vehicleBrandFilter');
       const loader = document.getElementById('loader');
       const loadMoreStatus = document.getElementById('loadMoreStatus');
       const scrollSentinel = document.getElementById('scrollSentinel');
@@ -723,6 +738,10 @@ function renderInventoryPage(): string {
       });
       priceOrderFilter.addEventListener('change', () => {
         state.priceOrder = priceOrderFilter.value;
+        resetAndLoadInventory();
+      });
+      vehicleBrandFilter.addEventListener('change', () => {
+        state.vehicleBrand = vehicleBrandFilter.value;
         resetAndLoadInventory();
       });
 
@@ -774,6 +793,22 @@ function renderInventoryPage(): string {
         houseFilter.value = current;
       }
 
+      async function renderVehicleBrandOptions() {
+        const current = vehicleBrandFilter.value;
+        try {
+          const response = await fetch('/scraping/inventory/vehicle-brands');
+          if (!response.ok) throw new Error('No se pudieron cargar las marcas');
+          const brands = await response.json();
+          vehicleBrandFilter.innerHTML = '<option value="">Todas las marcas</option>' + brands.map((item) => {
+            const label = item.total ? item.label + ' (' + item.total + ')' : item.label;
+            return '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(label) + '</option>';
+          }).join('');
+          vehicleBrandFilter.value = current;
+        } catch {
+          vehicleBrandFilter.innerHTML = '<option value="">Todas las marcas</option>';
+        }
+      }
+
       function formatPrice(value) {
         const text = String(value ?? '').trim();
         if (!text || text === '-') {
@@ -793,8 +828,11 @@ function renderInventoryPage(): string {
           const url = product.sourceUrl
             ? '<a class="product-title" href="' + escapeAttr(product.sourceUrl) + '" target="_blank" rel="noreferrer">' + productName + '</a>'
             : '<span class="product-title">' + productName + '</span>';
+          const vehicleBrands = Array.isArray(product.compatibleBrands) && product.compatibleBrands.length
+            ? '<div class="muted">' + escapeHtml(product.compatibleBrands.join(', ')) + '</div>'
+            : '';
           return '<tr>' +
-            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + '</div></td>' +
+            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + vehicleBrands + '</div></td>' +
             '<td class="right"><span class="price-label">' + escapeHtml(formatPrice(product.price)) + '</span></td>' +
             '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
           '</tr>';
@@ -816,6 +854,7 @@ function renderInventoryPage(): string {
         if (state.house) params.set('site', state.house);
         if (state.search.trim()) params.set('search', state.search.trim());
         if (state.priceOrder) params.set('priceOrder', state.priceOrder);
+        if (state.vehicleBrand) params.set('vehicleBrand', state.vehicleBrand);
         params.set('limit', String(PAGE_SIZE));
         params.set('offset', String(inventory.offset));
         return params;
@@ -943,6 +982,7 @@ function renderInventoryPage(): string {
       }
 
       renderHouseOptions();
+      renderVehicleBrandOptions();
       resetAndLoadInventory();
     </script>
   </body>
