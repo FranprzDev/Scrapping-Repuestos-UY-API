@@ -2,7 +2,7 @@
 import * as assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import { findDomainRule } from './domain-rules';
-import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
+import { extractCandidateLinks, extractChapareiBrandsFromHtml, extractProductsFromHtml } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
   buildSelvirArchivePageUrl,
@@ -44,6 +44,43 @@ test('rechaza productos agotados en cards tipo Chaparei', () => {
         <div class="opciones_cart">
           <div style="display:none" id="producto_agotado" class="agotado"><span>Agotado</span></div>
           <div class="submit"><button type="submit"><span>Comprar</span></button></div>
+        </div>
+      </div>
+    </article>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
+  assert.equal(products.length, 0);
+});
+
+test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {
+  const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
+  assert.ok(rule);
+
+  const html = `
+    <article class="prod_item prod_sin_stock">
+      <div class="foto">
+        <a href="/catalogo/carroceria/guardabarro-tras-izq-t1501180/" target="_blank">
+          <img src="https://www.chaparei.com/imgs/productos/productos31_93938.jpg" alt="GUARDABARRO TRAS. IZQ.">
+        </a>
+      </div>
+      <div class="cont">
+        <h2><a href="/catalogo/carroceria/guardabarro-tras-izq-t1501180/"><span itemprop="name">GUARDABARRO TRAS. IZQ.</span></a></h2>
+        <h2 class="copete_ficha">FIAT TIPO</h2>
+      </div>
+      <div class="opcionespreciocont">
+        <div class="precios">
+          <div class="precio_cont" itemprop="offers">
+            <span class="ele">
+              <span class="pmoneda">$U</span>
+              <span id="precio_ent_actual" itemprop="price" content="8.579">8.579</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="opcionescarrito">
+        <div class="opciones_cart">
+          <div class="submit prod_reservar"><button type="button"><span>Consultar</span></button></div>
         </div>
       </div>
     </article>
@@ -396,6 +433,37 @@ test('descubre opciones de orden Chaparei desde option[value]', () => {
   assert.ok(links.categoryLinks.includes('https://www.chaparei.com/productos/productos.php?m=171&order=2&mo=1'));
   assert.ok(links.categoryLinks.includes('https://www.chaparei.com/productos/productos.php?m=171&order=7&mo=1'));
   assert.equal(links.categoryLinks.some((url) => url.endsWith('/171')), false);
+});
+
+test('extrae marcas Chaparei desde el select de value numerico', () => {
+  const html = `
+    <select id="id_marca" onchange="get_modelos(this.value,0);">
+      <option value="">Marca...</option>
+      <option value="157">ALFA ROMEO</option>
+      <option value="172">FORD</option>
+      <option value="195">VOLVO</option>
+    </select>
+  `;
+
+  const brands = extractChapareiBrandsFromHtml(html, 'https://www.chaparei.com/productos/');
+
+  assert.deepEqual(brands, [
+    {
+      brandId: '157',
+      brandLabel: 'ALFA ROMEO',
+      sourceUrl: 'https://www.chaparei.com/productos/?m=157',
+    },
+    {
+      brandId: '172',
+      brandLabel: 'FORD',
+      sourceUrl: 'https://www.chaparei.com/productos/?m=172',
+    },
+    {
+      brandId: '195',
+      brandLabel: 'VOLVO',
+      sourceUrl: 'https://www.chaparei.com/productos/?m=195',
+    },
+  ]);
 });
 
 test('extrae tarjetas reales de Chaparei sin mezclar nombre, precio y url', () => {

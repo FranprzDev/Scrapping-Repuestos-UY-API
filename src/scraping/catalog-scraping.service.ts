@@ -220,7 +220,7 @@ export class CatalogScrapingService {
     });
 
     const inventorySize = await this.inventoryStoreService.countAll();
-    const strategy = 'descubrimiento por dominio + extraccion hibrida (HTTP/API con fallback Playwright)';
+    const strategy = 'descubrimiento HTTP-first + extraccion por dominio/API';
 
     await this.saveRun(runId, runAt, strategy, urls.length, inventorySize, results);
     this.logger.log(`[run:${runId}] completed sites=${urls.length} inventorySize=${inventorySize} durationMs=${Date.now() - startedAt}`);

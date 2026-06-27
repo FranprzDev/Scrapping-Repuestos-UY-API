@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { parse } from 'node-html-parser';
 import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from '../interfaces/scraping.types';
-import { extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
+import { extractChapareiBrandsFromHtml, extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
-import { fetchHtml } from '../domain/http-client';
+import { type HttpResponseData, fetchHtml } from '../domain/http-client';
 import { cleanText, dedupeProducts, inferCurrency, normalizePriceValue, qualityGate } from '../domain/product-quality';
 import { PlaywrightProvider } from './playwright.provider';
 
@@ -73,54 +73,7 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'chaparei') {
-      if (shouldUsePlaywrightForChaparei()) {
-        const fallback = await this.playwrightProvider.run('crawl', { ...payload, url: sourceUrl, limit });
-        const raw = fallback.raw as {
-          seedUrl?: string;
-          pages?: Array<{ url: string; depth?: number; title?: string; links?: string[]; products?: ProductRecord[] }>;
-          discoveredUrls?: string[];
-        };
-
-        return {
-          seedUrl: raw.seedUrl ?? sourceUrl,
-          pages: raw.pages ?? [],
-          discoveredUrls: raw.discoveredUrls ?? [],
-          discoveryMethod: 'chaparei-playwright',
-        };
-      }
-
-      const response = await fetchHtml(sourceUrl);
-      const { productLinks, categoryLinks } = extractCandidateLinks(response.body, response.finalUrl, rule);
-      const nestedCategoryLinks = await mapWithConcurrency(
-        uniqueStrings(categoryLinks).slice(0, limit),
-        5,
-        async (categoryUrl) => {
-          try {
-            const nestedResponse = await fetchHtml(categoryUrl);
-            const nestedLinks = extractCandidateLinks(nestedResponse.body, nestedResponse.finalUrl, rule);
-            return uniqueStrings([
-              ...nestedLinks.categoryLinks,
-              ...nestedLinks.productLinks.filter((url) => isChapareiDetailUrl(url)),
-            ]);
-          } catch (error) {
-            this.logger.warn(`No se pudo explorar categoria Chaparei ${categoryUrl}: ${formatError(error)}`);
-            return [];
-          }
-        },
-      );
-
-      const discoveredUrls = uniqueStrings([
-        ...categoryLinks,
-        ...productLinks.filter((url) => isChapareiDetailUrl(url)),
-        ...nestedCategoryLinks.flat(),
-      ]);
-
-      return {
-        seedUrl: sourceUrl,
-        pages: [{ url: response.finalUrl, depth: 0, productCount: discoveredUrls.length }],
-        discoveredUrls,
-        discoveryMethod: 'chaparei-http',
-      };
+      return await this.crawlChaparei(sourceUrl, limit, rule);
     }
 
     if (rule.id === 'selvir') {
@@ -220,13 +173,12 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
-    if (rule.id === 'chaparei' && shouldUsePlaywrightForChaparei()) {
-      const fallback = await this.playwrightProvider.run('extract', { ...payload, urls, url: sourceUrl, maxItems });
+    if (rule.id === 'chaparei') {
+      const chaparei = await this.extractChapareiProducts(urls, maxItems, rule);
       return {
-        urls,
-        pages: [],
-        products: qualityGate(fallback.normalizedProducts, rule).slice(0, maxItems),
-        fallback: 'playwright',
+        urls: chaparei.urls,
+        pages: chaparei.pages,
+        products: dedupeProducts(qualityGate(chaparei.products, rule)).slice(0, maxItems),
       };
     }
 
@@ -277,6 +229,136 @@ export class DomainProvider implements ScrapingProvider {
       pages,
       products: dedupeProducts(collected).slice(0, maxItems),
     };
+  }
+
+  private async crawlChaparei(sourceUrl: string, limit: number, rule: DomainRule) {
+    const session = createChapareiSession();
+
+    try {
+      const response = await session.fetch(sourceUrl);
+      const brandSeeds = this.resolveChapareiBrandSeeds(response, sourceUrl).slice(0, limit);
+
+      return {
+        seedUrl: sourceUrl,
+        pages: [{ url: response.finalUrl, depth: 0, productCount: brandSeeds.length }],
+        discoveredUrls: brandSeeds,
+        discoveryMethod: 'chaparei-http',
+      };
+    } catch (error) {
+      this.logger.warn(`No se pudo descubrir Chaparei ${sourceUrl}: ${formatError(error)}`);
+      return {
+        seedUrl: sourceUrl,
+        pages: [],
+        discoveredUrls: [sourceUrl],
+        discoveryMethod: 'chaparei-http',
+      };
+    }
+  }
+
+  private async extractChapareiProducts(urls: string[], maxItems: number, rule: DomainRule) {
+    const discoveryUrls = uniqueStrings(urls);
+    const brandSeeds = new Set<string>();
+
+    for (const discoveryUrl of discoveryUrls) {
+      try {
+        const session = createChapareiSession();
+        const response = await session.fetch(discoveryUrl);
+        this.resolveChapareiBrandSeeds(response, discoveryUrl).forEach((value) => brandSeeds.add(value));
+      } catch (error) {
+        this.logger.warn(`No se pudo resolver Chaparei ${discoveryUrl}: ${formatError(error)}`);
+      }
+    }
+
+    const brandUrls = Array.from(brandSeeds);
+    if (brandUrls.length === 0) {
+      return {
+        urls: discoveryUrls,
+        pages: [],
+        products: [] as ProductRecord[],
+      };
+    }
+
+    const results = await mapWithConcurrency(brandUrls, this.extractConcurrency, async (brandUrl) =>
+      this.extractChapareiBrandSeries(brandUrl, maxItems, rule),
+    );
+
+    return {
+      urls: brandUrls,
+      pages: results.flatMap((item) => item.pages),
+      products: dedupeProducts(results.flatMap((item) => item.products)).slice(0, maxItems),
+    };
+  }
+
+  private async extractChapareiBrandSeries(brandUrl: string, maxItems: number, rule: DomainRule) {
+    const session = createChapareiSession();
+    const pages: Array<{ url: string; method: string; productCount: number }> = [];
+    const collected: ProductRecord[] = [];
+
+    try {
+      const firstResponse = await session.fetch(brandUrl);
+      const firstBatch = qualityGate(extractProductsFromHtml(firstResponse.body, firstResponse.finalUrl, this.name, rule), rule);
+
+      if (firstBatch.length > 0) {
+        collected.push(...firstBatch);
+        pages.push({
+          url: firstResponse.finalUrl,
+          method: 'http',
+          productCount: firstBatch.length,
+        });
+      }
+
+      for (let page = 1; collected.length < maxItems; page += 1) {
+        const ajaxUrl = buildChapareiAjaxPageUrl(firstResponse.finalUrl, page);
+        const ajaxResponse = await session.fetch(ajaxUrl);
+
+        if (!ajaxResponse.body.trim()) {
+          break;
+        }
+
+        const batch = qualityGate(extractProductsFromHtml(ajaxResponse.body, ajaxResponse.finalUrl, this.name, rule), rule);
+        if (batch.length === 0) {
+          break;
+        }
+
+        const merged = dedupeProducts([...collected, ...batch]).slice(0, maxItems);
+        if (merged.length <= collected.length) {
+          break;
+        }
+
+        collected.length = 0;
+        collected.push(...merged);
+        pages.push({
+          url: ajaxResponse.finalUrl,
+          method: 'http',
+          productCount: batch.length,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`No se pudo extraer Chaparei ${brandUrl}: ${formatError(error)}`);
+    }
+
+    return {
+      pages,
+      products: collected,
+    };
+  }
+
+  private resolveChapareiBrandSeeds(response: HttpResponseData, sourceUrl: string): string[] {
+    const homeBrands = extractChapareiBrandsFromHtml(response.body, response.finalUrl).map((brand) => brand.sourceUrl);
+    if (homeBrands.length > 0 && isChapareiBrandHubUrl(response.finalUrl)) {
+      return homeBrands;
+    }
+
+    const canonicalBrandUrl = extractChapareiCanonicalBrandUrl(response.body, response.finalUrl);
+    if (canonicalBrandUrl) {
+      return [canonicalBrandUrl];
+    }
+
+    if (homeBrands.length > 0) {
+      return homeBrands;
+    }
+
+    return [sourceUrl];
   }
 
   private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
@@ -754,6 +836,94 @@ export function cleanSelvirLabel(value?: string): string | undefined {
     .trim() || undefined;
 }
 
+function createChapareiSession() {
+  let cookieHeader: string | undefined;
+
+  return {
+    async fetch(url: string): Promise<HttpResponseData> {
+      const response = await fetchHtml(url, 5, {
+        headers: cookieHeader
+          ? {
+              cookie: cookieHeader,
+            }
+          : undefined,
+      });
+
+      cookieHeader = mergeChapareiCookies(cookieHeader, response.headers['set-cookie']);
+      return response;
+    },
+  };
+}
+
+function mergeChapareiCookies(current: string | undefined, setCookieHeader: string | string[] | undefined): string | undefined {
+  const jar = new Map<string, string>();
+
+  if (current) {
+    current.split(/;\s*/).forEach((entry) => {
+      const index = entry.indexOf('=');
+      if (index > 0) {
+        jar.set(entry.slice(0, index), entry.slice(index + 1));
+      }
+    });
+  }
+
+  const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : [];
+  for (const cookie of cookies) {
+    const pair = cookie.split(';', 1)[0]?.trim();
+    const index = pair.indexOf('=');
+    if (index > 0) {
+      jar.set(pair.slice(0, index), pair.slice(index + 1));
+    }
+  }
+
+  if (jar.size === 0) {
+    return current;
+  }
+
+  return Array.from(jar.entries()).map(([key, value]) => `${key}=${value}`).join('; ');
+}
+
+function buildChapareiAjaxPageUrl(pageUrl: string, page: number): string {
+  const url = new URL(pageUrl);
+  url.pathname = '/productos/includes/cargar_pagina_dinamica.php';
+  url.searchParams.set('nro_pag', String(page));
+  if (!url.searchParams.has('zona')) {
+    url.searchParams.set('zona', '0');
+  }
+  if (!url.searchParams.has('order')) {
+    url.searchParams.set('order', '255');
+  }
+  if (!url.searchParams.has('mo')) {
+    url.searchParams.set('mo', '1');
+  }
+
+  return url.toString();
+}
+
+function isChapareiBrandHubUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === '/productos/' && !parsed.searchParams.has('m');
+  } catch {
+    return false;
+  }
+}
+
+function extractChapareiCanonicalBrandUrl(html: string, baseUrl: string): string | undefined {
+  const root = parse(html);
+  const selected = root.querySelector('select#id_marca option[selected][value]') ?? root.querySelector('select#id_marca option[selected="selected"][value]');
+  const brandId = cleanText(selected?.getAttribute('value'));
+  if (!brandId || !/^\d+$/.test(brandId)) {
+    return undefined;
+  }
+
+  try {
+    return new URL(`/productos/?m=${brandId}`, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -790,14 +960,6 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isChapareiDetailUrl(url: string): boolean {
-  return /\/catalogo\/[^/?#]+\/.+\/?$/i.test(url);
-}
-
-function shouldUsePlaywrightForChaparei(): boolean {
-  return process.env.CHAPAREI_PROVIDER?.trim().toLowerCase() === 'playwright';
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {

@@ -22,6 +22,16 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
         return;
       }
 
+      const brandId = cleanText(option.getAttribute('value'));
+      if (brandId && /^\d+$/.test(brandId)) {
+        try {
+          categoryLinks.add(new URL(`/productos/?m=${brandId}`, baseUrl).toString());
+        } catch {
+          // Ignore malformed brand options.
+        }
+        return;
+      }
+
       if (isChapareiCategoryLink(value) || isChapareiSemanticCategoryLink(value, cleanText(option.text) ?? '')) {
         categoryLinks.add(value);
       }
@@ -218,6 +228,32 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   return candidates;
 }
 
+export function extractChapareiBrandsFromHtml(html: string, baseUrl: string): Array<{ brandId: string; brandLabel: string; sourceUrl: string }> {
+  const root = parse(html);
+  const brands: Array<{ brandId: string; brandLabel: string; sourceUrl: string }> = [];
+
+  root.querySelectorAll('select#id_marca option[value]').forEach((option) => {
+    const brandId = cleanText(option.getAttribute('value'));
+    const brandLabel = cleanText(option.text);
+
+    if (!brandId || !brandLabel || brandLabel.toLowerCase() === 'marca...') {
+      return;
+    }
+
+    if (!/^\d+$/.test(brandId)) {
+      return;
+    }
+
+    brands.push({
+      brandId,
+      brandLabel,
+      sourceUrl: new URL(`/productos/?m=${brandId}`, baseUrl).toString(),
+    });
+  });
+
+  return brands;
+}
+
 function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: ProviderName): ProductRecord[] {
   const products: ProductRecord[] = [];
 
@@ -401,6 +437,10 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
   const articles = queryAll(root, 'article.prod_item');
 
   for (const article of articles) {
+    if (isChapareiOutOfStockCard(article)) {
+      continue;
+    }
+
     const sourceUrl = firstNonEmpty([
       normalizeUrl(firstAttributeValue(article, ['a[href*="/catalogo/"]'], 'href'), pageUrl),
       normalizeUrl(firstAttributeValue(article, ['a[itemprop="url"]'], 'href'), pageUrl),
@@ -445,6 +485,21 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
   }
 
   return products;
+}
+
+function isChapareiOutOfStockCard(article: HTMLElement): boolean {
+  const className = cleanText(article.getAttribute('class')) ?? '';
+  if (/\bprod_sin_stock\b/i.test(className)) {
+    return true;
+  }
+
+  const stockText = cleanText([
+    firstElementText(article, ['.stock_agotado']),
+    firstElementText(article, ['.agotado']),
+    firstElementText(article, ['#producto_agotado']),
+  ].filter(Boolean).join(' '));
+
+  return Boolean(stockText && /agotado|sin stock|out of stock|no disponible/i.test(stockText));
 }
 
 function extractSelvirListingName(anchor: HTMLElement, card: HTMLElement, cardText: string): string | undefined {
