@@ -58,7 +58,7 @@ export const DOMAIN_RULES: DomainRule[] = [
   {
     id: 'chaparei',
     hostnames: ['chaparei.com', 'www.chaparei.com'],
-    seedUrls: ['https://www.chaparei.com/productos/?m=171'],
+    seedUrls: ['https://www.chaparei.com/productos/'],
     preferredMethod: 'http',
     productUrlPatterns: [
       /\/catalogo\/[^/?#]+\/.+\/?$/i,
