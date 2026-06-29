@@ -54,6 +54,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
   private shuttingDown = false;
   private readonly progressUpdateChains = new Map<string, Promise<void>>();
+  private readonly locallyReservedJobs: ScrapingJob[] = [];
 
   constructor(
     @Inject(ScrapingService)
@@ -82,15 +83,17 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     const inserted = await this.postgresService.query<ScrapingJobRow>(
       `
       INSERT INTO scraping_jobs (id, task, payload, status)
-      VALUES ($1, $2, $3::jsonb, 'queued')
+      VALUES ($1, $2, $3::jsonb, 'processing')
       RETURNING id, task, payload, status, provider, result, error, created_at, updated_at
       `,
       [id, task, JSON.stringify(payload)],
     );
 
     const [row] = inserted.rows;
-    this.tick();
-    return mapRowToJob(row);
+    const job = mapRowToJob(row);
+    this.locallyReservedJobs.push(job);
+    this.drainLocallyReservedJobs();
+    return job;
   }
 
   async findById(id: string): Promise<ScrapingJob | undefined> {
@@ -132,12 +135,36 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private drainLocallyReservedJobs() {
+    if (this.shuttingDown) {
+      return;
+    }
+
+    while (this.activeWorkers < this.maxWorkers && this.locallyReservedJobs.length > 0) {
+      const job = this.locallyReservedJobs.shift();
+      if (!job) {
+        return;
+      }
+
+      this.activeWorkers += 1;
+      void this.processClaimedJob(job).finally(() => {
+        this.activeWorkers -= 1;
+        this.drainLocallyReservedJobs();
+        this.tick();
+      });
+    }
+  }
+
   private async processNext(): Promise<void> {
     const claimed = await this.claimNextQueuedJob();
     if (!claimed) {
       return;
     }
 
+    await this.processClaimedJob(claimed);
+  }
+
+  private async processClaimedJob(claimed: ScrapingJob): Promise<void> {
     const heartbeat = this.startProcessingHeartbeat(claimed.id);
     try {
       const result = await this.runClaimedJob(claimed.id, claimed.task, claimed.payload);
@@ -178,8 +205,6 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       clearInterval(heartbeat);
       this.progressUpdateChains.delete(claimed.id);
     }
-
-    this.tick();
   }
 
   private async runClaimedJob(jobId: string, task: ScrapingTask, payload: ScrapingOperationPayload): Promise<unknown> {
