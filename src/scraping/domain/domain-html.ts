@@ -212,6 +212,21 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
     return candidates;
   }
 
+  if (rule.id === 'grfrenos') {
+    const listingProducts = extractGrFrenosListingProducts(root, pageUrl, provider, rule);
+    if (listingProducts.length > 0) {
+      candidates.push(...listingProducts);
+      return candidates;
+    }
+
+    const detailProduct = extractDetailProduct(root, pageUrl, provider, rule);
+    if (detailProduct) {
+      candidates.push(detailProduct);
+    }
+
+    return candidates;
+  }
+
   const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   if (!isDetailPage) {
@@ -252,6 +267,65 @@ export function extractChapareiBrandsFromHtml(html: string, baseUrl: string): Ar
   });
 
   return brands;
+}
+
+export function extractGrFrenosBrandsFromHtml(html: string, baseUrl: string): Array<{ brandId: string; brandLabel: string; sourceUrl: string }> {
+  const root = parse(html);
+  const brands: Array<{ brandId: string; brandLabel: string; sourceUrl: string }> = [];
+
+  root.querySelectorAll('select#marcax option[value]').forEach((option) => {
+    const brandId = cleanText(option.getAttribute('value'));
+    const brandLabel = normalizeGrFrenosLabel(option.text);
+
+    if (!brandId || !brandLabel || brandLabel.toLowerCase() === 'seleccione la marca') {
+      return;
+    }
+
+    if (!/^\d+$/.test(brandId)) {
+      return;
+    }
+
+    brands.push({
+      brandId,
+      brandLabel,
+      sourceUrl: buildGrFrenosBrandUrl(baseUrl, brandId),
+    });
+  });
+
+  return brands;
+}
+
+export function extractGrFrenosListingSummary(body: string): { brandLabel?: string; totalResults?: number } | undefined {
+  const root = parse(body);
+  const title = normalizeGrFrenosLabel(
+    root.querySelector('.niveles__cabezal--titulo h1')?.text
+      ?? root.querySelector('.niveles__cabezal--titulo h2')?.text
+      ?? root.querySelector('h1')?.text,
+  );
+  const totalText = cleanText(
+    root.querySelector('.niveles__cabezal--titulo h3')?.text
+      ?? root.querySelector('.niveles__cabezal--tools--paginacionton')?.text,
+  );
+
+  if (!title && !totalText) {
+    return undefined;
+  }
+
+  const totalResults = totalText ? parseResultCount(totalText) : undefined;
+  return {
+    brandLabel: title,
+    totalResults,
+  };
+}
+
+export function buildGrFrenosBrandUrl(baseUrl: string, brandId: string, totalResults?: number): string {
+  const url = new URL('/buscardor.php', baseUrl);
+  url.searchParams.set('marcas', `${brandId}---`);
+  if (typeof totalResults === 'number' && Number.isFinite(totalResults) && totalResults > 0) {
+    url.searchParams.set('paginacion', String(totalResults));
+  }
+
+  return url.toString();
 }
 
 function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: ProviderName): ProductRecord[] {
@@ -424,6 +498,72 @@ function extractTaxitorListProducts(root: HTMLElement, pageUrl: string, provider
           : resolveAvailability(cleanText(card.text) ?? '', rule) === 'out_of_stock'
             ? 'out_of_stock'
             : undefined,
+      extractedAt: new Date().toISOString(),
+      provider,
+    });
+  }
+
+  return products;
+}
+
+function extractGrFrenosListingProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  const products: ProductRecord[] = [];
+  const cards = queryAll(root, 'article.card__producto--item');
+
+  for (const card of cards) {
+    const sourceUrl = firstNonEmpty([
+      normalizeUrl(firstAttributeValue(card, ['h3 a[href]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(card, ['.card__producto--item--img a[href]'], 'href'), pageUrl),
+      normalizeUrl(firstAttributeValue(card, ['.card__producto--item--info--titulo a[href]'], 'href'), pageUrl),
+    ]);
+
+    const productName = firstNonEmpty([
+      cleanText(firstElementText(card, ['h3 a'])),
+      cleanText(firstAttributeValue(card, ['img'], 'alt')),
+      cleanText(firstElementText(card, ['.card__producto--item--info--titulo'])),
+    ]);
+
+    if (!sourceUrl || !productName) {
+      continue;
+    }
+
+    if (normalizeComparableText(productName).includes('ver modelos')) {
+      continue;
+    }
+
+    const rawPrice = firstNonEmpty([
+      cleanText(firstElementText(card, ['.card__producto--item--info--tools--pie h4'])),
+      cleanText(firstElementText(card, ['.card__producto--item--info--tools--pie .precio'])),
+      cleanText(firstElementText(card, ['.card__producto--item--info--tools--pie [class*="precio"]'])),
+      cleanText(firstElementText(card, ['h4'])),
+    ]);
+
+    if (!rawPrice || !normalizePriceValue(rawPrice)) {
+      continue;
+    }
+
+    const compatibleBrands = Array.from(
+      new Set(
+        queryAll(card, '.card__producto--item--info--titulo--modelos--linea--marcas h5')
+          .map((element) => normalizeGrFrenosLabel(element.text))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    products.push({
+      productName,
+      price: normalizePriceValue(rawPrice),
+      currency: inferCurrency(rawPrice),
+      compatibleBrands: compatibleBrands.length > 0 ? compatibleBrands : undefined,
+      description: cleanText(firstElementText(card, ['.card__producto--item--info--titulo--modelos--linea--marcas'])),
+      imageUrl:
+        normalizeUrl(
+          firstAttributeValue(card, ['img'], 'src')
+            ?? firstAttributeValue(card, ['img'], 'data-src')
+            ?? firstAttributeValue(card, ['img'], 'srcset')?.split(',')[0]?.trim().split(' ')[0],
+          pageUrl,
+        ),
+      sourceUrl,
       extractedAt: new Date().toISOString(),
       provider,
     });
@@ -960,6 +1100,48 @@ function extractBrandFromText(value: string | undefined): string | undefined {
   }
 
   return candidate;
+}
+
+function normalizeGrFrenosLabel(value?: string): string | undefined {
+  const cleaned = cleanText(value);
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const ascii = cleaned
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!ascii) {
+    return undefined;
+  }
+
+  return ascii
+    .split(' ')
+    .map((token) => {
+      if (/^[A-Z0-9]{2,3}$/.test(token)) {
+        return token;
+      }
+
+      if (token.length === 1) {
+        return token.toUpperCase();
+      }
+
+      return token.slice(0, 1).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+function parseResultCount(value: string): number | undefined {
+  const match = value.match(/(\d[\d.,]*)\s+resultados?/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const parsed = Number(match[1].replace(/[.,]/g, ''));
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 function collectAvailabilityText(root: HTMLElement): string {
   const sections = [

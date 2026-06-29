@@ -465,6 +465,13 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
     };
   }
 
+  if (isGrFrenosSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 1000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   if (isSelvirSite(siteUrl)) {
     return {
       maxPagesPerSite: request.maxPagesPerSite ?? 1000,
@@ -512,6 +519,14 @@ function isTaxitorSite(siteUrl: string): boolean {
 function isChapareiSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'chaparei.com';
+  } catch {
+    return false;
+  }
+}
+
+function isGrFrenosSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'grfrenos.uy';
   } catch {
     return false;
   }

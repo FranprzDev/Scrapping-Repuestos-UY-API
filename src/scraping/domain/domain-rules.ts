@@ -82,6 +82,26 @@ export const DOMAIN_RULES: DomainRule[] = [
     },
   },
   {
+    id: 'grfrenos',
+    hostnames: ['grfrenos.uy', 'www.grfrenos.uy'],
+    seedUrls: ['https://www.grfrenos.uy/home/'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/art-\d+\/?$/i],
+    categoryUrlPatterns: [
+      /\/buscardor\.php\?marcas=\d+---(?:&.*)?$/i,
+      /\/marcas-\d+---(?:\?.*)?$/i,
+    ],
+    excludeUrlPatterns: [/\/contacto/i, /\/ingresar/i, /\/carrito/i, /\/mi-cuenta/i],
+    positiveAvailabilityTexts: ['agregar al carrito', 'comprar'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+    detailSelectors: {
+      title: ['h1'],
+      price: ['.precio', 'h4', '[class*="precio"]'],
+      description: ['main p', '.copete_ficha', '.copete_f'],
+      image: ['main img', 'figure img', 'meta[property="og:image"]'],
+    },
+  },
+  {
     id: 'selvir',
     hostnames: ['selvir.com.uy', 'www.selvir.com.uy'],
     seedUrls: [
