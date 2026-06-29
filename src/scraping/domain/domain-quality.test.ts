@@ -2,7 +2,13 @@
 import * as assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import { findDomainRule } from './domain-rules';
-import { extractCandidateLinks, extractChapareiBrandsFromHtml, extractProductsFromHtml } from './domain-html';
+import {
+  extractCandidateLinks,
+  extractChapareiBrandsFromHtml,
+  extractGrFrenosBrandsFromHtml,
+  extractGrFrenosListingSummary,
+  extractProductsFromHtml,
+} from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
   buildSelvirArchivePageUrl,
@@ -464,6 +470,117 @@ test('extrae marcas Chaparei desde el select de value numerico', () => {
       sourceUrl: 'https://www.chaparei.com/productos/?m=195',
     },
   ]);
+});
+
+test('extrae marcas GR Frenos desde el select y normaliza labels a ASCII', () => {
+  const html = `
+    <select id="marcax" class="form-control-chosen" data-placeholder="Buscar Marca">
+      <option value="">Seleccione la Marca</option>
+      <option value="3594">ABARTH</option>
+      <option value="93">BYD</option>
+      <option value="64">ALFA ROMEO</option>
+      <option value="3835">SETRA</option>
+      <option value="231">CITROËN</option>
+    </select>
+  `;
+
+  const brands = extractGrFrenosBrandsFromHtml(html, 'https://www.grfrenos.uy/home/');
+
+  assert.deepEqual(brands, [
+    {
+      brandId: '3594',
+      brandLabel: 'Abarth',
+      sourceUrl: 'https://www.grfrenos.uy/buscardor.php?marcas=3594---',
+    },
+    {
+      brandId: '93',
+      brandLabel: 'BYD',
+      sourceUrl: 'https://www.grfrenos.uy/buscardor.php?marcas=93---',
+    },
+    {
+      brandId: '64',
+      brandLabel: 'Alfa Romeo',
+      sourceUrl: 'https://www.grfrenos.uy/buscardor.php?marcas=64---',
+    },
+    {
+      brandId: '3835',
+      brandLabel: 'Setra',
+      sourceUrl: 'https://www.grfrenos.uy/buscardor.php?marcas=3835---',
+    },
+    {
+      brandId: '231',
+      brandLabel: 'Citroen',
+      sourceUrl: 'https://www.grfrenos.uy/buscardor.php?marcas=231---',
+    },
+  ]);
+});
+
+test('resume el total de resultados de GR Frenos desde h1 y h3', () => {
+  const html = `
+    <section class="niveles">
+      <div class="niveles__cabezal" id="listado">
+        <div class="niveles__cabezal--titulo">
+          <h1>SETRA</h1>
+          <h3>1 resultados</h3>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const summary = extractGrFrenosListingSummary(html);
+  assert.equal(summary?.brandLabel, 'Setra');
+  assert.equal(summary?.totalResults, 1);
+});
+
+test('extrae tarjetas reales de GR Frenos sin confundir Ver modelos con el producto', () => {
+  const rule = findDomainRule('https://www.grfrenos.uy/buscardor.php?marcas=3835---');
+  assert.ok(rule);
+
+  const html = `
+    <section class="listados">
+      <div class="listados__productos-sin-lateral" id="listadogrid">
+        <div class="listados__productos--item">
+          <article class="card__producto--item">
+            <div class="card__producto--item--img">
+              <a href="https://www.grfrenos.uy/kit-reparacion-de-mordaza-d4617-45/art-9016/" target="_top">
+                <img src="https://www.grfrenos.uy/imagenes/img_contenido/productos/b/D4617(45).jpg" alt="Kit Reparación de Mordaza D4617 (45)" />
+              </a>
+            </div>
+            <div class="card__producto--item--info">
+              <div class="card__producto--item--info--titulo">
+                <h3>
+                  <a href="https://www.grfrenos.uy/kit-reparacion-de-mordaza-d4617-45/art-9016/" target="_top">Kit Reparación de Mordaza D4617 (45)</a>
+                </h3>
+                <div class="card__producto--item--info--titulo--modelos">
+                  <div class="card__producto--item--info--titulo--modelos--linea">
+                    <h4>Marcas compatibles:</h4>
+                    <div class="card__producto--item--info--titulo--modelos--linea--marcas">
+                      <h5>CITROËN</h5>
+                      <h5>SETRA</h5>
+                      <h5>BYD</h5>
+                      <a href="https://www.grfrenos.uy/kit-reparacion-de-mordaza-d4617-45/art-9016/">+ Ver modelos</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="card__producto--item--info--tools">
+                <div class="card__producto--item--info--tools--pie">
+                  <h4><strong>$</strong>892</h4>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.grfrenos.uy/buscardor.php?marcas=3835---', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'Kit Reparación de Mordaza D4617 (45)');
+  assert.equal(products[0].sourceUrl, 'https://www.grfrenos.uy/kit-reparacion-de-mordaza-d4617-45/art-9016/');
+  assert.equal(products[0].price, '892');
+  assert.deepEqual(products[0].compatibleBrands, ['Citroen', 'Setra', 'BYD']);
 });
 
 test('extrae tarjetas reales de Chaparei sin mezclar nombre, precio y url', () => {

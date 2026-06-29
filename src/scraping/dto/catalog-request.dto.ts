@@ -6,6 +6,10 @@ export const BASE_CATALOG_SITES = [
   'https://www.chaparei.com/productos/',
 ] as const;
 
+export const GRFRENOS_CATALOG_SITES = [
+  'https://www.grfrenos.uy/home/',
+] as const;
+
 export const SELVIR_CATALOG_SITES = [
   'https://www.selvir.com.uy/accesorios/',
   'https://www.selvir.com.uy/aceites/',
@@ -54,7 +58,7 @@ export const FEYVI_CATALOG_SITES = [
   'https://www.feyvi.com.uy/repuestos/suspension-delantera-direccion-y-llantas-es/',
 ] as const;
 
-export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES] as const;
+export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES] as const;
 
 export class CatalogScrapeRequestDto {
   @IsOptional()

@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { parse } from 'node-html-parser';
 import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvider, ScrapingTask } from '../interfaces/scraping.types';
-import { extractChapareiBrandsFromHtml, extractCandidateLinks, extractProductsFromHtml } from '../domain/domain-html';
+import {
+  buildGrFrenosBrandUrl,
+  extractChapareiBrandsFromHtml,
+  extractCandidateLinks,
+  extractGrFrenosBrandsFromHtml,
+  extractGrFrenosListingSummary,
+  extractProductsFromHtml,
+} from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
 import { type HttpResponseData, fetchHtml } from '../domain/http-client';
 import { cleanText, dedupeProducts, inferCurrency, normalizePriceValue, qualityGate } from '../domain/product-quality';
@@ -74,6 +81,10 @@ export class DomainProvider implements ScrapingProvider {
 
     if (rule.id === 'chaparei') {
       return await this.crawlChaparei(sourceUrl, limit, rule);
+    }
+
+    if (rule.id === 'grfrenos') {
+      return await this.crawlGrFrenos(sourceUrl, limit);
     }
 
     if (rule.id === 'selvir') {
@@ -179,6 +190,15 @@ export class DomainProvider implements ScrapingProvider {
         urls: chaparei.urls,
         pages: chaparei.pages,
         products: dedupeProducts(qualityGate(chaparei.products, rule)).slice(0, maxItems),
+      };
+    }
+
+    if (rule.id === 'grfrenos') {
+      const grfrenos = await this.extractGrFrenosProducts(urls, maxItems, rule);
+      return {
+        urls: grfrenos.urls,
+        pages: grfrenos.pages,
+        products: dedupeProducts(qualityGate(grfrenos.products, rule)).slice(0, maxItems),
       };
     }
 
@@ -340,6 +360,111 @@ export class DomainProvider implements ScrapingProvider {
     return {
       pages,
       products: collected,
+    };
+  }
+
+  private async crawlGrFrenos(sourceUrl: string, limit: number) {
+    try {
+      const homeResponse = await fetchHtml(sourceUrl);
+      const brandSeeds = extractGrFrenosBrandsFromHtml(homeResponse.body, homeResponse.finalUrl).slice(0, limit);
+
+      const resolved = await mapWithConcurrency(brandSeeds, this.extractConcurrency, async (brand) => {
+        try {
+          const response = await fetchHtml(brand.sourceUrl);
+          const summary = extractGrFrenosListingSummary(response.body);
+          const totalResults = summary?.totalResults;
+          const finalUrl = typeof totalResults === 'number' && totalResults > 40
+            ? buildGrFrenosBrandUrl(response.finalUrl, brand.brandId, totalResults)
+            : response.finalUrl;
+
+          return {
+            brand,
+            finalUrl,
+            totalResults,
+          };
+        } catch (error) {
+          this.logger.warn(`No se pudo resolver GR Frenos marca=${brand.brandId}: ${formatError(error)}`);
+          return {
+            brand,
+            finalUrl: brand.sourceUrl,
+          };
+        }
+      });
+
+      return {
+        seedUrl: sourceUrl,
+        pages: [
+          {
+            url: homeResponse.finalUrl,
+            depth: 0,
+            productCount: brandSeeds.length,
+          },
+          ...resolved.map((item) => ({
+            url: item.finalUrl,
+            depth: 1,
+            productCount: typeof item.totalResults === 'number' ? item.totalResults : 0,
+          })),
+        ],
+        discoveredUrls: uniqueStrings(resolved.map((item) => item.finalUrl)),
+        discoveryMethod: 'grfrenos-http',
+      };
+    } catch (error) {
+      this.logger.warn(`No se pudo descubrir GR Frenos ${sourceUrl}: ${formatError(error)}`);
+      return {
+        seedUrl: sourceUrl,
+        pages: [],
+        discoveredUrls: [sourceUrl],
+        discoveryMethod: 'grfrenos-http',
+      };
+    }
+  }
+
+  private async extractGrFrenosProducts(urls: string[], maxItems: number, rule: DomainRule) {
+    const discoveryUrls = uniqueStrings(urls);
+    const pages: Array<{ url: string; method: string; productCount: number }> = [];
+    const collected: ProductRecord[] = [];
+
+    for (const discoveryUrl of discoveryUrls) {
+      if (collected.length >= maxItems) {
+        break;
+      }
+
+      try {
+        const response = await fetchHtml(discoveryUrl);
+        const summary = extractGrFrenosListingSummary(response.body);
+        const initialBatch = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+
+        if (typeof summary?.totalResults === 'number' && summary.totalResults > initialBatch.length && summary.totalResults > 40) {
+          const brandId = extractGrFrenosBrandId(response.finalUrl) ?? extractGrFrenosBrandId(discoveryUrl);
+          const finalUrl = brandId ? buildGrFrenosBrandUrl(response.finalUrl, brandId, summary.totalResults) : response.finalUrl;
+          const fullResponse = await fetchHtml(finalUrl);
+          const batch = qualityGate(extractProductsFromHtml(fullResponse.body, fullResponse.finalUrl, this.name, rule), rule);
+
+          pages.push({
+            url: fullResponse.finalUrl,
+            method: 'http',
+            productCount: batch.length,
+          });
+
+          collected.push(...batch);
+          continue;
+        }
+
+        pages.push({
+          url: response.finalUrl,
+          method: 'http',
+          productCount: initialBatch.length,
+        });
+        collected.push(...initialBatch);
+      } catch (error) {
+        this.logger.warn(`No se pudo extraer GR Frenos ${discoveryUrl}: ${formatError(error)}`);
+      }
+    }
+
+    return {
+      urls: discoveryUrls,
+      pages,
+      products: dedupeProducts(collected).slice(0, maxItems),
     };
   }
 
@@ -926,6 +1051,15 @@ function extractChapareiCanonicalBrandUrl(html: string, baseUrl: string): string
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function extractGrFrenosBrandId(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const match = value.match(/[?&]marcas=(\d+)---/i);
+  return match?.[1];
 }
 
 function normalizeTaxitorPaginationUrl(value: string | undefined, baseUrl: string): string | undefined {
