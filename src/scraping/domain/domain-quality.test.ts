@@ -3,11 +3,13 @@ import * as assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import { findDomainRule } from './domain-rules';
 import {
+  buildGrFrenosBrandUrl,
   extractCandidateLinks,
   extractChapareiBrandsFromHtml,
   extractGrFrenosBrandsFromHtml,
   extractGrFrenosListingSummary,
   extractProductsFromHtml,
+  isGrFrenosChallengeHtml,
 } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
@@ -530,6 +532,40 @@ test('resume el total de resultados de GR Frenos desde h1 y h3', () => {
   const summary = extractGrFrenosListingSummary(html);
   assert.equal(summary?.brandLabel, 'Setra');
   assert.equal(summary?.totalResults, 1);
+});
+
+test('arma la url final de GR Frenos con paginacion total', () => {
+  const url = buildGrFrenosBrandUrl('https://www.grfrenos.uy/buscardor.php?marcas=3835---', '3835', 64);
+
+  assert.equal(url, 'https://www.grfrenos.uy/buscardor.php?marcas=3835---&paginacion=64');
+});
+
+test('detecta html challenge de GR Frenos', () => {
+  const html = `
+    <html>
+      <body>
+        <h1>Access denied</h1>
+        <p>Please verify you are human</p>
+      </body>
+    </html>
+  `;
+
+  assert.equal(isGrFrenosChallengeHtml(html), true);
+});
+
+test('no inventa totalResults cuando el h3 no trae resultados', () => {
+  const html = `
+    <section class="niveles">
+      <div class="niveles__cabezal--titulo">
+        <h1>SETRA</h1>
+        <h3>Sin datos</h3>
+      </div>
+    </section>
+  `;
+
+  const summary = extractGrFrenosListingSummary(html);
+  assert.equal(summary?.brandLabel, 'Setra');
+  assert.equal(summary?.totalResults, undefined);
 });
 
 test('extrae tarjetas reales de GR Frenos sin confundir Ver modelos con el producto', () => {

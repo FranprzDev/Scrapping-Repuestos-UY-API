@@ -9,6 +9,7 @@ import {
   extractGrFrenosBrandsFromHtml,
   extractGrFrenosListingSummary,
   extractProductsFromHtml,
+  isGrFrenosChallengeHtml,
 } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
 import { type HttpResponseData, fetchHtml } from '../domain/http-client';
@@ -194,11 +195,11 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'grfrenos') {
-      const grfrenos = await this.extractGrFrenosProducts(urls, rule);
+      const grfrenos = await this.extractGrFrenosProducts(urls, maxItems, rule);
       return {
         urls: grfrenos.urls,
         pages: grfrenos.pages,
-        products: dedupeProducts(qualityGate(grfrenos.products, rule)),
+        products: dedupeProducts(qualityGate(grfrenos.products, rule)).slice(0, maxItems),
       };
     }
 
@@ -397,7 +398,7 @@ export class DomainProvider implements ScrapingProvider {
     }
   }
 
-  private async extractGrFrenosProducts(urls: string[], rule: DomainRule) {
+  private async extractGrFrenosProducts(urls: string[], maxItems: number, rule: DomainRule) {
     const discoveryUrls = uniqueStrings(urls);
     const pages: Array<{ url: string; method: string; productCount: number }> = [];
     const collected: ProductRecord[] = [];
@@ -407,11 +408,34 @@ export class DomainProvider implements ScrapingProvider {
         const response = await fetchHtml(discoveryUrl);
         const summary = extractGrFrenosListingSummary(response.body);
         const brandId = extractGrFrenosBrandId(response.finalUrl) ?? extractGrFrenosBrandId(discoveryUrl);
-        const finalUrl = typeof summary?.totalResults === 'number' && brandId
-          ? buildGrFrenosBrandUrl(response.finalUrl, brandId, summary.totalResults)
+        const brandLabel = summary?.brandLabel ?? 'unknown';
+        const totalResults = summary?.totalResults;
+        const challengeDetected = isGrFrenosChallengeHtml(response.body);
+
+        if (!brandId) {
+          this.logger.warn(`GR Frenos brand discovery sin brandId url=${discoveryUrl}`);
+          continue;
+        }
+
+        if (challengeDetected) {
+          this.logger.warn(`GR Frenos challenge detectado brandId=${brandId} brandLabel=${brandLabel} url=${response.finalUrl}`);
+        }
+
+        if (typeof totalResults !== 'number') {
+          this.logger.warn(
+            `GR Frenos sin totalResults brandId=${brandId} brandLabel=${brandLabel} url=${response.finalUrl} challenge=${challengeDetected ? 'yes' : 'no'}`,
+          );
+        }
+
+        const finalUrl = typeof totalResults === 'number'
+          ? buildGrFrenosBrandUrl(response.finalUrl, brandId, totalResults)
           : response.finalUrl;
         const finalResponse = finalUrl === response.finalUrl ? response : await fetchHtml(finalUrl);
         const batch = qualityGate(extractProductsFromHtml(finalResponse.body, finalResponse.finalUrl, this.name, rule), rule);
+
+        this.logger.log(
+          `GR Frenos brand complete brandId=${brandId} brandLabel=${brandLabel} totalResults=${typeof totalResults === 'number' ? totalResults : 'unknown'} finalUrl=${finalResponse.finalUrl} cards=${batch.length}`,
+        );
 
         pages.push({
           url: finalResponse.finalUrl,
@@ -427,7 +451,7 @@ export class DomainProvider implements ScrapingProvider {
     return {
       urls: discoveryUrls,
       pages,
-      products: dedupeProducts(collected),
+      products: dedupeProducts(collected).slice(0, maxItems),
     };
   }
 
