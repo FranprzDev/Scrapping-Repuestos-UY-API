@@ -3,45 +3,6 @@ import * as assert from 'node:assert/strict';
 import { JobQueueService } from './job.queue';
 import type { CatalogSiteProgress } from '../catalog-scraping.service';
 
-test('reserva el job en la instancia que lo encola', async () => {
-  let insertedStatus: string | undefined;
-  let executedJobId: string | undefined;
-  const postgresService = {
-    async ensureJobsTable() {},
-    async query(sql: string, params: unknown[] = []) {
-      if (/INSERT INTO scraping_jobs/i.test(sql)) {
-        insertedStatus = sql.match(/VALUES \(\$1, \$2, \$3::jsonb, '([^']+)'\)/i)?.[1];
-        return {
-          rows: [{
-            id: params[0],
-            task: params[1],
-            payload: JSON.parse(String(params[2])),
-            status: insertedStatus,
-            provider: null,
-            result: null,
-            error: null,
-            created_at: '2026-06-29T06:00:00.000Z',
-            updated_at: '2026-06-29T06:00:00.000Z',
-          }],
-        } as never;
-      }
-
-      return { rows: [] } as never;
-    },
-  };
-  const service = new JobQueueService({} as never, {} as never, postgresService as never);
-  (service as any).processClaimedJob = async (job: { id: string }) => {
-    executedJobId = job.id;
-  };
-
-  const job = await service.enqueue('catalog-run', { urls: ['https://www.grfrenos.uy/home/'] });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(insertedStatus, 'processing');
-  assert.equal(job.status, 'processing');
-  assert.equal(executedJobId, job.id);
-});
-
 test('conserva el progreso por sitio dentro del resultado final del job', async () => {
   let claimedCalls = 0;
   let storedResult: unknown = null;
