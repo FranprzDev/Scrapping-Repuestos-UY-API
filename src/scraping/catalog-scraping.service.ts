@@ -458,6 +458,13 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
     };
   }
 
+  if (isChapareiSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 1000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   if (isSelvirSite(siteUrl)) {
     return {
       maxPagesPerSite: request.maxPagesPerSite ?? 1000,
@@ -497,6 +504,14 @@ function isSelvirSite(siteUrl: string): boolean {
 function isTaxitorSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'taxitor.uy';
+  } catch {
+    return false;
+  }
+}
+
+function isChapareiSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'chaparei.com';
   } catch {
     return false;
   }
