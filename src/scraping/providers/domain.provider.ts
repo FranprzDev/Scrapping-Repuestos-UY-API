@@ -84,7 +84,7 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'grfrenos') {
-      return await this.crawlGrFrenos(sourceUrl, limit);
+      return await this.crawlGrFrenos(sourceUrl);
     }
 
     if (rule.id === 'selvir') {
@@ -194,11 +194,11 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'grfrenos') {
-      const grfrenos = await this.extractGrFrenosProducts(urls, maxItems, rule);
+      const grfrenos = await this.extractGrFrenosProducts(urls, rule);
       return {
         urls: grfrenos.urls,
         pages: grfrenos.pages,
-        products: dedupeProducts(qualityGate(grfrenos.products, rule)).slice(0, maxItems),
+        products: dedupeProducts(qualityGate(grfrenos.products, rule)),
       };
     }
 
@@ -363,33 +363,11 @@ export class DomainProvider implements ScrapingProvider {
     };
   }
 
-  private async crawlGrFrenos(sourceUrl: string, limit: number) {
+  private async crawlGrFrenos(sourceUrl: string) {
     try {
       const homeResponse = await fetchHtml(sourceUrl);
-      const brandSeeds = extractGrFrenosBrandsFromHtml(homeResponse.body, homeResponse.finalUrl).slice(0, limit);
-
-      const resolved = await mapWithConcurrency(brandSeeds, this.extractConcurrency, async (brand) => {
-        try {
-          const response = await fetchHtml(brand.sourceUrl);
-          const summary = extractGrFrenosListingSummary(response.body);
-          const totalResults = summary?.totalResults;
-          const finalUrl = typeof totalResults === 'number' && totalResults > 40
-            ? buildGrFrenosBrandUrl(response.finalUrl, brand.brandId, totalResults)
-            : response.finalUrl;
-
-          return {
-            brand,
-            finalUrl,
-            totalResults,
-          };
-        } catch (error) {
-          this.logger.warn(`No se pudo resolver GR Frenos marca=${brand.brandId}: ${formatError(error)}`);
-          return {
-            brand,
-            finalUrl: brand.sourceUrl,
-          };
-        }
-      });
+      const brandSeeds = extractGrFrenosBrandsFromHtml(homeResponse.body, homeResponse.finalUrl);
+      const discoveredUrls = brandSeeds.map((brand) => brand.sourceUrl);
 
       return {
         seedUrl: sourceUrl,
@@ -399,13 +377,13 @@ export class DomainProvider implements ScrapingProvider {
             depth: 0,
             productCount: brandSeeds.length,
           },
-          ...resolved.map((item) => ({
-            url: item.finalUrl,
+          ...brandSeeds.map((brand) => ({
+            url: brand.sourceUrl,
             depth: 1,
-            productCount: typeof item.totalResults === 'number' ? item.totalResults : 0,
+            productCount: 0,
           })),
         ],
-        discoveredUrls: uniqueStrings(resolved.map((item) => item.finalUrl)),
+        discoveredUrls: discoveredUrls.length > 0 ? uniqueStrings(discoveredUrls) : [sourceUrl],
         discoveryMethod: 'grfrenos-http',
       };
     } catch (error) {
@@ -419,43 +397,28 @@ export class DomainProvider implements ScrapingProvider {
     }
   }
 
-  private async extractGrFrenosProducts(urls: string[], maxItems: number, rule: DomainRule) {
+  private async extractGrFrenosProducts(urls: string[], rule: DomainRule) {
     const discoveryUrls = uniqueStrings(urls);
     const pages: Array<{ url: string; method: string; productCount: number }> = [];
     const collected: ProductRecord[] = [];
 
     for (const discoveryUrl of discoveryUrls) {
-      if (collected.length >= maxItems) {
-        break;
-      }
-
       try {
         const response = await fetchHtml(discoveryUrl);
         const summary = extractGrFrenosListingSummary(response.body);
-        const initialBatch = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
-
-        if (typeof summary?.totalResults === 'number' && summary.totalResults > initialBatch.length && summary.totalResults > 40) {
-          const brandId = extractGrFrenosBrandId(response.finalUrl) ?? extractGrFrenosBrandId(discoveryUrl);
-          const finalUrl = brandId ? buildGrFrenosBrandUrl(response.finalUrl, brandId, summary.totalResults) : response.finalUrl;
-          const fullResponse = await fetchHtml(finalUrl);
-          const batch = qualityGate(extractProductsFromHtml(fullResponse.body, fullResponse.finalUrl, this.name, rule), rule);
-
-          pages.push({
-            url: fullResponse.finalUrl,
-            method: 'http',
-            productCount: batch.length,
-          });
-
-          collected.push(...batch);
-          continue;
-        }
+        const brandId = extractGrFrenosBrandId(response.finalUrl) ?? extractGrFrenosBrandId(discoveryUrl);
+        const finalUrl = typeof summary?.totalResults === 'number' && brandId
+          ? buildGrFrenosBrandUrl(response.finalUrl, brandId, summary.totalResults)
+          : response.finalUrl;
+        const finalResponse = finalUrl === response.finalUrl ? response : await fetchHtml(finalUrl);
+        const batch = qualityGate(extractProductsFromHtml(finalResponse.body, finalResponse.finalUrl, this.name, rule), rule);
 
         pages.push({
-          url: response.finalUrl,
+          url: finalResponse.finalUrl,
           method: 'http',
-          productCount: initialBatch.length,
+          productCount: batch.length,
         });
-        collected.push(...initialBatch);
+        collected.push(...batch);
       } catch (error) {
         this.logger.warn(`No se pudo extraer GR Frenos ${discoveryUrl}: ${formatError(error)}`);
       }
@@ -464,7 +427,7 @@ export class DomainProvider implements ScrapingProvider {
     return {
       urls: discoveryUrls,
       pages,
-      products: dedupeProducts(collected).slice(0, maxItems),
+      products: dedupeProducts(collected),
     };
   }
 
