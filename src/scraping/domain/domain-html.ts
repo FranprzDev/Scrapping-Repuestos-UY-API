@@ -328,6 +328,15 @@ export function buildGrFrenosBrandUrl(baseUrl: string, brandId: string, totalRes
   return url.toString();
 }
 
+export function isGrFrenosChallengeHtml(body: string): boolean {
+  const text = normalizeComparableText(cleanText(body) ?? '');
+  if (!text) {
+    return false;
+  }
+
+  return /cloudflare|access denied|forbidden|captcha|verify you are human|just a moment|security check|anti bot|robot/.test(text);
+}
+
 function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: ProviderName): ProductRecord[] {
   const products: ProductRecord[] = [];
 
@@ -1143,6 +1152,7 @@ function parseResultCount(value: string): number | undefined {
   const parsed = Number(match[1].replace(/[.,]/g, ''));
   return Number.isFinite(parsed) ? parsed : undefined;
 }
+
 function collectAvailabilityText(root: HTMLElement): string {
   const sections = [
     '.opcionescarrito',
