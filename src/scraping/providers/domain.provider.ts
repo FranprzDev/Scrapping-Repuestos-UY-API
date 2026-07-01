@@ -278,20 +278,29 @@ export class DomainProvider implements ScrapingProvider {
 
   private async extractChapareiProducts(urls: string[], maxItems: number, rule: DomainRule) {
     const discoveryUrls = uniqueStrings(urls);
-    const brandSeeds = new Set<string>();
+    const brandSeeds = new Map<string, string | undefined>();
 
     for (const discoveryUrl of discoveryUrls) {
       try {
         const session = createChapareiSession();
         const response = await session.fetch(discoveryUrl);
-        this.resolveChapareiBrandSeeds(response, discoveryUrl).forEach((value) => brandSeeds.add(value));
+        this.resolveChapareiBrandSeedEntries(response, discoveryUrl).forEach(({ sourceUrl, brandLabel }) => {
+          if (!brandSeeds.has(sourceUrl)) {
+            brandSeeds.set(sourceUrl, brandLabel);
+            return;
+          }
+
+          if (!brandSeeds.get(sourceUrl) && brandLabel) {
+            brandSeeds.set(sourceUrl, brandLabel);
+          }
+        });
       } catch (error) {
         this.logger.warn(`No se pudo resolver Chaparei ${discoveryUrl}: ${formatError(error)}`);
       }
     }
 
-    const brandUrls = Array.from(brandSeeds);
-    if (brandUrls.length === 0) {
+    const brandSeedEntries = Array.from(brandSeeds.entries()).map(([sourceUrl, brandLabel]) => ({ sourceUrl, brandLabel }));
+    if (brandSeedEntries.length === 0) {
       return {
         urls: discoveryUrls,
         pages: [],
@@ -299,25 +308,33 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
-    const results = await mapWithConcurrency(brandUrls, this.extractConcurrency, async (brandUrl) =>
-      this.extractChapareiBrandSeries(brandUrl, maxItems, rule),
+    const results = await mapWithConcurrency(brandSeedEntries, this.extractConcurrency, async (brandSeed) =>
+      this.extractChapareiBrandSeries(brandSeed, maxItems, rule),
     );
 
     return {
-      urls: brandUrls,
+      urls: brandSeedEntries.map((entry) => entry.sourceUrl),
       pages: results.flatMap((item) => item.pages),
       products: dedupeProducts(results.flatMap((item) => item.products)).slice(0, maxItems),
     };
   }
 
-  private async extractChapareiBrandSeries(brandUrl: string, maxItems: number, rule: DomainRule) {
+  private async extractChapareiBrandSeries(
+    brandSeed: { sourceUrl: string; brandLabel?: string },
+    maxItems: number,
+    rule: DomainRule,
+  ) {
+    const { sourceUrl: brandUrl, brandLabel } = brandSeed;
     const session = createChapareiSession();
     const pages: Array<{ url: string; method: string; productCount: number }> = [];
     const collected: ProductRecord[] = [];
 
     try {
       const firstResponse = await session.fetch(brandUrl);
-      const firstBatch = qualityGate(extractProductsFromHtml(firstResponse.body, firstResponse.finalUrl, this.name, rule), rule);
+      const firstBatch = applyChapareiContextBrand(
+        qualityGate(extractProductsFromHtml(firstResponse.body, firstResponse.finalUrl, this.name, rule), rule),
+        brandLabel,
+      );
 
       if (firstBatch.length > 0) {
         collected.push(...firstBatch);
@@ -336,7 +353,10 @@ export class DomainProvider implements ScrapingProvider {
           break;
         }
 
-        const batch = qualityGate(extractProductsFromHtml(ajaxResponse.body, ajaxResponse.finalUrl, this.name, rule), rule);
+        const batch = applyChapareiContextBrand(
+          qualityGate(extractProductsFromHtml(ajaxResponse.body, ajaxResponse.finalUrl, this.name, rule), rule),
+          brandLabel,
+        );
         if (batch.length === 0) {
           break;
         }
@@ -456,21 +476,40 @@ export class DomainProvider implements ScrapingProvider {
   }
 
   private resolveChapareiBrandSeeds(response: HttpResponseData, sourceUrl: string): string[] {
-    const homeBrands = extractChapareiBrandsFromHtml(response.body, response.finalUrl).map((brand) => brand.sourceUrl);
-    if (homeBrands.length > 0 && isChapareiBrandHubUrl(response.finalUrl)) {
-      return homeBrands;
+    return this.resolveChapareiBrandSeedEntries(response, sourceUrl).map((entry) => entry.sourceUrl);
+  }
+
+  private resolveChapareiBrandSeedEntries(
+    response: HttpResponseData,
+    sourceUrl: string,
+  ): Array<{ sourceUrl: string; brandLabel?: string }> {
+    const parsedBrands = extractChapareiBrandsFromHtml(response.body, response.finalUrl);
+    if (parsedBrands.length > 0 && isChapareiBrandHubUrl(response.finalUrl)) {
+      return parsedBrands.map(({ sourceUrl: parsedSourceUrl, brandLabel }) => ({
+        sourceUrl: parsedSourceUrl,
+        brandLabel,
+      }));
     }
 
+    const contextualBrandLabel =
+      extractChapareiBrandLabelFromUrl(response.finalUrl, parsedBrands)
+      ?? extractChapareiBrandLabelFromUrl(sourceUrl, parsedBrands);
     const canonicalBrandUrl = extractChapareiCanonicalBrandUrl(response.body, response.finalUrl);
-    if (canonicalBrandUrl) {
-      return [canonicalBrandUrl];
+    if (canonicalBrandUrl || contextualBrandLabel) {
+      return [{
+        sourceUrl: canonicalBrandUrl ?? sourceUrl,
+        brandLabel: contextualBrandLabel,
+      }];
     }
 
-    if (homeBrands.length > 0) {
-      return homeBrands;
+    if (parsedBrands.length > 0) {
+      return parsedBrands.map(({ sourceUrl: parsedSourceUrl, brandLabel }) => ({
+        sourceUrl: parsedSourceUrl,
+        brandLabel,
+      }));
     }
 
-    return [sourceUrl];
+    return [{ sourceUrl }];
   }
 
   private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
@@ -948,6 +987,30 @@ export function cleanSelvirLabel(value?: string): string | undefined {
     .trim() || undefined;
 }
 
+export function applyChapareiContextBrand(products: ProductRecord[], brandLabel?: string): ProductRecord[] {
+  const normalizedBrandLabel = cleanText(brandLabel);
+  if (!normalizedBrandLabel) {
+    return products;
+  }
+
+  return products.map((product) => ({
+    ...product,
+    brand: normalizedBrandLabel,
+  }));
+}
+
+export function extractChapareiBrandLabelFromUrl(
+  value: string,
+  brands: Array<{ brandId: string; brandLabel: string }>,
+): string | undefined {
+  const brandId = extractChapareiBrandId(value);
+  if (!brandId) {
+    return undefined;
+  }
+
+  return brands.find((brand) => brand.brandId === brandId)?.brandLabel;
+}
+
 function createChapareiSession() {
   let cookieHeader: string | undefined;
 
@@ -1038,6 +1101,20 @@ function extractChapareiCanonicalBrandUrl(html: string, baseUrl: string): string
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function extractChapareiBrandId(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+    const brandId = cleanText(url.searchParams.get('m') ?? undefined);
+    return brandId && /^\d+$/.test(brandId) ? brandId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractGrFrenosBrandId(value: string | undefined): string | undefined {

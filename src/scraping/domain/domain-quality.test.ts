@@ -13,9 +13,11 @@ import {
 } from './domain-html';
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
+  applyChapareiContextBrand,
   buildSelvirArchivePageUrl,
   cleanSelvirLabel,
   extractAcesurProductsByRubro,
+  extractChapareiBrandLabelFromUrl,
   extractSelvirArchiveSummary,
   extractTaxitorPaginationSummary,
   parseSelvirAjaxResponse,
@@ -472,6 +474,25 @@ test('extrae marcas Chaparei desde el select de value numerico', () => {
       sourceUrl: 'https://www.chaparei.com/productos/?m=195',
     },
   ]);
+});
+
+test('resuelve la marca contextual de Chaparei desde el brandUrl y la aplica al producto', () => {
+  const brands = [
+    { brandId: '157', brandLabel: 'ALFA ROMEO' },
+    { brandId: '172', brandLabel: 'CHEVROLET' },
+  ];
+
+  const contextualBrand = extractChapareiBrandLabelFromUrl('https://www.chaparei.com/productos/?m=172', brands);
+  assert.equal(contextualBrand, 'CHEVROLET');
+
+  const products = applyChapareiContextBrand([{
+    productName: 'FOCO DELANTERO',
+    sourceUrl: 'https://www.chaparei.com/catalogo/otros/foco-demo/',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], contextualBrand);
+
+  assert.equal(products[0].brand, 'CHEVROLET');
 });
 
 test('extrae marcas GR Frenos desde el select y normaliza labels a ASCII', () => {
