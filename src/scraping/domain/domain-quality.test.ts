@@ -427,6 +427,19 @@ test('acepta enlaces del mismo host aunque cambien entre www y sin www', () => {
   );
 });
 
+test('permite el buscardor de marcas de GR Frenos sin habilitar rutas de busqueda', () => {
+  const baseUrl = 'https://www.grfrenos.uy/home/';
+
+  assert.equal(
+    isAllowedCatalogUrl('https://www.grfrenos.uy/buscardor.php?marcas=128---', baseUrl),
+    true,
+  );
+  assert.equal(
+    isAllowedCatalogUrl('https://www.grfrenos.uy/buscar/?q=ford', baseUrl),
+    false,
+  );
+});
+
 test('descubre opciones de orden Chaparei desde option[value]', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
