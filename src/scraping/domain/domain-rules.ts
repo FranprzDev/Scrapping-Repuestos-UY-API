@@ -186,6 +186,17 @@ export const DOMAIN_RULES: DomainRule[] = [
       image: ['.ty-product-img img', '.product-image img', 'main img', 'meta[property="og:image"]'],
     },
   },
+  {
+    id: 'europarts',
+    hostnames: ['europarts.com.uy', 'www.europarts.com.uy'],
+    seedUrls: ['https://www.europarts.com.uy/es/search?recordsize=100'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/es\/[^/?#]+\/product\/\d+\/?$/i],
+    categoryUrlPatterns: [/\/es\/search(?:\?|$)/i],
+    excludeUrlPatterns: [/\/cart/i, /\/checkout/i, /\/profile/i, /\/contact/i],
+    positiveAvailabilityTexts: ['añadir al carrito', 'agregar al carrito', 'add to cart'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
 ];
 
 export function findDomainRule(url: string): DomainRule | undefined {

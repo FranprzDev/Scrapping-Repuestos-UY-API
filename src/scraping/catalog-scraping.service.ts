@@ -486,6 +486,13 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
     };
   }
 
+  if (isEuropartsSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 2,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   return {
     maxPagesPerSite: request.maxPagesPerSite ?? 30,
     maxProductsPerSite: request.maxProductsPerSite ?? 150,
@@ -495,6 +502,14 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
 function isFeyviSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'feyvi.com.uy';
+  } catch {
+    return false;
+  }
+}
+
+function isEuropartsSite(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).hostname.replace(/^www\./, '') === 'europarts.com.uy';
   } catch {
     return false;
   }

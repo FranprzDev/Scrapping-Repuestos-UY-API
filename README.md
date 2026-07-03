@@ -11,6 +11,7 @@ El alcance funcional de esta fase esta limitado a estos sitios:
 - [Chaparei](https://www.chaparei.com/)
 - [Selvir](https://www.selvir.com.uy/productos/)
 - [Feyvi](https://www.feyvi.com.uy/repuestos/)
+- [Europarts](https://www.europarts.com.uy/es/search)
 
 `centrorepuestos.com.uy` fue removido del alcance.
 `feyvi.com.uy` queda incluido por categorias fijas con paginacion dinamica.
@@ -34,6 +35,7 @@ El pipeline actual funciona asi:
 - `chaparei.com`: HTML server-rendered.
 - `selvir.com.uy`: HTML + JSON-LD.
 - `feyvi.com.uy`: HTML paginado por categoria con discovery dinamico de paginas.
+- `europarts.com.uy`: HTML en una grilla unica cuyo `recordsize` se deriva del total publicado por el sitio.
 
 ## Reglas de negocio activas
 

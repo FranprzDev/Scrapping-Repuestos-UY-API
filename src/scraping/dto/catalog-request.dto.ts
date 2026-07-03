@@ -58,7 +58,11 @@ export const FEYVI_CATALOG_SITES = [
   'https://www.feyvi.com.uy/repuestos/suspension-delantera-direccion-y-llantas-es/',
 ] as const;
 
-export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES] as const;
+export const EUROPARTS_CATALOG_SITES = [
+  'https://www.europarts.com.uy/es/search?recordsize=100',
+] as const;
+
+export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES, ...EUROPARTS_CATALOG_SITES] as const;
 
 export class CatalogScrapeRequestDto {
   @IsOptional()

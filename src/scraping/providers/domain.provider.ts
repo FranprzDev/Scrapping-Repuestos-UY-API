@@ -102,6 +102,18 @@ export class DomainProvider implements ScrapingProvider {
       return await this.crawlTaxitor(sourceUrl, limit, rule);
     }
 
+    if (rule.id === 'europarts') {
+      const response = await fetchHtml(buildEuropartsCatalogUrl(sourceUrl, 100));
+      const total = extractEuropartsTotal(response.body);
+      const catalogUrl = buildEuropartsCatalogUrl(response.finalUrl, total ?? 100);
+      return {
+        seedUrl: sourceUrl,
+        pages: [{ url: response.finalUrl, depth: 0, productCount: total ?? 0 }],
+        discoveredUrls: [catalogUrl],
+        discoveryMethod: 'europarts-http',
+      };
+    }
+
     if (rule.preferredMethod === 'api') {
       return {
         seedUrl: sourceUrl,
@@ -200,6 +212,19 @@ export class DomainProvider implements ScrapingProvider {
         urls: grfrenos.urls,
         pages: grfrenos.pages,
         products: dedupeProducts(qualityGate(grfrenos.products, rule)).slice(0, maxItems),
+      };
+    }
+
+    if (rule.id === 'europarts') {
+      const initialResponse = await fetchHtml(buildEuropartsCatalogUrl(sourceUrl, 100));
+      const total = extractEuropartsTotal(initialResponse.body) ?? 100;
+      const catalogUrl = buildEuropartsCatalogUrl(initialResponse.finalUrl, total);
+      const response = total <= 100 ? initialResponse : await fetchHtml(catalogUrl);
+      const products = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+      return {
+        urls: [catalogUrl],
+        pages: [{ url: response.finalUrl, method: 'europarts-http', productCount: products.length }],
+        products: dedupeProducts(products).slice(0, maxItems),
       };
     }
 
@@ -647,6 +672,22 @@ export class DomainProvider implements ScrapingProvider {
       discoveryMethod: 'taxitor-http',
     };
   }
+}
+
+export function extractEuropartsTotal(body: string): number | undefined {
+  const root = parse(body);
+  const summary = root.querySelectorAll('.product-show-option p')
+    .map((element) => cleanText(element.text))
+    .find((text) => text?.toLowerCase().startsWith('mostrando '));
+  const lastPart = summary?.split(/\s+/).at(-1);
+  const total = Number(lastPart);
+  return Number.isInteger(total) && total > 0 ? total : undefined;
+}
+
+export function buildEuropartsCatalogUrl(sourceUrl: string, recordSize: number): string {
+  const url = new URL(sourceUrl);
+  url.searchParams.set('recordsize', String(clampNumber(recordSize, 1, 1000000, 100)));
+  return url.toString();
 }
 
 export function buildSelvirArchivePageUrl(baseUrl: string, page: number): string {
