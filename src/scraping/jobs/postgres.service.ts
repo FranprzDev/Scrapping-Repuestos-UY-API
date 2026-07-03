@@ -67,7 +67,6 @@ export class PostgresService implements OnModuleDestroy {
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await this.query(`CREATE UNIQUE INDEX IF NOT EXISTS scraping_inventory_source_url_unique_idx ON scraping_inventory(source_url);`);
     await this.query(`CREATE INDEX IF NOT EXISTS scraping_inventory_site_idx ON scraping_inventory(site);`);
 
     await this.query(`

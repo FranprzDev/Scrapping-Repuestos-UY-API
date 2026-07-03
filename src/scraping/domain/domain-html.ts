@@ -227,6 +227,11 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
     return candidates;
   }
 
+  if (rule.id === 'europarts') {
+    candidates.push(...extractEuropartsListProducts(root, pageUrl, provider, rule));
+    return candidates;
+  }
+
   const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   if (!isDetailPage) {
@@ -241,6 +246,38 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   }
 
   return candidates;
+}
+
+function extractEuropartsListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  const products: ProductRecord[] = [];
+
+  root.querySelectorAll('.product-item').forEach((card) => {
+    const productLink = card.querySelector('.pi-text a[href*="/product/"]') ?? card.querySelector('a[href*="/product/"]');
+    const sourceUrl = normalizeUrl(productLink?.getAttribute('href'), pageUrl);
+    const productName = cleanText(card.querySelector('.pi-text h5')?.text) ?? cleanText(card.querySelector('img[alt]')?.getAttribute('alt'));
+    const rawPrice = cleanText(card.querySelector('.product-price')?.text);
+
+    if (!sourceUrl || !productName || !rawPrice || !rule.productUrlPatterns.some((pattern) => pattern.test(sourceUrl))) {
+      return;
+    }
+
+    products.push({
+      productName,
+      price: normalizePriceValue(rawPrice),
+      currency: inferCurrency(rawPrice),
+      category: cleanText(card.querySelector('.catagory-name')?.text),
+      imageUrl: normalizeUrl(
+        card.querySelector('img')?.getAttribute('data-src') ?? card.querySelector('img')?.getAttribute('src'),
+        pageUrl,
+      ),
+      sourceUrl,
+      availability: 'in_stock',
+      extractedAt: new Date().toISOString(),
+      provider,
+    });
+  });
+
+  return products;
 }
 
 export function extractChapareiBrandsFromHtml(html: string, baseUrl: string): Array<{ brandId: string; brandLabel: string; sourceUrl: string }> {

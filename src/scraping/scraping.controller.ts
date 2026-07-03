@@ -1257,6 +1257,7 @@ function renderStatsPage(): string {
         if (value.includes('taxitor')) return 'Taxitor';
         if (value.includes('acesur')) return 'Acesur';
         if (value.includes('selvir')) return 'Selvir';
+        if (value.includes('europarts')) return 'Europarts';
         try {
           return new URL(site).hostname.replace(/^www\\./, '');
         } catch {

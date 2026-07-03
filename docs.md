@@ -8,6 +8,7 @@ Lista de los sitios que hoy tenemos en el radar para scraping.
 - `Acesur` - `https://acesur.uy/escritorio/ofertas/INTERNET`
 - `Selvir` - `https://www.selvir.com.uy/`
 - `Feyvi` - `https://www.feyvi.com.uy/`
+- `Europarts` - `https://www.europarts.com.uy/es/search?recordsize=100`
 
 ## Activos para mantener o ampliar
 
@@ -63,6 +64,10 @@ Lista de los sitios que hoy tenemos en el radar para scraping.
   - `https://www.feyvi.com.uy/repuestos/transmision-caja-cambios/`
   - `https://www.feyvi.com.uy/repuestos/sistema-electrico-motor-y-transmision-es/`
   - `https://www.feyvi.com.uy/repuestos/suspension-delantera-direccion-y-llantas-es/`
+
+- `Europarts`
+  - `https://www.europarts.com.uy/es/search?recordsize=100`
+  - El total se obtiene de `Mostrando ... de N` y se usa en una segunda consulta como `recordsize=N`.
 
 ## Nota
 
