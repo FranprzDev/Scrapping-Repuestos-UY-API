@@ -12,13 +12,14 @@
     "dev": "pnpm run start:dev",
     "db:up": "docker compose -f docker-compose.dev.yml up -d postgres",
     "db:down": "docker compose -f docker-compose.dev.yml down",
-    "dev:local": "pnpm run db:up && pnpm run dev",
+    "db:migrate": "node-pg-migrate up",
+    "dev:local": "pnpm run db:up && pnpm run db:migrate && pnpm run dev",
     "lint": "tsc --noEmit",
     "test": "pnpm run build && node --test \"dist/**/*.test.js\"",
     "scrape:daily": "node scripts/run-daily-scrape.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.11"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.24",
@@ -30,6 +31,7 @@
     "class-validator": "^0.15.1",
     "dotenv": "^17.4.2",
     "node-html-parser": "^7.1.0",
+    "node-pg-migrate": "8.0.4",
     "pg": "^8.21.0",
     "playwright": "^1.60.0",
     "reflect-metadata": "^0.2.2",

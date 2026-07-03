@@ -16,6 +16,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/dist ./dist
+COPY migrations ./migrations
 
 ENV NODE_ENV=production
 ENV PORT=3000
