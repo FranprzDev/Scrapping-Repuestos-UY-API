@@ -45,6 +45,7 @@ pnpm run db:migrate
 ```
 
 El comando `pnpm run dev:local` también inicia PostgreSQL, ejecuta las migraciones pendientes y luego levanta la aplicación.
+`pnpm run dev` y `npm run dev` ejecutan las migraciones pendientes antes de iniciar NestJS; requieren que PostgreSQL ya esté levantado.
 
 `node-pg-migrate` registra cada ejecución en `pgmigrations`. Una migración aplicada no vuelve a ejecutarse.
 
