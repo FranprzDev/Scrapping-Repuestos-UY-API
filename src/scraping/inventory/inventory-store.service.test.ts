@@ -113,7 +113,13 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
       queries.push({ sql, params });
 
       if (/INSERT INTO scraping_inventory/i.test(sql)) {
-        return { rows: [{ created: true }] } as never;
+        return {
+          rows: [{
+            id: 'url|https://selvir.com.uy/product/amortiguador-demo',
+            sourceUrl: 'https://selvir.com.uy/product/amortiguador-demo',
+            created: true,
+          }],
+        } as never;
       }
 
       if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory WHERE site = \$1/i.test(sql)) {
@@ -132,13 +138,22 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
       extractedAt: new Date().toISOString(),
       provider: 'domain',
     },
+    {
+      productName: 'AMORTIGUADOR DEL CITROEN-PEUGEOT ACTUALIZADO',
+      price: '1234',
+      sourceUrl: 'https://selvir.com.uy/product/amortiguador-demo',
+      extractedAt: new Date().toISOString(),
+      provider: 'domain',
+    },
   ], new Date().toISOString());
 
   assert.deepEqual(result, { created: 1, updated: 0, totalForSite: 1 });
 
   const inventoryInsert = queries.find((query) => /INSERT INTO scraping_inventory/i.test(query.sql));
   assert.ok(inventoryInsert);
-  const productJson = JSON.parse((inventoryInsert.params[3] as string[])[0]) as { compatibleBrands?: string[] };
+  assert.equal((inventoryInsert.params[2] as string[]).length, 1);
+  assert.deepEqual(inventoryInsert.params[3], ['https://selvir.com.uy/product/amortiguador-demo']);
+  const productJson = JSON.parse((inventoryInsert.params[4] as string[])[0]) as { compatibleBrands?: string[] };
   assert.deepEqual(productJson.compatibleBrands, ['Citroen', 'Peugeot']);
 
   const relationDelete = queries.find((query) => /DELETE FROM scraping_inventory_vehicle_brands/i.test(query.sql));

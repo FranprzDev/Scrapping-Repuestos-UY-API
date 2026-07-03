@@ -49,6 +49,7 @@ const BLOCKED_URL_HOST_PATTERNS = [
   /(^|\.)twitter\.com$/i,
 ];
 const BLOCKED_URL_PATH_PATTERNS = [
+  /[?&]dispatch=product_features\.add_product(?:&|$)/i,
   /\/share/i,
   /\/sharer/i,
   /\/send/i,
@@ -291,7 +292,7 @@ function mergeWarnings(previous?: string[], current?: string[]): string[] | unde
   return current?.length ? current : previous;
 }
 
-const HARD_REJECTION_WARNINGS = new Set(['invalid_name', 'external_url', 'non_automotive', 'invalid_page']);
+const HARD_REJECTION_WARNINGS = new Set(['invalid_name', 'external_url', 'invalid_product_url', 'non_automotive', 'invalid_page']);
 
 export function isAutomotiveProduct(product: ProductRecord, rule?: DomainRule): boolean {
   const sourceUrl = cleanText(product.sourceUrl);
@@ -377,6 +378,10 @@ function isExternalProductUrl(candidateUrl: string, rule?: DomainRule): boolean 
 function looksLikeProductUrl(sourceUrl: string, rule: DomainRule): boolean {
   if (rule.productUrlPatterns.some((pattern) => pattern.test(sourceUrl))) {
     return true;
+  }
+
+  if (rule.id === 'feyvi') {
+    return false;
   }
 
   const lowered = sourceUrl.toLowerCase();
