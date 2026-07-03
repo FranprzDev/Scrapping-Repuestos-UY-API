@@ -66,43 +66,61 @@ export class InventoryStoreService implements OnModuleInit {
     let created = 0;
     let updated = 0;
 
-    const payload = products
+    const payloadBySourceUrl = new Map<string, {
+      id: string;
+      site: string;
+      sourceUrl: string;
+      product: string;
+      vehicleBrands: ReturnType<typeof inferVehicleBrands>;
+    }>();
+
+    products
       .map((product) => {
         const vehicleBrands = inferVehicleBrands(product);
         const enrichedProduct: ProductRecord = {
           ...product,
           compatibleBrands: vehicleBrands.map((brand) => brand.label),
         };
-        const key = buildProductKey(site, enrichedProduct);
-        if (!key) {
+        const sourceUrl = canonicalProductUrl(enrichedProduct.sourceUrl);
+        if (!sourceUrl) {
           return undefined;
         }
 
         return {
-          id: key,
+          id: `url|${sourceUrl}`,
           site,
+          sourceUrl,
           product: JSON.stringify(enrichedProduct),
           vehicleBrands,
         };
       })
-      .filter((item): item is { id: string; site: string; product: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item));
+      .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
+      .forEach((item) => payloadBySourceUrl.set(item.sourceUrl, item));
+
+    const payload = Array.from(payloadBySourceUrl.values());
 
     for (let index = 0; index < payload.length; index += this.upsertChunkSize) {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
-      const upserted = await this.postgresService.query<{ created: boolean }>(
+      const upserted = await this.postgresService.query<{ id: string; sourceUrl: string; created: boolean }>(
         `
-        INSERT INTO scraping_inventory (id, site, product, created_at, updated_at, last_seen_at)
-        SELECT item.id, item.site, item.product::jsonb, $1::timestamptz, $1::timestamptz, $1::timestamptz
-        FROM unnest($2::text[], $3::text[], $4::text[]) AS item(id, site, product)
-        ON CONFLICT (id)
+        INSERT INTO scraping_inventory (id, site, source_url, product, created_at, updated_at, last_seen_at)
+        SELECT item.id, item.site, item.source_url, item.product::jsonb, $1::timestamptz, $1::timestamptz, $1::timestamptz
+        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS item(id, site, source_url, product)
+        ON CONFLICT (source_url)
         DO UPDATE SET
           site = EXCLUDED.site,
           product = EXCLUDED.product,
           updated_at = EXCLUDED.updated_at,
           last_seen_at = EXCLUDED.last_seen_at
-        RETURNING (xmax = 0) AS created
+        RETURNING id, source_url AS "sourceUrl", (xmax = 0) AS created
         `,
-        [runAt, chunk.map((item) => item.id), chunk.map((item) => item.site), chunk.map((item) => item.product)],
+        [
+          runAt,
+          chunk.map((item) => item.id),
+          chunk.map((item) => item.site),
+          chunk.map((item) => item.sourceUrl),
+          chunk.map((item) => item.product),
+        ],
       );
 
       for (const row of upserted.rows) {
@@ -113,7 +131,13 @@ export class InventoryStoreService implements OnModuleInit {
         }
       }
 
-      await this.syncVehicleBrandRelations(chunk);
+      const brandsBySourceUrl = new Map(chunk.map((item) => [item.sourceUrl, item.vehicleBrands]));
+      await this.syncVehicleBrandRelations(
+        upserted.rows.map((row) => ({
+          id: row.id,
+          vehicleBrands: brandsBySourceUrl.get(row.sourceUrl) ?? [],
+        })),
+      );
     }
 
     const totalForSite = await this.countBySite(site);
@@ -321,18 +345,25 @@ function mapInventoryRow(row: InventoryRow): StoredProduct {
   };
 }
 
-function buildProductKey(site: string, product: ProductRecord): string | undefined {
-  const sourceUrl = normalizeKeyPart(product.sourceUrl);
-  if (sourceUrl) {
-    return `${site}|url|${sourceUrl}`;
+function canonicalProductUrl(value?: string): string | undefined {
+  if (!value?.trim()) {
+    return undefined;
   }
 
-  return undefined;
-}
+  try {
+    const url = new URL(value.trim());
+    if (!/^https?:$/.test(url.protocol)) {
+      return undefined;
+    }
 
-function normalizeKeyPart(value?: string): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  return normalized ? normalized : undefined;
+    url.protocol = url.protocol.toLowerCase();
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    url.hash = '';
+    url.pathname = url.pathname === '/' ? '/' : url.pathname.replace(/\/+$/, '');
+    return url.toString().replace(/\/$/, '').toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeStatsSiteKey(value: string): string {

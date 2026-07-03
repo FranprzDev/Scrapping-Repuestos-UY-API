@@ -119,3 +119,40 @@ test('feyvi descarta las cards de paginacion tipo 24 productos mas como producto
 
   assert.equal(products.length, 0);
 });
+
+test('feyvi descarta acciones de agregar producto que no son fichas', () => {
+  const rule = findDomainRule('https://www.feyvi.com.uy/repuestos/acabamiento-exterior/');
+  assert.ok(rule);
+
+  const html = `
+    <div class="ty-grid-list__item">
+      <a class="product-title" href="https://www.feyvi.com.uy/index.php?dispatch=product_features.add_product&product_id=35927&redirect_url=index.php%3Fdispatch%3Dcategories.view%26category_id%3D903">Agregar producto</a>
+      <span class="ty-price">$ 1,250</span>
+      <button>Agregar al carrito</button>
+    </div>
+  `;
+
+  const links = extractCandidateLinks(html, 'https://www.feyvi.com.uy/repuestos/acabamiento-exterior/', rule);
+  const products = qualityGate(
+    extractProductsFromHtml(html, 'https://www.feyvi.com.uy/repuestos/acabamiento-exterior/', 'domain', rule),
+    rule,
+  );
+
+  assert.equal(links.productLinks.length, 0);
+  assert.equal(products.length, 0);
+});
+
+test('feyvi descarta categorias con precio aparente como si fueran productos', () => {
+  const rule = findDomainRule('https://www.feyvi.com.uy/repuestos/alimentacion-admision-de-aire-y-escape-es/');
+  assert.ok(rule);
+
+  const products = qualityGate([{
+    productName: 'FILTRO DE AIRE',
+    price: '1,250',
+    sourceUrl: 'https://www.feyvi.com.uy/repuestos/alimentacion-admision-de-aire-y-escape-es/filtro-de-aire/',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], rule);
+
+  assert.equal(products.length, 0);
+});

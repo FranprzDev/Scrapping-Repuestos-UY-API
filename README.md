@@ -43,9 +43,13 @@ El pipeline actual funciona asi:
 - Se rechazan paginas 404, nombres basura y URLs que no parezcan de producto.
 - El archivo de salida y el inventario solo reciben productos aprobados por el quality gate.
 
+## Base de datos
+
+Los cambios de esquema y las transformaciones persistentes se realizan exclusivamente mediante migraciones versionadas. Consulta [docs/database-migrations.md](docs/database-migrations.md) antes de modificar la base de datos.
+
 ## Requisitos
 
-- Node.js 18+
+- Node.js 20.11+
 
 ## Instalacion
 
