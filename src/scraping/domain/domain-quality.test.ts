@@ -14,6 +14,7 @@ import {
 import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
 import {
   applyChapareiContextBrand,
+  applyGrFrenosContextBrand,
   buildSelvirArchivePageUrl,
   cleanSelvirLabel,
   extractAcesurProductsByRubro,
@@ -566,6 +567,19 @@ test('resume el total de resultados de GR Frenos desde h1 y h3', () => {
   const summary = extractGrFrenosListingSummary(html);
   assert.equal(summary?.brandLabel, 'Setra');
   assert.equal(summary?.totalResults, 1);
+});
+
+test('agrega la marca consultada a las compatibilidades de GR Frenos', () => {
+  const products = applyGrFrenosContextBrand([{
+    productName: 'Pastilla de freno',
+    price: '100',
+    sourceUrl: 'https://www.grfrenos.uy/pastilla/art-1/',
+    compatibleBrands: ['Volkswagen'],
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], 'Ford');
+
+  assert.deepEqual(products[0].compatibleBrands, ['Volkswagen', 'Ford']);
 });
 
 test('arma la url final de GR Frenos con paginacion total', () => {
@@ -1923,6 +1937,7 @@ test('deduplica por sourceUrl sin perder datos utiles', () => {
       productName: 'Demo',
       price: '100',
       sourceUrl: 'https://example.com/p/1',
+      compatibleBrands: ['Ford', 'Citroen'],
       extractedAt: new Date().toISOString(),
       provider: 'domain',
     },
@@ -1931,6 +1946,7 @@ test('deduplica por sourceUrl sin perder datos utiles', () => {
       price: '100',
       sourceUrl: 'https://example.com/p/1',
       description: 'Detalle',
+      compatibleBrands: ['Volkswagen', 'CITROEN'],
       extractedAt: new Date().toISOString(),
       provider: 'domain',
     },
@@ -1938,6 +1954,7 @@ test('deduplica por sourceUrl sin perder datos utiles', () => {
 
   assert.equal(products.length, 1);
   assert.equal(products[0].description, 'Detalle');
+  assert.deepEqual(products[0].compatibleBrands, ['Ford', 'CITROEN', 'Volkswagen']);
 });
 
 test('resume warnings de calidad por tipo', () => {

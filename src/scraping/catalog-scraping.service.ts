@@ -4,7 +4,7 @@ import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrape
 import { ProductRecord, ProviderName, ScrapingOperationPayload } from './interfaces/scraping.types';
 import { type CatalogJobProgress, type CatalogJobProgressReporter, type CatalogJobSiteProgress } from './interfaces/job-progress.types';
 import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
-import { countQualityWarnings, isAllowedCatalogUrl, qualityGate } from './domain/product-quality';
+import { countQualityWarnings, isAllowedCatalogUrl, mergeCompatibleBrands, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
 import { type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
@@ -853,6 +853,7 @@ function mergeProducts(base: ProductRecord[], incoming: ProductRecord[]): Produc
       ...item,
       stock: item.stock ?? previous.stock,
       availability: item.availability ?? previous.availability,
+      compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, item.compatibleBrands),
     });
   }
 
