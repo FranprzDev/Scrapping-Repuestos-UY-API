@@ -187,6 +187,7 @@ test('expone un resumen compacto del job con el ultimo producto scrapeado', asyn
 
 test('el progreso fallido no aborta el job', async () => {
   let completed = false;
+  let claimed = false;
   const progressQueries: string[] = [];
   const postgresService = {
     async ensureJobsTable() {},
@@ -245,11 +246,17 @@ test('el progreso fallido no aborta el job', async () => {
     postgresService as never,
   );
 
-  (service as any).claimNextQueuedJob = async () => ({
-    id: 'job-progress-failure',
-    task: 'catalog-run',
-    payload: { urls: ['https://taxitor.uy/articulos/filtro/1/-/-/'] },
-  });
+  (service as any).claimNextQueuedJob = async () => {
+    if (claimed) {
+      return undefined;
+    }
+    claimed = true;
+    return {
+      id: 'job-progress-failure',
+      task: 'catalog-run',
+      payload: { urls: ['https://taxitor.uy/articulos/filtro/1/-/-/'] },
+    };
+  };
 
   await (service as any).processNext();
 

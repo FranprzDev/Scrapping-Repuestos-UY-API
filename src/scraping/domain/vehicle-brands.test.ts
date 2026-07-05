@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { inferVehicleBrands, normalizeVehicleBrandId } from './vehicle-brands';
+import { inferVehicleBrands, normalizeVehicleBrandId, resolveVehicleBrandFilterId } from './vehicle-brands';
 import type { ProductRecord } from '../interfaces/scraping.types';
 
 test('normaliza aliases de marcas de vehiculo', () => {
@@ -30,6 +30,20 @@ test('evita falsos positivos por tokens parciales', () => {
   const brands = inferVehicleBrands(product({ productName: 'SOPORTE POWERFLOW UNIVERSAL' }));
 
   assert.deepEqual(brands.map((brand) => brand.id), ['otros']);
+});
+
+test('preserva marcas compatibles explícitas aunque no estén en el diccionario inicial', () => {
+  const brands = inferVehicleBrands(product({ compatibleBrands: ['AEOLUS', 'Ford Camion'] }));
+
+  assert.deepEqual(brands.map((brand) => [brand.id, brand.label]), [
+    ['aeolus', 'AEOLUS'],
+    ['ford', 'Ford'],
+  ]);
+});
+
+test('normaliza marcas dinámicas para el filtro de inventario', () => {
+  assert.equal(resolveVehicleBrandFilterId('CASE IH Tractor'), 'case-ih-tractor');
+  assert.equal(resolveVehicleBrandFilterId('VW'), 'volkswagen');
 });
 
 function product(patch: Partial<ProductRecord>): ProductRecord {

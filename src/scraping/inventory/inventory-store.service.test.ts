@@ -164,6 +164,37 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   assert.deepEqual(relationInsert.params[1], ['citroen', 'peugeot']);
 });
 
+test('upsertSiteProducts registra marcas explícitas nuevas antes de relacionarlas', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/INSERT INTO scraping_inventory/i.test(sql)) {
+        return { rows: [{ id: 'url|https://example.com/aeolus', sourceUrl: 'https://example.com/aeolus', created: true }] } as never;
+      }
+      if (/SELECT COUNT/i.test(sql)) {
+        return { rows: [{ total: '1' }] } as never;
+      }
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.upsertSiteProducts('https://larrique.com.uy/repuestos-autopartes/1', [{
+    productName: 'Repuesto AEOLUS',
+    price: '100',
+    sourceUrl: 'https://example.com/aeolus',
+    compatibleBrands: ['AEOLUS'],
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], new Date().toISOString());
+
+  const brandUpsert = queries.find((query) => /INSERT INTO vehicle_brands/i.test(query.sql));
+  assert.ok(brandUpsert);
+  assert.deepEqual(brandUpsert.params, [['aeolus'], ['AEOLUS']]);
+  const relationInsert = queries.find((query) => /INSERT INTO scraping_inventory_vehicle_brands/i.test(query.sql));
+  assert.deepEqual(relationInsert?.params[1], ['aeolus']);
+});
+
 test('onModuleInit rellena marcas relacionales para inventario existente', async () => {
   const queries: Array<{ sql: string; params: unknown[] }> = [];
   let pendingServed = false;

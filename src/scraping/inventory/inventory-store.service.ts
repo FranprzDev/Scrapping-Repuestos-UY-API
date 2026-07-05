@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES } from '../domain/domain-rules';
-import { inferVehicleBrands, normalizeVehicleBrandId } from '../domain/vehicle-brands';
+import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 
 export interface StoredProduct extends ProductRecord {
@@ -249,6 +249,21 @@ export class InventoryStoreService implements OnModuleInit {
   }
 
   private async syncVehicleBrandRelations(items: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }>): Promise<void> {
+    const brands = new Map(items.flatMap((item) => item.vehicleBrands).map((brand) => [brand.id, brand.label]));
+    if (brands.size > 0) {
+      await this.postgresService.query(
+        `
+        INSERT INTO vehicle_brands (id, label, active)
+        SELECT item.id, item.label, TRUE
+        FROM unnest($1::text[], $2::text[]) AS item(id, label)
+        ON CONFLICT (id)
+        DO UPDATE SET label = EXCLUDED.label,
+                      active = TRUE
+        `,
+        [Array.from(brands.keys()), Array.from(brands.values())],
+      );
+    }
+
     const inventoryIds = items.map((item) => item.id);
     await this.postgresService.query(
       'DELETE FROM scraping_inventory_vehicle_brands WHERE inventory_id = ANY($1::text[])',
@@ -505,10 +520,8 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
     `);
   }
 
-  const vehicleBrand = normalizeVehicleBrandId(filters.vehicleBrand);
-  if (filters.vehicleBrand?.trim() && !vehicleBrand) {
-    conditions.push('FALSE');
-  } else if (vehicleBrand) {
+  const vehicleBrand = resolveVehicleBrandFilterId(filters.vehicleBrand);
+  if (vehicleBrand) {
     params.push(vehicleBrand);
     conditions.push(`
       EXISTS (

@@ -62,7 +62,14 @@ export const EUROPARTS_CATALOG_SITES = [
   'https://www.europarts.com.uy/es/search?recordsize=100',
 ] as const;
 
-export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES, ...EUROPARTS_CATALOG_SITES] as const;
+export const NEW_CATALOG_SITES = [
+  'https://www.multishop.com.uy/',
+  'https://cymaco.com.uy/catalogo',
+  'https://www.familcar.com/',
+  'https://larrique.com.uy/repuestos-autopartes/1',
+] as const;
+
+export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES, ...EUROPARTS_CATALOG_SITES, ...NEW_CATALOG_SITES] as const;
 
 export class CatalogScrapeRequestDto {
   @IsOptional()
