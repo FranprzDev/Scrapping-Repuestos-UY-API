@@ -13,7 +13,7 @@ import {
 } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
 import { type HttpResponseData, fetchHtml } from '../domain/http-client';
-import { cleanText, dedupeProducts, inferCurrency, normalizePriceValue, qualityGate } from '../domain/product-quality';
+import { cleanText, dedupeProducts, inferCurrency, mergeCompatibleBrands, normalizePriceValue, qualityGate } from '../domain/product-quality';
 import { PlaywrightProvider } from './playwright.provider';
 
 @Injectable()
@@ -476,7 +476,13 @@ export class DomainProvider implements ScrapingProvider {
           ? buildGrFrenosBrandUrl(response.finalUrl, brandId, totalResults)
           : response.finalUrl;
         const finalResponse = finalUrl === response.finalUrl ? response : await fetchHtml(finalUrl);
-        const batch = qualityGate(extractProductsFromHtml(finalResponse.body, finalResponse.finalUrl, this.name, rule), rule);
+        const batch = qualityGate(
+          applyGrFrenosContextBrand(
+            extractProductsFromHtml(finalResponse.body, finalResponse.finalUrl, this.name, rule),
+            summary?.brandLabel,
+          ),
+          rule,
+        );
 
         this.logger.log(
           `GR Frenos brand complete brandId=${brandId} brandLabel=${brandLabel} totalResults=${typeof totalResults === 'number' ? totalResults : 'unknown'} finalUrl=${finalResponse.finalUrl} cards=${batch.length}`,
@@ -1037,6 +1043,13 @@ export function applyChapareiContextBrand(products: ProductRecord[], brandLabel?
   return products.map((product) => ({
     ...product,
     brand: normalizedBrandLabel,
+  }));
+}
+
+export function applyGrFrenosContextBrand(products: ProductRecord[], brandLabel?: string): ProductRecord[] {
+  return products.map((product) => ({
+    ...product,
+    compatibleBrands: mergeCompatibleBrands(product.compatibleBrands, brandLabel ? [brandLabel] : undefined),
   }));
 }
 

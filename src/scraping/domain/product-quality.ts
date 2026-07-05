@@ -262,11 +262,25 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
       sourceUrl: product.sourceUrl ?? previous.sourceUrl,
       imageUrl: product.imageUrl ?? previous.imageUrl,
       imagePath: product.imagePath ?? previous.imagePath,
+      compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, product.compatibleBrands),
       qualityWarnings: mergeWarnings(previous.qualityWarnings, product.qualityWarnings),
     });
   }
 
   return Array.from(map.values());
+}
+
+export function mergeCompatibleBrands(previous?: string[], current?: string[]): string[] | undefined {
+  const brands = new Map<string, string>();
+
+  for (const brand of [...(previous ?? []), ...(current ?? [])]) {
+    const label = cleanText(brand);
+    if (label) {
+      brands.set(normalizeComparableText(label), label);
+    }
+  }
+
+  return brands.size > 0 ? Array.from(brands.values()) : undefined;
 }
 
 function buildDedupKey(product: ProductRecord): string | undefined {
