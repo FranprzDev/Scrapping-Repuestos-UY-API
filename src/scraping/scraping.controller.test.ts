@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { DEFAULT_CATALOG_SITES, GRFRENOS_CATALOG_SITES, SELVIR_CATALOG_SITES } from './dto/catalog-request.dto';
+import { DEFAULT_CATALOG_SITES, GRFRENOS_CATALOG_SITES, NEW_CATALOG_SITES, SELVIR_CATALOG_SITES } from './dto/catalog-request.dto';
 import { resolveCatalogSites } from './scraping.controller';
 
 test('filtra casas excluidas del refresh por query', () => {
@@ -49,4 +49,12 @@ test('incluye GR Frenos en el refresh por defecto', () => {
     sites.filter((site) => site.includes('grfrenos.uy')),
     [...GRFRENOS_CATALOG_SITES],
   );
+});
+
+test('incluye las nuevas casas en el refresh por defecto', () => {
+  const sites = resolveCatalogSites(undefined);
+
+  for (const site of NEW_CATALOG_SITES) {
+    assert.ok(sites.includes(site));
+  }
 });

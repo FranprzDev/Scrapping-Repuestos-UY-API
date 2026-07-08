@@ -493,6 +493,13 @@ function resolveCatalogLimits(siteUrl: string, request: CatalogScrapeRequestDto)
     };
   }
 
+  if (isExpandedCatalogSite(siteUrl)) {
+    return {
+      maxPagesPerSite: request.maxPagesPerSite ?? 5000,
+      maxProductsPerSite: request.maxProductsPerSite ?? 100000,
+    };
+  }
+
   return {
     maxPagesPerSite: request.maxPagesPerSite ?? 30,
     maxProductsPerSite: request.maxProductsPerSite ?? 150,
@@ -510,6 +517,15 @@ function isFeyviSite(siteUrl: string): boolean {
 function isEuropartsSite(siteUrl: string): boolean {
   try {
     return new URL(siteUrl).hostname.replace(/^www\./, '') === 'europarts.com.uy';
+  } catch {
+    return false;
+  }
+}
+
+function isExpandedCatalogSite(siteUrl: string): boolean {
+  try {
+    return ['multishop.com.uy', 'cymaco.com.uy', 'familcar.com', 'larrique.com.uy']
+      .includes(new URL(siteUrl).hostname.replace(/^www\./, ''));
   } catch {
     return false;
   }

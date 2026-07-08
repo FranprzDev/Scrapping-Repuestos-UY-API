@@ -12,7 +12,23 @@ import {
   isGrFrenosChallengeHtml,
 } from '../domain/domain-html';
 import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules';
-import { type HttpResponseData, fetchHtml } from '../domain/http-client';
+import { type HttpRequestInit, type HttpResponseData, fetchHtml } from '../domain/http-client';
+import {
+  buildFenicioPageUrl,
+  buildLarriqueBrandUrl,
+  buildLarriqueFinalPageUrl,
+  buildShopifyProductsUrl,
+  CatalogBrandSeed,
+  extractCymacoBrandSeeds,
+  extractFamilcarBrandSeeds,
+  extractFenicioPageSummary,
+  extractFenicioProducts,
+  extractLarriqueContextBrand,
+  extractLarriqueProducts,
+  extractLarriqueTotalResults,
+  extractShopifyProducts,
+  parseLarriqueBrandResponse,
+} from '../domain/new-catalog-sites';
 import { cleanText, dedupeProducts, inferCurrency, mergeCompatibleBrands, normalizePriceValue, qualityGate } from '../domain/product-quality';
 import { PlaywrightProvider } from './playwright.provider';
 
@@ -112,6 +128,23 @@ export class DomainProvider implements ScrapingProvider {
         discoveredUrls: [catalogUrl],
         discoveryMethod: 'europarts-http',
       };
+    }
+
+    if (rule.id === 'multishop') {
+      return {
+        seedUrl: sourceUrl,
+        pages: [{ url: buildShopifyProductsUrl(sourceUrl, 1), depth: 0, productCount: 0 }],
+        discoveredUrls: [sourceUrl],
+        discoveryMethod: 'shopify-json',
+      };
+    }
+
+    if (rule.id === 'cymaco' || rule.id === 'familcar') {
+      return await this.crawlFenicio(sourceUrl, rule.id);
+    }
+
+    if (rule.id === 'larrique') {
+      return await this.crawlLarrique(sourceUrl);
     }
 
     if (rule.preferredMethod === 'api') {
@@ -228,6 +261,18 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
+    if (rule.id === 'multishop') {
+      return await this.extractMultishopProducts(sourceUrl, maxItems);
+    }
+
+    if (rule.id === 'cymaco' || rule.id === 'familcar') {
+      return await this.extractFenicioCatalog(urls, sourceUrl, maxItems, rule.id);
+    }
+
+    if (rule.id === 'larrique') {
+      return await this.extractLarriqueCatalog(urls, sourceUrl, maxItems);
+    }
+
     const processed = await mapWithConcurrency(urls, this.extractConcurrency, async (url) => {
       let usableProducts: ProductRecord[] = [];
       let method = 'http';
@@ -274,6 +319,163 @@ export class DomainProvider implements ScrapingProvider {
       urls,
       pages,
       products: dedupeProducts(collected).slice(0, maxItems),
+    };
+  }
+
+  private async crawlFenicio(sourceUrl: string, site: 'cymaco' | 'familcar') {
+    const response = await fetchHtml(sourceUrl);
+    const brands = site === 'cymaco'
+      ? extractCymacoBrandSeeds(response.body, response.finalUrl)
+      : extractFamilcarBrandSeeds(response.body, response.finalUrl);
+
+    return {
+      seedUrl: sourceUrl,
+      pages: [{ url: response.finalUrl, depth: 0, productCount: brands.length }],
+      discoveredUrls: brands.map((brand) => brand.sourceUrl),
+      discoveryMethod: 'fenicio-http',
+    };
+  }
+
+  private async crawlLarrique(sourceUrl: string) {
+    const session = createCookieSession();
+    const response = await session.fetch(sourceUrl);
+    const csrf = cleanText(parse(response.body).querySelector('input[name="YII_CSRF_TOKEN"]')?.getAttribute('value'));
+    if (!csrf) {
+      throw new Error('Larrique no expuso el token CSRF para descubrir marcas');
+    }
+
+    const body = new URLSearchParams({
+      aux1: '',
+      secondaryAuxs: '{}',
+      noQuery: '1',
+      _csrf: csrf,
+    }).toString();
+    const brandsResponse = await session.fetch(new URL('/special-search/search-for-selectize', response.finalUrl).toString(), {
+      method: 'POST',
+      body,
+      headers: {
+        'x-requested-with': 'XMLHttpRequest',
+        referer: response.finalUrl,
+      },
+    });
+    const brands = parseLarriqueBrandResponse(brandsResponse.body);
+
+    return {
+      seedUrl: sourceUrl,
+      pages: [{ url: response.finalUrl, depth: 0, productCount: brands.length }],
+      discoveredUrls: brands.map((brand) => buildLarriqueBrandUrl(response.finalUrl, brand)),
+      discoveryMethod: 'larrique-http',
+    };
+  }
+
+  private async extractMultishopProducts(sourceUrl: string, maxItems: number) {
+    const products: ProductRecord[] = [];
+    const pages: Array<{ url: string; method: string; productCount: number }> = [];
+    const pageSize = 250;
+
+    for (let page = 1; products.length < maxItems; page += 1) {
+      const url = buildShopifyProductsUrl(sourceUrl, page, pageSize);
+      const response = await fetchHtml(url);
+      const extracted = extractShopifyProducts(response.body, sourceUrl, this.name);
+      pages.push({ url: response.finalUrl, method: 'shopify-json', productCount: extracted.products.length });
+      products.push(...extracted.products);
+      if (extracted.received < pageSize) {
+        break;
+      }
+    }
+
+    return {
+      urls: pages.map((page) => page.url),
+      pages,
+      products: dedupeProducts(qualityGate(products, findDomainRule(sourceUrl))).slice(0, maxItems),
+    };
+  }
+
+  private async extractFenicioCatalog(
+    urls: string[],
+    sourceUrl: string,
+    maxItems: number,
+    site: 'cymaco' | 'familcar',
+  ) {
+    const home = await fetchHtml(sourceUrl);
+    const discovered = site === 'cymaco'
+      ? extractCymacoBrandSeeds(home.body, home.finalUrl)
+      : extractFamilcarBrandSeeds(home.body, home.finalUrl);
+    const knownByUrl = new Map(discovered.map((brand) => [brand.sourceUrl, brand]));
+    const requested = urls
+      .map((url) => knownByUrl.get(url) ?? inferFenicioBrandSeed(url, site))
+      .filter((brand): brand is CatalogBrandSeed => Boolean(brand));
+    const brandSeeds = requested.length > 0 ? uniqueBrandEntries(requested) : discovered;
+    const rule = findDomainRule(sourceUrl);
+
+    const firstResults = await mapWithConcurrency(brandSeeds, this.extractConcurrency, async (brand) => {
+      const first = await fetchHtmlWithRetry(brand.sourceUrl);
+      const summary = extractFenicioPageSummary(first.body);
+      const pageSize = summary?.pageItems || 12;
+      const totalPages = summary?.totalResults ? Math.ceil(summary.totalResults / pageSize) : 1;
+      const products = extractFenicioProducts(first.body, first.finalUrl, this.name, brand.brandLabel);
+      return {
+        brand,
+        totalPages: Math.min(totalPages, Math.ceil(maxItems / pageSize)),
+        page: { url: first.finalUrl, method: 'fenicio-http', productCount: products.length },
+        products,
+      };
+    });
+    const pageTasks = firstResults.flatMap((result) =>
+      Array.from({ length: Math.max(0, result.totalPages - 1) }, (_, index) => ({
+        brand: result.brand,
+        page: index + 2,
+      })),
+    );
+    const remainingResults = await mapWithConcurrency(pageTasks, this.extractConcurrency, async ({ brand, page }) => {
+      const pageUrl = buildFenicioPageUrl(brand.sourceUrl, page);
+      const response = await fetchHtmlWithRetry(pageUrl, {
+        headers: {
+          'x-requested-with': 'XMLHttpRequest',
+          referer: brand.sourceUrl,
+        },
+      });
+      const batch = extractFenicioProducts(response.body, response.finalUrl, this.name, brand.brandLabel);
+      return {
+        page: { url: response.finalUrl, method: 'fenicio-http', productCount: batch.length },
+        products: batch,
+      };
+    });
+
+    const allResults = [...firstResults, ...remainingResults];
+    const products = dedupeProducts(qualityGate(allResults.flatMap((result) => result.products), rule)).slice(0, maxItems);
+    return {
+      urls: brandSeeds.map((brand) => brand.sourceUrl),
+      pages: allResults.map((result) => result.page),
+      products,
+    };
+  }
+
+  private async extractLarriqueCatalog(urls: string[], sourceUrl: string, maxItems: number) {
+    const requested = urls.filter((url) => /\/search-by\/\d+/i.test(url));
+    const brandUrls = requested.length > 0
+      ? uniqueStrings(requested)
+      : (await this.crawlLarrique(sourceUrl)).discoveredUrls;
+    const rule = findDomainRule(sourceUrl);
+
+    const results = await mapWithConcurrency(brandUrls, this.extractConcurrency, async (brandUrl) => {
+      const first = await fetchHtml(brandUrl);
+      const totalResults = extractLarriqueTotalResults(first.body) ?? 0;
+      const finalUrl = totalResults > 24 ? buildLarriqueFinalPageUrl(first.finalUrl, totalResults) : first.finalUrl;
+      const finalResponse = finalUrl === first.finalUrl ? first : await fetchHtml(finalUrl);
+      const brand = extractLarriqueContextBrand(brandUrl);
+      const products = qualityGate(extractLarriqueProducts(finalResponse.body, finalResponse.finalUrl, this.name, brand), rule);
+
+      return {
+        page: { url: finalResponse.finalUrl, method: 'larrique-http', productCount: products.length },
+        products,
+      };
+    });
+
+    return {
+      urls: brandUrls,
+      pages: results.map((result) => result.page),
+      products: dedupeProducts(results.flatMap((result) => result.products)).slice(0, maxItems),
     };
   }
 
@@ -1084,6 +1286,24 @@ function createChapareiSession() {
   };
 }
 
+function createCookieSession() {
+  let cookieHeader: string | undefined;
+
+  return {
+    async fetch(url: string, init: HttpRequestInit = {}): Promise<HttpResponseData> {
+      const response = await fetchHtml(url, 5, {
+        ...init,
+        headers: {
+          ...(cookieHeader ? { cookie: cookieHeader } : {}),
+          ...(init.headers ?? {}),
+        },
+      });
+      cookieHeader = mergeChapareiCookies(cookieHeader, response.headers['set-cookie']);
+      return response;
+    },
+  };
+}
+
 function mergeChapareiCookies(current: string | undefined, setCookieHeader: string | string[] | undefined): string | undefined {
   const jar = new Map<string, string>();
 
@@ -1180,6 +1400,34 @@ function extractGrFrenosBrandId(value: string | undefined): string | undefined {
   return match?.[1];
 }
 
+function inferFenicioBrandSeed(value: string, site: 'cymaco' | 'familcar'): CatalogBrandSeed | undefined {
+  try {
+    const url = new URL(value);
+    const rawLabel = site === 'cymaco'
+      ? cleanText(url.searchParams.get('marca-comp') ?? undefined)
+      : cleanText(url.pathname.split('/').filter(Boolean)[0]);
+    if (!rawLabel || (site === 'familcar' && rawLabel === 'catalogo')) {
+      return undefined;
+    }
+
+    const brandLabel = rawLabel
+      .split('-')
+      .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : '')
+      .join(' ');
+    return { brandLabel, sourceUrl: url.toString() };
+  } catch {
+    return undefined;
+  }
+}
+
+function uniqueBrandEntries(values: CatalogBrandSeed[]): CatalogBrandSeed[] {
+  const map = new Map<string, CatalogBrandSeed>();
+  for (const value of values) {
+    map.set(value.sourceUrl, value);
+  }
+  return Array.from(map.values());
+}
+
 function normalizeTaxitorPaginationUrl(value: string | undefined, baseUrl: string): string | undefined {
   if (!value) {
     return undefined;
@@ -1212,6 +1460,24 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchHtmlWithRetry(url: string, init: HttpRequestInit = {}, attempts = 3): Promise<HttpResponseData> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchHtml(url, 5, init);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return response;
+      }
+      lastError = new Error(`HTTP ${response.statusCode} para ${url}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`No se pudo obtener ${url}`);
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {

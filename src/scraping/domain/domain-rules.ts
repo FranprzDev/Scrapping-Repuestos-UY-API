@@ -197,6 +197,50 @@ export const DOMAIN_RULES: DomainRule[] = [
     positiveAvailabilityTexts: ['añadir al carrito', 'agregar al carrito', 'add to cart'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
   },
+  {
+    id: 'multishop',
+    hostnames: ['multishop.com.uy', 'www.multishop.com.uy'],
+    seedUrls: ['https://www.multishop.com.uy/'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/products\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [/\/collections\//i],
+    excludeUrlPatterns: [/\/cart/i, /\/account/i, /\/blogs/i, /\/pages/i],
+    positiveAvailabilityTexts: ['en stock', 'agregar al carrito', 'añadir al carrito'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
+  {
+    id: 'cymaco',
+    hostnames: ['cymaco.com.uy', 'www.cymaco.com.uy'],
+    seedUrls: ['https://cymaco.com.uy/catalogo'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
+    categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i],
+    excludeUrlPatterns: [/\/mi-cuenta/i, /\/send/i, /\/blog/i, /\/tiendas/i],
+    positiveAvailabilityTexts: ['comprar', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
+  {
+    id: 'familcar',
+    hostnames: ['familcar.com', 'www.familcar.com'],
+    seedUrls: ['https://www.familcar.com/'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
+    categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i, /^https?:\/\/(?:www\.)?familcar\.com\/[a-z0-9-]+\/?(?:\?.*)?$/i],
+    excludeUrlPatterns: [/\/mi-cuenta/i, /\/send/i, /\/contacto/i, /\/trabaja/i],
+    positiveAvailabilityTexts: ['comprar', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
+  {
+    id: 'larrique',
+    hostnames: ['larrique.com.uy', 'www.larrique.com.uy'],
+    seedUrls: ['https://larrique.com.uy/repuestos-autopartes/1'],
+    preferredMethod: 'http',
+    productUrlPatterns: [/\/p\/[^/?#]+\/\d+\/\d+\/?$/i],
+    categoryUrlPatterns: [/\/search-by\/\d+/i, /\/repuestos-autopartes/i],
+    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/users/i, /\/sale/i],
+    positiveAvailabilityTexts: ['comprar', 'agregar al carrito'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
 ];
 
 export function findDomainRule(url: string): DomainRule | undefined {
@@ -243,6 +287,18 @@ function normalizeHostname(value: string): string {
 }
 
 function formatHouseLabel(id: string): string {
+  const explicitLabels: Record<string, string> = {
+    multishop: 'Multishop',
+    cymaco: 'Cymaco',
+    familcar: 'Familcar',
+    larrique: 'Larrique',
+  };
+
+  const explicit = explicitLabels[id];
+  if (explicit) {
+    return explicit;
+  }
+
   return id
     .split(/[-_]/g)
     .filter(Boolean)

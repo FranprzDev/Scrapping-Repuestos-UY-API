@@ -10,7 +10,7 @@ export interface VehicleBrandDefinition {
 export interface InferredVehicleBrand {
   id: string;
   label: string;
-  confidence: 'alias' | 'fallback';
+  confidence: 'alias' | 'explicit' | 'fallback';
   evidence?: string;
 }
 
@@ -66,6 +66,11 @@ const ALIASES = VEHICLE_BRANDS.flatMap((definition) =>
 );
 
 export function inferVehicleBrands(product: ProductRecord): InferredVehicleBrand[] {
+  const explicitBrands = inferExplicitVehicleBrands(product.compatibleBrands);
+  if (explicitBrands.length > 0) {
+    return explicitBrands;
+  }
+
   const evidenceText = buildEvidenceText(product);
   const normalizedEvidence = normalizeComparable(evidenceText);
   const matches: InferredVehicleBrand[] = [];
@@ -99,6 +104,28 @@ export function inferVehicleBrands(product: ProductRecord): InferredVehicleBrand
   }];
 }
 
+function inferExplicitVehicleBrands(values?: string[]): InferredVehicleBrand[] {
+  const matches: InferredVehicleBrand[] = [];
+
+  for (const value of values ?? []) {
+    const label = cleanText(value);
+    if (!label) {
+      continue;
+    }
+
+    const normalized = normalizeComparable(label);
+    const known = VEHICLE_BRANDS.find((definition) =>
+      definition.id !== OTHER_VEHICLE_BRAND_ID
+      && definition.aliases.some((alias) => hasAlias(normalized, normalizeComparable(alias))),
+    );
+    matches.push(known
+      ? { id: known.id, label: known.label, confidence: 'alias', evidence: label }
+      : { id: normalized.replace(/\s+/g, '-'), label, confidence: 'explicit', evidence: label });
+  }
+
+  return dedupeBrands(matches);
+}
+
 export function normalizeVehicleBrandId(value?: string): string | undefined {
   const normalized = normalizeComparable(value ?? '');
   if (!normalized) {
@@ -116,6 +143,16 @@ export function normalizeVehicleBrandId(value?: string): string | undefined {
   }
 
   return undefined;
+}
+
+export function resolveVehicleBrandFilterId(value?: string): string | undefined {
+  const known = normalizeVehicleBrandId(value);
+  if (known) {
+    return known;
+  }
+
+  const normalized = normalizeComparable(value ?? '');
+  return normalized ? normalized.replace(/\s+/g, '-') : undefined;
 }
 
 export function getVehicleBrandLabel(id: string): string | undefined {
