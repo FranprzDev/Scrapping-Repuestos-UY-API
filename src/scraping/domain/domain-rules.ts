@@ -287,6 +287,18 @@ function normalizeHostname(value: string): string {
 }
 
 function formatHouseLabel(id: string): string {
+  const explicitLabels: Record<string, string> = {
+    multishop: 'Multishop',
+    cymaco: 'Cymaco',
+    familcar: 'Familcar',
+    larrique: 'Larrique',
+  };
+
+  const explicit = explicitLabels[id];
+  if (explicit) {
+    return explicit;
+  }
+
   return id
     .split(/[-_]/g)
     .filter(Boolean)
