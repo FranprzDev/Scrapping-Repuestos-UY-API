@@ -149,6 +149,8 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
     {
       productName: 'AMORTIGUADOR DEL CITROEN-PEUGEOT',
       price: '1234',
+      compatibleModels: ['C3'],
+      compatibleVersions: ['1.6 2010-2015'],
       sourceUrl: 'https://www.selvir.com.uy/product/amortiguador-demo/',
       extractedAt: new Date().toISOString(),
       provider: 'domain',
@@ -156,6 +158,8 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
     {
       productName: 'AMORTIGUADOR DEL CITROEN-PEUGEOT ACTUALIZADO',
       price: '1234',
+      compatibleModels: ['C3'],
+      compatibleVersions: ['1.6 2010-2015'],
       sourceUrl: 'https://selvir.com.uy/product/amortiguador-demo',
       extractedAt: new Date().toISOString(),
       provider: 'domain',
@@ -168,8 +172,14 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   assert.ok(inventoryInsert);
   assert.equal((inventoryInsert.params[2] as string[]).length, 1);
   assert.deepEqual(inventoryInsert.params[3], ['https://selvir.com.uy/product/amortiguador-demo']);
-  const productJson = JSON.parse((inventoryInsert.params[4] as string[])[0]) as { compatibleBrands?: string[] };
+  const productJson = JSON.parse((inventoryInsert.params[4] as string[])[0]) as {
+    compatibleBrands?: string[];
+    compatibleModels?: string[];
+    compatibleVersions?: string[];
+  };
   assert.deepEqual(productJson.compatibleBrands, ['Citroen', 'Peugeot']);
+  assert.deepEqual(productJson.compatibleModels, ['C3']);
+  assert.deepEqual(productJson.compatibleVersions, ['1.6 2010-2015']);
   assert.ok((inventoryInsert.params[5] as string[])[0].includes('amortiguador'));
 
   const relationDelete = queries.find((query) => /DELETE FROM scraping_inventory_vehicle_brands/i.test(query.sql));

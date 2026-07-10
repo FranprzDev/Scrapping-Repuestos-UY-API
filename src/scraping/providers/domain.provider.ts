@@ -505,6 +505,7 @@ export class DomainProvider implements ScrapingProvider {
           ...product,
           ...(detail ?? {}),
           sourceUrl: product.sourceUrl,
+          compatibleBrands: mergeTextValues(product.compatibleBrands, compatibility.compatibleBrands),
           compatibleVehicles: mergeTextValues(product.compatibleVehicles, compatibility.compatibleVehicles),
           compatibleModels: mergeTextValues(product.compatibleModels, compatibility.compatibleModels),
           compatibleVersions: mergeTextValues(product.compatibleVersions, compatibility.compatibleVersions),

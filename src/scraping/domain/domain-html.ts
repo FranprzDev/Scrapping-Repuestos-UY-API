@@ -248,21 +248,69 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   return candidates;
 }
 
-export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleModels' | 'compatibleVersions'> {
+export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
   const root = parse(html);
   const vehicleTexts = new Set<string>();
+  const brands = new Set<string>();
   const models = new Set<string>();
   const versions = new Set<string>();
+
+  for (const row of root.querySelectorAll('table.rssTable tr.relatedSpecialSearchRow, table tr')) {
+    const cells = new Map(
+      row.querySelectorAll('td[data-label]').map((cell) => [
+        normalizeCompatibilityLabel(cell.getAttribute('data-label')),
+        cleanText(cell.text),
+      ]),
+    );
+    const brand = cells.get('marca');
+    const model = cells.get('modelo');
+    const version = cells.get('motor ano') ?? cells.get('motor / ano');
+    if (!brand && !model && !version) {
+      continue;
+    }
+    if (brand) brands.add(brand);
+    if (model) models.add(model);
+    if (version) versions.add(version);
+    vehicleTexts.add([brand, model, version].filter(Boolean).join(' - '));
+  }
+
+  for (const item of root.querySelectorAll('.blkCaracteristicas .it, .lstCaracteristicas .it')) {
+    const text = cleanText(item.text);
+    if (!text) continue;
+    const modelMatch = text.match(/^modelos?\s+(.+)$/i);
+    const brandMatch = text.match(/^compatibilidad\s+(.+)$/i);
+    if (modelMatch) splitCompatibilityValues(modelMatch[1]).forEach((value) => models.add(value));
+    if (brandMatch) splitCompatibilityValues(brandMatch[1]).forEach((value) => brands.add(value));
+  }
+
+  for (const itemText of root.querySelectorAll('.item-texto')) {
+    let currentBrand: string | undefined;
+    for (const paragraph of itemText.querySelectorAll('p')) {
+      const text = cleanText(paragraph.text);
+      if (!text) continue;
+      const brandMatch = text.match(/^marca\s*:\s*(.+)$/i);
+      const modelMatch = text.match(/^modelos?\s*:\s*(.+)$/i);
+      if (brandMatch) {
+        currentBrand = cleanText(brandMatch[1]);
+        if (currentBrand) brands.add(currentBrand);
+      } else if (modelMatch) {
+        const values = splitCompatibilityValues(modelMatch[1]);
+        values.forEach((value) => models.add(value));
+        if (currentBrand) values.forEach((value) => vehicleTexts.add(`${currentBrand} - ${value}`));
+      }
+    }
+  }
+
   const selectors = [
     '[class*="compat"]', '[id*="compat"]', '[class*="vehicul"]', '[id*="vehicul"]',
-    '[class*="aplicacion"]', '[id*="aplicacion"]', '[class*="modelo"]', '[id*="modelo"]',
-    '[class*="version"]', '[id*="version"]', 'table', 'dl',
+    '[class*="aplicacion"]', '[id*="aplicacion"]', '.modelo', '[id*="modelo"]', '[class*="version"]', '[id*="version"]',
+    '.gendataminitit', 'a.block[href*="showmod"]', '.blkCaracteristicas .it', '.lstCaracteristicas .it', '.item-texto',
   ];
 
   for (const element of root.querySelectorAll(selectors.join(','))) {
     const marker = `${element.getAttribute('class') ?? ''} ${element.getAttribute('id') ?? ''}`;
     const textMarker = `${marker} ${element.text}`;
-    if (!/(compat|veh[ií]culo|aplicaci[oó]n|modelo|versi[oó]n)/i.test(textMarker)) {
+    if (!/(compat|veh[ií]culo|aplicaci[oó]n|modelo|versi[oó]n|showmod)/i.test(`${textMarker} ${element.getAttribute('href') ?? ''}`)) {
       continue;
     }
 
@@ -277,8 +325,13 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
       if (/(compat|veh[ií]culo|aplicaci[oó]n)/i.test(marker)) {
         splitCompatibilityValues(text).forEach((value) => vehicleTexts.add(value));
       }
-      if (/(modelo)/i.test(marker)) {
-        splitCompatibilityValues(text.replace(/^[^:]{0,80}:/, '')).forEach((value) => models.add(value));
+      if (/(modelo|showmod)/i.test(`${marker} ${element.getAttribute('href') ?? ''}`)) {
+        splitCompatibilityValues(text.replace(/^[^:]{0,80}:/, '')).forEach((value) => {
+          models.add(value);
+          if (/showmod/i.test(element.getAttribute('href') ?? '')) {
+            versions.add(value);
+          }
+        });
       }
       if (/versi[oó]n/i.test(marker)) {
         splitCompatibilityValues(text.replace(/^[^:]{0,80}:/, '')).forEach((value) => versions.add(value));
@@ -288,14 +341,19 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
 
   return {
     compatibleVehicles: valuesOrUndefined(vehicleTexts),
+    compatibleBrands: valuesOrUndefined(brands),
     compatibleModels: valuesOrUndefined(models),
     compatibleVersions: valuesOrUndefined(versions),
   };
 }
 
+function normalizeCompatibilityLabel(value?: string): string {
+  return (value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function splitCompatibilityValues(value: string): string[] {
   return value
-    .split(/[\n;|•]+/)
+    .split(/[\n;,|•]+/)
     .map((part) => cleanText(part))
     .filter((part): part is string => Boolean(part))
     .filter((part) => part.length >= 2 && part.length <= 240)

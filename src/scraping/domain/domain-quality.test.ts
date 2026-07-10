@@ -83,6 +83,29 @@ test('extrae compatibilidades de modelo y version desde el detalle', () => {
   assert.deepEqual(compatibility.compatibleVersions, ['1.6 MSI 2017-2022']);
 });
 
+test('extrae contratos de compatibilidad de Larrique, Chaparei, Familcar y GR Frenos', () => {
+  const html = `
+    <table class="rssTable"><tr class="relatedSpecialSearchRow">
+      <td data-label="Marca">CHERY</td><td data-label="Modelo">TIGGO II</td>
+      <td data-label="Motor / Año">2.0 16V/2010-2025</td>
+    </tr></table>
+    <div class="gendataminitit">Modelos compatibles</div>
+    <a class="block" href="javascript:showmod(1)">STRADA VOLCANO 1.3cc 2024-</a>
+    <div class="lstCaracteristicas"><div class="it">Compatibilidad Citroen, Peugeot</div><div class="it">Modelos 206, C3</div></div>
+    <div class="item-texto"><p>Marca: FORD</p><p>Modelos: CORSA, SIERRA</p></div>
+  `;
+
+  const compatibility = extractCompatibilityFromHtml(html);
+
+  assert.deepEqual(compatibility.compatibleBrands, ['CHERY', 'Citroen', 'Peugeot', 'FORD']);
+  assert.ok(compatibility.compatibleModels?.includes('TIGGO II'));
+  assert.ok(compatibility.compatibleModels?.includes('STRADA VOLCANO 1.3cc 2024-'));
+  assert.ok(compatibility.compatibleModels?.includes('206'));
+  assert.ok(compatibility.compatibleModels?.includes('CORSA'));
+  assert.ok(compatibility.compatibleVersions?.includes('2.0 16V/2010-2025'));
+  assert.ok(compatibility.compatibleVersions?.includes('STRADA VOLCANO 1.3cc 2024-'));
+});
+
 test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
