@@ -13,7 +13,7 @@
     "dev": "pnpm run db:migrate && pnpm run start:dev",
     "db:up": "docker compose -f docker-compose.dev.yml up -d postgres",
     "db:down": "docker compose -f docker-compose.dev.yml down",
-    "db:migrate": "DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@localhost:5433/repuestos_uy} node-pg-migrate up",
+    "db:migrate": "DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@localhost:5433/repuestos_uy} node scripts/run-migrations.mjs",
     "dev:local": "pnpm run db:up && pnpm run dev",
     "lint": "tsc --noEmit",
     "test": "pnpm run build && node --test \"dist/**/*.test.js\"",
