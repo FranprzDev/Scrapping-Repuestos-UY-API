@@ -263,15 +263,27 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.id === 'multishop') {
-      return await this.extractMultishopProducts(sourceUrl, maxItems);
+      const result = await this.extractMultishopProducts(sourceUrl, maxItems);
+      return {
+        ...result,
+        products: await this.enrichProductDetails(result.products, rule, maxItems),
+      };
     }
 
     if (rule.id === 'cymaco' || rule.id === 'familcar') {
-      return await this.extractFenicioCatalog(urls, sourceUrl, maxItems, rule.id);
+      const result = await this.extractFenicioCatalog(urls, sourceUrl, maxItems, rule.id);
+      return {
+        ...result,
+        products: await this.enrichProductDetails(result.products, rule, maxItems),
+      };
     }
 
     if (rule.id === 'larrique') {
-      return await this.extractLarriqueCatalog(urls, sourceUrl, maxItems);
+      const result = await this.extractLarriqueCatalog(urls, sourceUrl, maxItems);
+      return {
+        ...result,
+        products: await this.enrichProductDetails(result.products, rule, maxItems),
+      };
     }
 
     const processed = await mapWithConcurrency(urls, this.extractConcurrency, async (url) => {
