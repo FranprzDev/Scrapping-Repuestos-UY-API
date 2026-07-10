@@ -135,7 +135,7 @@ export class ScrapingController {
   }
 
   @Post('scraping/inventory/refresh-existing-links')
-  @HttpCode(200)
+  @HttpCode(202)
   async refreshExistingLinks(@Query('site') site?: string, @Headers('x-inventory-refresh-token') token?: string) {
     if (!site?.trim()) {
       throw new BadRequestException('site es obligatorio para refrescar links existentes');
