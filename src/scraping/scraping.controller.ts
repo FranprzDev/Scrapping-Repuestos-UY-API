@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, Inject, NotFoundException, Param, Post, Query, UnauthorizedException } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
@@ -136,9 +136,13 @@ export class ScrapingController {
 
   @Post('scraping/inventory/refresh-existing-links')
   @HttpCode(200)
-  refreshExistingLinks(@Query('site') site?: string) {
+  refreshExistingLinks(@Query('site') site?: string, @Headers('x-inventory-refresh-token') token?: string) {
     if (!site?.trim()) {
       throw new BadRequestException('site es obligatorio para refrescar links existentes');
+    }
+    const expectedToken = process.env.INVENTORY_REFRESH_TOKEN;
+    if (process.env.NODE_ENV === 'production' && (!expectedToken || token !== expectedToken)) {
+      throw new UnauthorizedException('Token de refresh invalido');
     }
 
     return this.catalogScrapingService.refreshExistingLinks(site);
