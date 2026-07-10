@@ -128,6 +128,12 @@ export class ScrapingController {
     return this.catalogScrapingService.resetCatalogData();
   }
 
+  @Post('scraping/inventory/compatibility-refresh')
+  @HttpCode(200)
+  refreshInventoryCompatibility(@Query('site') site?: string) {
+    return this.catalogScrapingService.refreshCompatibility(site);
+  }
+
   @Post('scraping/quick-run')
   @HttpCode(202)
   quickRunSingleSite(@Body() payload: SingleSiteCatalogScrapeRequestDto) {

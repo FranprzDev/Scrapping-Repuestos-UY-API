@@ -1,6 +1,9 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES } from '../domain/domain-rules';
+import { extractCompatibilityFromHtml } from '../domain/domain-html';
+import { fetchHtml } from '../domain/http-client';
+import { mergeCompatibleBrands } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 
@@ -19,6 +22,12 @@ type InventoryRow = {
   created_at: string;
   updated_at: string;
   last_seen_at: string;
+};
+
+type CompatibilityRefreshRow = {
+  id: string;
+  source_url: string;
+  product: ProductRecord;
 };
 
 export interface InventoryQueryFilters {
@@ -181,6 +190,80 @@ export class InventoryStoreService implements OnModuleInit {
       [site],
     );
     return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async refreshCompatibility(site?: string) {
+    const pending = await this.postgresService.query<CompatibilityRefreshRow>(
+      `
+      SELECT id, source_url, product
+      FROM scraping_inventory
+      WHERE source_url IS NOT NULL
+        AND ($1::text IS NULL OR site ILIKE '%' || $1 || '%')
+        AND (
+          NOT (product ? 'compatibleModels')
+          OR jsonb_array_length(COALESCE(product->'compatibleModels', '[]'::jsonb)) = 0
+          OR NOT (product ? 'compatibleVersions')
+          OR jsonb_array_length(COALESCE(product->'compatibleVersions', '[]'::jsonb)) = 0
+        )
+      ORDER BY updated_at DESC
+      `,
+      [site?.trim() || null],
+    );
+
+    let enriched = 0;
+    let failed = 0;
+    const relationItems: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }> = [];
+
+    for (let index = 0; index < pending.rows.length; index += 8) {
+      const batch = pending.rows.slice(index, index + 8);
+      const results = await Promise.all(batch.map(async (row) => {
+        try {
+          const response = await fetchHtml(row.source_url);
+          const compatibility = extractCompatibilityFromHtml(response.body);
+          if (!compatibility.compatibleModels?.length && !compatibility.compatibleVersions?.length) {
+            return undefined;
+          }
+
+          const product: ProductRecord = {
+            ...row.product,
+            compatibleBrands: mergeCompatibleBrands(row.product.compatibleBrands, compatibility.compatibleBrands),
+            compatibleVehicles: mergeTextValues(row.product.compatibleVehicles, compatibility.compatibleVehicles),
+            compatibleModels: mergeTextValues(row.product.compatibleModels, compatibility.compatibleModels),
+            compatibleVersions: mergeTextValues(row.product.compatibleVersions, compatibility.compatibleVersions),
+          };
+          return { row, product, vehicleBrands: inferVehicleBrands(product) };
+        } catch {
+          return null;
+        }
+      }));
+
+      for (const result of results) {
+        if (result === null) {
+          failed += 1;
+          continue;
+        }
+        if (!result) continue;
+
+        await this.postgresService.query(
+          `
+          UPDATE scraping_inventory
+          SET product = $2::jsonb,
+              search_text = $3,
+              updated_at = NOW()
+          WHERE id = $1
+          `,
+          [result.row.id, JSON.stringify(result.product), buildProductSearchText(result.product)],
+        );
+        relationItems.push({ id: result.row.id, vehicleBrands: result.vehicleBrands });
+        enriched += 1;
+      }
+    }
+
+    if (relationItems.length > 0) {
+      await this.syncVehicleBrandRelations(relationItems);
+    }
+
+    return { scanned: pending.rows.length, enriched, failed };
   }
 
   async getStats(): Promise<InventoryStats> {
@@ -627,6 +710,15 @@ function buildProductSearchText(product: ProductRecord): string {
     .replace(/([a-z])\1+/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = value?.trim();
+    if (cleaned) values.set(cleaned.toLowerCase(), cleaned);
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 function normalizeLimit(value?: number): number | undefined {

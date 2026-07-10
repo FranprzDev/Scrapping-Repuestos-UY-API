@@ -275,12 +275,16 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
   }
 
   for (const item of root.querySelectorAll('.blkCaracteristicas .it, .lstCaracteristicas .it')) {
-    const text = cleanText(item.text);
+    const title = cleanText(item.querySelector('.tit')?.text);
+    const value = cleanText(item.querySelector('.val')?.text);
+    const text = cleanText(title && value ? `${title} ${value}` : item.text);
     if (!text) continue;
     const modelMatch = text.match(/^modelos?\s+(.+)$/i);
     const brandMatch = text.match(/^compatibilidad\s+(.+)$/i);
+    const versionMatch = text.match(/^versiones?\s+(.+)$/i);
     if (modelMatch) splitCompatibilityValues(modelMatch[1]).forEach((value) => models.add(value));
     if (brandMatch) splitCompatibilityValues(brandMatch[1]).forEach((value) => brands.add(value));
+    if (versionMatch) splitCompatibilityValues(versionMatch[1]).forEach((value) => versions.add(value));
   }
 
   for (const itemText of root.querySelectorAll('.item-texto')) {

@@ -91,7 +91,7 @@ test('extrae contratos de compatibilidad de Larrique, Chaparei, Familcar y GR Fr
     </tr></table>
     <div class="gendataminitit">Modelos compatibles</div>
     <a class="block" href="javascript:showmod(1)">STRADA VOLCANO 1.3cc 2024-</a>
-    <div class="lstCaracteristicas"><div class="it">Compatibilidad Citroen, Peugeot</div><div class="it">Modelos 206, C3</div></div>
+    <div class="lstCaracteristicas"><div class="it">Compatibilidad Citroen, Peugeot</div><div class="it">Modelos 206, C3</div><div class="it">Versiones FIT 2018-</div></div>
     <div class="item-texto"><p>Marca: FORD</p><p>Modelos: CORSA, SIERRA</p></div>
     <div class="filtro__cont--form--campo">Modelo <select id="modelox"><option>Todos los Modelos</option></select></div>
     <div class="producto__info--modelos"><h3>Modelos Compatibles:</h3><div class="producto__info--modelos--linea">VOLKSWAGEN: GOLF, PASSAT</div></div>
@@ -110,6 +110,21 @@ test('extrae contratos de compatibilidad de Larrique, Chaparei, Familcar y GR Fr
   assert.equal(compatibility.compatibleBrands?.includes('Diámetro'), false);
   assert.ok(compatibility.compatibleVersions?.includes('2.0 16V/2010-2025'));
   assert.ok(compatibility.compatibleVersions?.includes('STRADA VOLCANO 1.3cc 2024-'));
+  assert.ok(compatibility.compatibleVersions?.includes('FIT 2018-'));
+});
+
+test('extrae compatibilidad del detalle real de Familcar', () => {
+  const compatibility = extractCompatibilityFromHtml(`
+    <div class="lstCaracteristicas">
+      <div class="it" data-codigo="compatibilidad"><span class="tit">Compatibilidad</span><span class="val">Honda</span></div>
+      <div class="it" data-codigo="modelos"><span class="tit">Modelos</span><span class="val">Civic, CRV, Fit</span></div>
+      <div class="it" data-codigo="versiones"><span class="tit">Versiones</span><span class="val">FIT 2018-</span></div>
+    </div>
+  `);
+
+  assert.deepEqual(compatibility.compatibleBrands, ['Honda']);
+  assert.deepEqual(compatibility.compatibleModels, ['Civic', 'CRV', 'Fit']);
+  assert.deepEqual(compatibility.compatibleVersions, ['FIT 2018-']);
 });
 
 test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {
