@@ -831,8 +831,14 @@ function renderInventoryPage(): string {
           const vehicleBrands = Array.isArray(product.compatibleBrands) && product.compatibleBrands.length
             ? '<div class="muted">' + escapeHtml(product.compatibleBrands.join(', ')) + '</div>'
             : '';
+          const vehicleModels = Array.isArray(product.compatibleModels) && product.compatibleModels.length
+            ? '<div class="muted">Modelos: ' + escapeHtml(product.compatibleModels.join(', ')) + '</div>'
+            : '';
+          const vehicleVersions = Array.isArray(product.compatibleVersions) && product.compatibleVersions.length
+            ? '<div class="muted">Versiones: ' + escapeHtml(product.compatibleVersions.join(', ')) + '</div>'
+            : '';
           return '<tr>' +
-            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + vehicleBrands + '</div></td>' +
+            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + vehicleBrands + vehicleModels + vehicleVersions + '</div></td>' +
             '<td class="right"><span class="price-label">' + escapeHtml(formatPrice(product.price)) + '</span></td>' +
             '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
           '</tr>';
