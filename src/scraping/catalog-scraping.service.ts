@@ -6,7 +6,7 @@ import { type CatalogJobProgress, type CatalogJobProgressReporter, type CatalogJ
 import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
 import { countQualityWarnings, isAllowedCatalogUrl, mergeCompatibleBrands, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
-import { type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
+import { type ExistingLinksRefreshReporter, type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
@@ -279,6 +279,14 @@ export class CatalogScrapingService {
 
   async getVehicleBrandStats() {
     return this.inventoryStoreService.getVehicleBrandStats();
+  }
+
+  async refreshCompatibility(site?: string) {
+    return this.inventoryStoreService.refreshCompatibility(site);
+  }
+
+  async refreshExistingLinks(site: string, onProgress?: ExistingLinksRefreshReporter) {
+    return this.inventoryStoreService.refreshExistingLinks(site, onProgress);
   }
 
   async resetCatalogData() {
@@ -870,10 +878,24 @@ function mergeProducts(base: ProductRecord[], incoming: ProductRecord[]): Produc
       stock: item.stock ?? previous.stock,
       availability: item.availability ?? previous.availability,
       compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, item.compatibleBrands),
+      compatibleVehicles: mergeTextValues(previous.compatibleVehicles, item.compatibleVehicles),
+      compatibleModels: mergeTextValues(previous.compatibleModels, item.compatibleModels),
+      compatibleVersions: mergeTextValues(previous.compatibleVersions, item.compatibleVersions),
     });
   }
 
   return Array.from(merged.values());
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = value?.trim();
+    if (cleaned) {
+      values.set(cleaned.toLowerCase(), cleaned);
+    }
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 function buildSiteTrace(

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, Inject, NotFoundException, Param, Post, Query, UnauthorizedException } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
@@ -126,6 +126,31 @@ export class ScrapingController {
   @HttpCode(200)
   async resetInventory() {
     return this.catalogScrapingService.resetCatalogData();
+  }
+
+  @Post('scraping/inventory/compatibility-refresh')
+  @HttpCode(200)
+  refreshInventoryCompatibility(@Query('site') site?: string) {
+    return this.catalogScrapingService.refreshCompatibility(site);
+  }
+
+  @Post('scraping/inventory/refresh-existing-links')
+  @HttpCode(202)
+  async refreshExistingLinks(@Query('site') site?: string, @Headers('x-inventory-refresh-token') token?: string) {
+    if (!site?.trim()) {
+      throw new BadRequestException('site es obligatorio para refrescar links existentes');
+    }
+    const expectedToken = process.env.INVENTORY_REFRESH_TOKEN;
+    if (process.env.NODE_ENV === 'production' && (!expectedToken || token !== expectedToken)) {
+      throw new UnauthorizedException('Token de refresh invalido');
+    }
+
+    const job = await this.jobQueueService.enqueue('refresh-existing-links', { site: site.trim() });
+    return {
+      message: 'Refresh de links existentes encolado',
+      jobId: job.id,
+      status: job.status,
+    };
   }
 
   @Post('scraping/quick-run')
@@ -261,7 +286,11 @@ function buildPublicJobView(job: ScrapingJob) {
 }
 
 function normalizeJobSites(payload: ScrapingOperationPayload) {
-  const urls = Array.isArray(payload.urls) ? payload.urls : [];
+  const urls = Array.isArray(payload.urls)
+    ? payload.urls
+    : typeof payload.site === 'string'
+      ? [payload.site]
+      : [];
   return urls.map((url) => formatCatalogSite(url));
 }
 
@@ -831,8 +860,14 @@ function renderInventoryPage(): string {
           const vehicleBrands = Array.isArray(product.compatibleBrands) && product.compatibleBrands.length
             ? '<div class="muted">' + escapeHtml(product.compatibleBrands.join(', ')) + '</div>'
             : '';
+          const vehicleModels = Array.isArray(product.compatibleModels) && product.compatibleModels.length
+            ? '<div class="muted">Modelos: ' + escapeHtml(product.compatibleModels.join(', ')) + '</div>'
+            : '';
+          const vehicleVersions = Array.isArray(product.compatibleVersions) && product.compatibleVersions.length
+            ? '<div class="muted">Versiones: ' + escapeHtml(product.compatibleVersions.join(', ')) + '</div>'
+            : '';
           return '<tr>' +
-            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + vehicleBrands + '</div></td>' +
+            '<td><div class="product-cell">' + url + (product.brand ? '<div class="muted">' + escapeHtml(product.brand) + '</div>' : '') + vehicleBrands + vehicleModels + vehicleVersions + '</div></td>' +
             '<td class="right"><span class="price-label">' + escapeHtml(formatPrice(product.price)) + '</span></td>' +
             '<td>' + escapeHtml(normalizeHouseLabel(product.site || '-')) + '</td>' +
           '</tr>';

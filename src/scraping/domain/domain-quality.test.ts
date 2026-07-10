@@ -5,6 +5,7 @@ import { findDomainRule } from './domain-rules';
 import {
   buildGrFrenosBrandUrl,
   extractCandidateLinks,
+  extractCompatibilityFromHtml,
   extractChapareiBrandsFromHtml,
   extractGrFrenosBrandsFromHtml,
   extractGrFrenosListingSummary,
@@ -62,6 +63,68 @@ test('rechaza productos agotados en cards tipo Chaparei', () => {
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
   assert.equal(products.length, 0);
+});
+
+test('extrae compatibilidades de modelo y version desde el detalle', () => {
+  const compatibility = extractCompatibilityFromHtml(`
+    <section class="compatibility">
+      <h3>Vehiculos compatibles</h3>
+      <p>Volkswagen Gol; Volkswagen Saveiro</p>
+      <div class="modelo">Modelo: Gol</div>
+      <div class="version">Version: 1.6 MSI 2017-2022</div>
+    </section>
+  `);
+
+  assert.deepEqual(compatibility.compatibleVehicles, [
+    'Volkswagen Gol',
+    'Volkswagen Saveiro',
+  ]);
+  assert.deepEqual(compatibility.compatibleModels, ['Gol']);
+  assert.deepEqual(compatibility.compatibleVersions, ['1.6 MSI 2017-2022']);
+});
+
+test('extrae contratos de compatibilidad de Larrique, Chaparei, Familcar y GR Frenos', () => {
+  const html = `
+    <table class="rssTable"><tr class="relatedSpecialSearchRow">
+      <td data-label="Marca">CHERY</td><td data-label="Modelo">TIGGO II</td>
+      <td data-label="Motor / Año">2.0 16V/2010-2025</td>
+    </tr></table>
+    <div class="gendataminitit">Modelos compatibles</div>
+    <a class="block" href="javascript:showmod(1)">STRADA VOLCANO 1.3cc 2024-</a>
+    <div class="lstCaracteristicas"><div class="it">Compatibilidad Citroen, Peugeot</div><div class="it">Modelos 206, C3</div><div class="it">Versiones FIT 2018-</div></div>
+    <div class="item-texto"><p>Marca: FORD</p><p>Modelos: CORSA, SIERRA</p></div>
+    <div class="filtro__cont--form--campo">Modelo <select id="modelox"><option>Todos los Modelos</option></select></div>
+    <div class="producto__info--modelos"><h3>Modelos Compatibles:</h3><div class="producto__info--modelos--linea">VOLKSWAGEN: GOLF, PASSAT</div></div>
+    <div class="producto__info--modelos"><h3>Detalles del Producto:</h3><div class="producto__info--modelos--linea">Diámetro: 312 mm</div></div>
+  `;
+
+  const compatibility = extractCompatibilityFromHtml(html);
+
+  assert.deepEqual(compatibility.compatibleBrands, ['CHERY', 'Citroen', 'Peugeot', 'FORD', 'VOLKSWAGEN']);
+  assert.ok(compatibility.compatibleModels?.includes('TIGGO II'));
+  assert.ok(compatibility.compatibleModels?.includes('STRADA VOLCANO 1.3cc 2024-'));
+  assert.ok(compatibility.compatibleModels?.includes('206'));
+  assert.ok(compatibility.compatibleModels?.includes('CORSA'));
+  assert.ok(compatibility.compatibleModels?.includes('GOLF'));
+  assert.equal(compatibility.compatibleModels?.includes('Todos los Modelos'), false);
+  assert.equal(compatibility.compatibleBrands?.includes('Diámetro'), false);
+  assert.ok(compatibility.compatibleVersions?.includes('2.0 16V/2010-2025'));
+  assert.ok(compatibility.compatibleVersions?.includes('STRADA VOLCANO 1.3cc 2024-'));
+  assert.ok(compatibility.compatibleVersions?.includes('FIT 2018-'));
+});
+
+test('extrae compatibilidad del detalle real de Familcar', () => {
+  const compatibility = extractCompatibilityFromHtml(`
+    <div class="lstCaracteristicas">
+      <div class="it" data-codigo="compatibilidad"><span class="tit">Compatibilidad</span><span class="val">Honda</span></div>
+      <div class="it" data-codigo="modelos"><span class="tit">Modelos</span><span class="val">Civic, CRV, Fit</span></div>
+      <div class="it" data-codigo="versiones"><span class="tit">Versiones</span><span class="val">FIT 2018-</span></div>
+    </div>
+  `);
+
+  assert.deepEqual(compatibility.compatibleBrands, ['Honda']);
+  assert.deepEqual(compatibility.compatibleModels, ['Civic', 'CRV', 'Fit']);
+  assert.deepEqual(compatibility.compatibleVersions, ['FIT 2018-']);
 });
 
 test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {

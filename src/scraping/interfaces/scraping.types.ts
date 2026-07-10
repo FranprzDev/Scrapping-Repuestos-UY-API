@@ -1,4 +1,4 @@
-export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run';
+export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run' | 'refresh-existing-links';
 
 export type ProviderName = 'domain' | 'playwright' | 'custom';
 
@@ -28,6 +28,8 @@ export interface ProductRecord {
   imageUrl?: string;
   imagePath?: string;
   compatibleVehicles?: string[];
+  compatibleModels?: string[];
+  compatibleVersions?: string[];
   compatibleBrands?: string[];
   shippingInfo?: string[];
   attributes?: Record<string, string>;

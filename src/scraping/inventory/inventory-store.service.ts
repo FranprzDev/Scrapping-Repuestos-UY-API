@@ -1,6 +1,9 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
-import { ADMITTED_HOUSES } from '../domain/domain-rules';
+import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
+import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
+import { fetchHtml } from '../domain/http-client';
+import { mergeCompatibleBrands } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 
@@ -19,6 +22,12 @@ type InventoryRow = {
   created_at: string;
   updated_at: string;
   last_seen_at: string;
+};
+
+type CompatibilityRefreshRow = {
+  id: string;
+  source_url: string;
+  product: ProductRecord;
 };
 
 export interface InventoryQueryFilters {
@@ -50,6 +59,20 @@ export interface VehicleBrandInventoryStats {
   total: number;
 }
 
+export interface ExistingLinksRefreshProgress {
+  site: string;
+  status: 'success' | 'error';
+  stage: 'starting' | 'crawling' | 'done' | 'error';
+  timeWorkingMs: number;
+  quantityScrapped: number;
+  pagesUsedForExtract: number;
+  rawProducts: number;
+  normalizedProducts: number;
+  message?: string;
+}
+
+export type ExistingLinksRefreshReporter = (progress: ExistingLinksRefreshProgress) => Promise<void> | void;
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -71,6 +94,7 @@ export class InventoryStoreService implements OnModuleInit {
       site: string;
       sourceUrl: string;
       product: string;
+      searchText: string;
       vehicleBrands: ReturnType<typeof inferVehicleBrands>;
     }>();
 
@@ -91,10 +115,11 @@ export class InventoryStoreService implements OnModuleInit {
           site,
           sourceUrl,
           product: JSON.stringify(enrichedProduct),
+          searchText: buildProductSearchText(enrichedProduct),
           vehicleBrands,
         };
       })
-      .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
+      .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; searchText: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
       .forEach((item) => payloadBySourceUrl.set(item.sourceUrl, item));
 
     const payload = Array.from(payloadBySourceUrl.values());
@@ -103,9 +128,9 @@ export class InventoryStoreService implements OnModuleInit {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
       const upserted = await this.postgresService.query<{ id: string; sourceUrl: string; created: boolean }>(
         `
-        INSERT INTO scraping_inventory (id, site, source_url, product, created_at, updated_at, last_seen_at)
-        SELECT item.id, item.site, item.source_url, item.product::jsonb, $1::timestamptz, $1::timestamptz, $1::timestamptz
-        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS item(id, site, source_url, product)
+        INSERT INTO scraping_inventory (id, site, source_url, product, search_text, created_at, updated_at, last_seen_at)
+        SELECT item.id, item.site, item.source_url, item.product::jsonb, item.search_text, $1::timestamptz, $1::timestamptz, $1::timestamptz
+        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) AS item(id, site, source_url, product, search_text)
         ON CONFLICT (source_url)
         DO UPDATE SET
           site = EXCLUDED.site,
@@ -120,6 +145,7 @@ export class InventoryStoreService implements OnModuleInit {
           chunk.map((item) => item.site),
           chunk.map((item) => item.sourceUrl),
           chunk.map((item) => item.product),
+          chunk.map((item) => item.searchText),
         ],
       );
 
@@ -178,6 +204,191 @@ export class InventoryStoreService implements OnModuleInit {
       [site],
     );
     return Number(result.rows[0]?.total ?? 0);
+  }
+
+  async refreshCompatibility(site?: string) {
+    const pending = await this.postgresService.query<CompatibilityRefreshRow>(
+      `
+      SELECT id, source_url, product
+      FROM scraping_inventory
+      WHERE source_url IS NOT NULL
+        AND ($1::text IS NULL OR site ILIKE '%' || $1 || '%')
+        AND (
+          NOT (product ? 'compatibleModels')
+          OR jsonb_array_length(COALESCE(product->'compatibleModels', '[]'::jsonb)) = 0
+          OR NOT (product ? 'compatibleVersions')
+          OR jsonb_array_length(COALESCE(product->'compatibleVersions', '[]'::jsonb)) = 0
+        )
+      ORDER BY updated_at DESC
+      `,
+      [site?.trim() || null],
+    );
+
+    let enriched = 0;
+    let failed = 0;
+    const relationItems: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }> = [];
+
+    for (let index = 0; index < pending.rows.length; index += 8) {
+      const batch = pending.rows.slice(index, index + 8);
+      const results = await Promise.all(batch.map(async (row) => {
+        try {
+          const response = await fetchHtml(row.source_url);
+          const compatibility = extractCompatibilityFromHtml(response.body);
+          if (!compatibility.compatibleModels?.length && !compatibility.compatibleVersions?.length) {
+            return undefined;
+          }
+
+          const product: ProductRecord = {
+            ...row.product,
+            compatibleBrands: mergeCompatibleBrands(row.product.compatibleBrands, compatibility.compatibleBrands),
+            compatibleVehicles: mergeTextValues(row.product.compatibleVehicles, compatibility.compatibleVehicles),
+            compatibleModels: mergeTextValues(row.product.compatibleModels, compatibility.compatibleModels),
+            compatibleVersions: mergeTextValues(row.product.compatibleVersions, compatibility.compatibleVersions),
+          };
+          return { row, product, vehicleBrands: inferVehicleBrands(product) };
+        } catch {
+          return null;
+        }
+      }));
+
+      for (const result of results) {
+        if (result === null) {
+          failed += 1;
+          continue;
+        }
+        if (!result) continue;
+
+        await this.postgresService.query(
+          `
+          UPDATE scraping_inventory
+          SET product = $2::jsonb,
+              search_text = $3,
+              updated_at = NOW()
+          WHERE id = $1
+          `,
+          [result.row.id, JSON.stringify(result.product), buildProductSearchText(result.product)],
+        );
+        relationItems.push({ id: result.row.id, vehicleBrands: result.vehicleBrands });
+        enriched += 1;
+      }
+    }
+
+    if (relationItems.length > 0) {
+      await this.syncVehicleBrandRelations(relationItems);
+    }
+
+    return { scanned: pending.rows.length, enriched, failed };
+  }
+
+  async refreshExistingLinks(site: string, onProgress?: ExistingLinksRefreshReporter) {
+    const normalizedSite = site.trim();
+    const startedAt = Date.now();
+    const pending = await this.postgresService.query<CompatibilityRefreshRow>(
+      `
+      SELECT id, source_url, product
+      FROM scraping_inventory
+      WHERE source_url IS NOT NULL
+        AND site ILIKE '%' || $1 || '%'
+      ORDER BY updated_at DESC
+      `,
+      [normalizedSite],
+    );
+
+    await onProgress?.({
+      site: normalizedSite,
+      status: 'success',
+      stage: 'starting',
+      timeWorkingMs: 0,
+      quantityScrapped: 0,
+      pagesUsedForExtract: pending.rows.length,
+      rawProducts: pending.rows.length,
+      normalizedProducts: 0,
+    });
+
+    let refreshed = 0;
+    let failed = 0;
+    const relationItems: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }> = [];
+
+    for (let index = 0; index < pending.rows.length; index += 4) {
+      const batch = pending.rows.slice(index, index + 4);
+      const results = await Promise.all(batch.map(async (row) => {
+        try {
+          const response = await fetchHtml(row.source_url);
+          const rule = findDomainRule(row.source_url);
+          const detail = rule
+            ? extractProductsFromHtml(response.body, response.finalUrl, 'domain', rule)
+                .find((item) => canonicalProductUrl(item.sourceUrl) === canonicalProductUrl(row.source_url))
+            : undefined;
+          const compatibility = extractCompatibilityFromHtml(response.body);
+          const product: ProductRecord = {
+            ...row.product,
+            ...(detail ?? {}),
+            sourceUrl: row.source_url,
+            compatibleBrands: mergeCompatibleBrands(row.product.compatibleBrands, compatibility.compatibleBrands),
+            compatibleVehicles: mergeTextValues(row.product.compatibleVehicles, compatibility.compatibleVehicles),
+            compatibleModels: mergeTextValues(row.product.compatibleModels, compatibility.compatibleModels),
+            compatibleVersions: mergeTextValues(row.product.compatibleVersions, compatibility.compatibleVersions),
+          };
+          const changed = Boolean(detail)
+            || Boolean(compatibility.compatibleModels?.length)
+            || Boolean(compatibility.compatibleVersions?.length);
+          return changed ? { row, product, vehicleBrands: inferVehicleBrands(product) } : undefined;
+        } catch {
+          return null;
+        }
+      }));
+
+      for (const result of results) {
+        if (result === null) {
+          failed += 1;
+          continue;
+        }
+        if (!result) continue;
+
+        await this.postgresService.query(
+          `
+          UPDATE scraping_inventory
+          SET product = $2::jsonb,
+              search_text = $3,
+              updated_at = NOW()
+          WHERE id = $1
+          `,
+          [result.row.id, JSON.stringify(result.product), buildProductSearchText(result.product)],
+        );
+        relationItems.push({ id: result.row.id, vehicleBrands: result.vehicleBrands });
+        refreshed += 1;
+      }
+
+      await onProgress?.({
+        site: normalizedSite,
+        status: 'success',
+        stage: 'crawling',
+        timeWorkingMs: Date.now() - startedAt,
+        quantityScrapped: refreshed,
+        pagesUsedForExtract: pending.rows.length,
+        rawProducts: index + batch.length,
+        normalizedProducts: refreshed,
+        message: `Procesados ${index + batch.length} de ${pending.rows.length}`,
+      });
+    }
+
+    if (relationItems.length > 0) {
+      await this.syncVehicleBrandRelations(relationItems);
+    }
+
+    await onProgress?.({
+      site: normalizedSite,
+      status: failed > 0 ? 'error' : 'success',
+      stage: failed > 0 ? 'error' : 'done',
+      timeWorkingMs: Date.now() - startedAt,
+      quantityScrapped: refreshed,
+      pagesUsedForExtract: pending.rows.length,
+      rawProducts: pending.rows.length,
+      normalizedProducts: refreshed,
+      message: failed > 0 ? `Finalizado con ${failed} errores` : 'Finalizado',
+    });
+
+    return { site: normalizedSite, scanned: pending.rows.length, refreshed, failed };
   }
 
   async getStats(): Promise<InventoryStats> {
@@ -464,36 +675,9 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   if (search) {
     const tokens = normalizeSearchTokens(search);
     if (tokens.length) {
-      const searchableText = `
-        regexp_replace(
-          regexp_replace(
-            regexp_replace(
-              lower(
-                CONCAT_WS(
-                  ' ',
-                  COALESCE(product->>'productName', ''),
-                  COALESCE(product->>'brand', ''),
-                  COALESCE(product->>'category', ''),
-                  COALESCE(product->>'description', '')
-                )
-              ),
-              '[^[:alnum:]]+',
-              ' ',
-              'g'
-            ),
-            '([[:alpha:]])\\1+',
-            '\\1',
-            'g'
-          ),
-          '\\s+',
-          ' ',
-          'g'
-        )
-      `;
-
       for (const token of tokens) {
         params.push(`%${token.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
-        conditions.push(`${searchableText} LIKE $${params.length} ESCAPE '\\'`);
+        conditions.push(`search_text LIKE $${params.length} ESCAPE '\\'`);
       }
     }
   }
@@ -630,6 +814,36 @@ function normalizeSearchTokens(search: string): string[] {
         .trim(),
     )
     .filter((token) => token.length >= 2);
+}
+
+function buildProductSearchText(product: ProductRecord): string {
+  return [
+    product.productName,
+    product.brand,
+    product.category,
+    product.description,
+    product.compatibleVehicles?.join(' '),
+    product.compatibleModels?.join(' '),
+    product.compatibleVersions?.join(' '),
+    product.compatibleBrands?.join(' '),
+    Object.values(product.attributes ?? {}).join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/([a-z])\1+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = value?.trim();
+    if (cleaned) values.set(cleaned.toLowerCase(), cleaned);
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 function normalizeLimit(value?: number): number | undefined {
