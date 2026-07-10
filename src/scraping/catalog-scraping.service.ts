@@ -285,6 +285,10 @@ export class CatalogScrapingService {
     return this.inventoryStoreService.refreshCompatibility(site);
   }
 
+  async refreshExistingLinks(site: string) {
+    return this.inventoryStoreService.refreshExistingLinks(site);
+  }
+
   async resetCatalogData() {
     await this.postgresService.query('BEGIN');
     try {

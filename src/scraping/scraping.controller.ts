@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
@@ -132,6 +132,16 @@ export class ScrapingController {
   @HttpCode(200)
   refreshInventoryCompatibility(@Query('site') site?: string) {
     return this.catalogScrapingService.refreshCompatibility(site);
+  }
+
+  @Post('scraping/inventory/refresh-existing-links')
+  @HttpCode(200)
+  refreshExistingLinks(@Query('site') site?: string) {
+    if (!site?.trim()) {
+      throw new BadRequestException('site es obligatorio para refrescar links existentes');
+    }
+
+    return this.catalogScrapingService.refreshExistingLinks(site);
   }
 
   @Post('scraping/quick-run')

@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
-import { ADMITTED_HOUSES } from '../domain/domain-rules';
-import { extractCompatibilityFromHtml } from '../domain/domain-html';
+import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
+import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
 import { mergeCompatibleBrands } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
@@ -264,6 +264,81 @@ export class InventoryStoreService implements OnModuleInit {
     }
 
     return { scanned: pending.rows.length, enriched, failed };
+  }
+
+  async refreshExistingLinks(site: string) {
+    const normalizedSite = site.trim();
+    const pending = await this.postgresService.query<CompatibilityRefreshRow>(
+      `
+      SELECT id, source_url, product
+      FROM scraping_inventory
+      WHERE source_url IS NOT NULL
+        AND site ILIKE '%' || $1 || '%'
+      ORDER BY updated_at DESC
+      `,
+      [normalizedSite],
+    );
+
+    let refreshed = 0;
+    let failed = 0;
+    const relationItems: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }> = [];
+
+    for (let index = 0; index < pending.rows.length; index += 4) {
+      const batch = pending.rows.slice(index, index + 4);
+      const results = await Promise.all(batch.map(async (row) => {
+        try {
+          const response = await fetchHtml(row.source_url);
+          const rule = findDomainRule(row.source_url);
+          const detail = rule
+            ? extractProductsFromHtml(response.body, response.finalUrl, 'domain', rule)
+                .find((item) => canonicalProductUrl(item.sourceUrl) === canonicalProductUrl(row.source_url))
+            : undefined;
+          const compatibility = extractCompatibilityFromHtml(response.body);
+          const product: ProductRecord = {
+            ...row.product,
+            ...(detail ?? {}),
+            sourceUrl: row.source_url,
+            compatibleBrands: mergeCompatibleBrands(row.product.compatibleBrands, compatibility.compatibleBrands),
+            compatibleVehicles: mergeTextValues(row.product.compatibleVehicles, compatibility.compatibleVehicles),
+            compatibleModels: mergeTextValues(row.product.compatibleModels, compatibility.compatibleModels),
+            compatibleVersions: mergeTextValues(row.product.compatibleVersions, compatibility.compatibleVersions),
+          };
+          const changed = Boolean(detail)
+            || Boolean(compatibility.compatibleModels?.length)
+            || Boolean(compatibility.compatibleVersions?.length);
+          return changed ? { row, product, vehicleBrands: inferVehicleBrands(product) } : undefined;
+        } catch {
+          return null;
+        }
+      }));
+
+      for (const result of results) {
+        if (result === null) {
+          failed += 1;
+          continue;
+        }
+        if (!result) continue;
+
+        await this.postgresService.query(
+          `
+          UPDATE scraping_inventory
+          SET product = $2::jsonb,
+              search_text = $3,
+              updated_at = NOW()
+          WHERE id = $1
+          `,
+          [result.row.id, JSON.stringify(result.product), buildProductSearchText(result.product)],
+        );
+        relationItems.push({ id: result.row.id, vehicleBrands: result.vehicleBrands });
+        refreshed += 1;
+      }
+    }
+
+    if (relationItems.length > 0) {
+      await this.syncVehicleBrandRelations(relationItems);
+    }
+
+    return { site: normalizedSite, scanned: pending.rows.length, refreshed, failed };
   }
 
   async getStats(): Promise<InventoryStats> {
