@@ -28,6 +28,8 @@ export interface ProductRecord {
   imageUrl?: string;
   imagePath?: string;
   compatibleVehicles?: string[];
+  compatibleModels?: string[];
+  compatibleVersions?: string[];
   compatibleBrands?: string[];
   shippingInfo?: string[];
   attributes?: Record<string, string>;

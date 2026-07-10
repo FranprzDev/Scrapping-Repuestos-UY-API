@@ -53,6 +53,21 @@ test('getFilteredPage limita el resultado a 200 y aplica offset', async () => {
   assert.deepEqual(capturedParams, [200, 15]);
 });
 
+test('getFilteredPage busca sobre el texto materializado', async () => {
+  let capturedSql = '';
+  const service = new InventoryStoreService({
+    async query(sql: string) {
+      capturedSql = sql;
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({ search: 'Volkswagen Gol' }, { limit: 20 });
+
+  assert.ok(capturedSql.includes('search_text LIKE'));
+  assert.ok(!capturedSql.includes('regexp_replace('));
+});
+
 test('getFilteredPage normaliza el filtro por sitio sin depender de www', async () => {
   let capturedSql = '';
   let capturedParams: unknown[] = [];
@@ -155,6 +170,7 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   assert.deepEqual(inventoryInsert.params[3], ['https://selvir.com.uy/product/amortiguador-demo']);
   const productJson = JSON.parse((inventoryInsert.params[4] as string[])[0]) as { compatibleBrands?: string[] };
   assert.deepEqual(productJson.compatibleBrands, ['Citroen', 'Peugeot']);
+  assert.ok((inventoryInsert.params[5] as string[])[0].includes('amortiguador'));
 
   const relationDelete = queries.find((query) => /DELETE FROM scraping_inventory_vehicle_brands/i.test(query.sql));
   assert.ok(relationDelete);

@@ -870,10 +870,24 @@ function mergeProducts(base: ProductRecord[], incoming: ProductRecord[]): Produc
       stock: item.stock ?? previous.stock,
       availability: item.availability ?? previous.availability,
       compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, item.compatibleBrands),
+      compatibleVehicles: mergeTextValues(previous.compatibleVehicles, item.compatibleVehicles),
+      compatibleModels: mergeTextValues(previous.compatibleModels, item.compatibleModels),
+      compatibleVersions: mergeTextValues(previous.compatibleVersions, item.compatibleVersions),
     });
   }
 
   return Array.from(merged.values());
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = value?.trim();
+    if (cleaned) {
+      values.set(cleaned.toLowerCase(), cleaned);
+    }
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 function buildSiteTrace(

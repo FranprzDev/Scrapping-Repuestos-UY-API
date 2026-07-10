@@ -5,6 +5,7 @@ import { findDomainRule } from './domain-rules';
 import {
   buildGrFrenosBrandUrl,
   extractCandidateLinks,
+  extractCompatibilityFromHtml,
   extractChapareiBrandsFromHtml,
   extractGrFrenosBrandsFromHtml,
   extractGrFrenosListingSummary,
@@ -62,6 +63,24 @@ test('rechaza productos agotados en cards tipo Chaparei', () => {
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
   assert.equal(products.length, 0);
+});
+
+test('extrae compatibilidades de modelo y version desde el detalle', () => {
+  const compatibility = extractCompatibilityFromHtml(`
+    <section class="compatibility">
+      <h3>Vehiculos compatibles</h3>
+      <p>Volkswagen Gol; Volkswagen Saveiro</p>
+      <div class="modelo">Modelo: Gol</div>
+      <div class="version">Version: 1.6 MSI 2017-2022</div>
+    </section>
+  `);
+
+  assert.deepEqual(compatibility.compatibleVehicles, [
+    'Volkswagen Gol',
+    'Volkswagen Saveiro',
+  ]);
+  assert.deepEqual(compatibility.compatibleModels, ['Gol']);
+  assert.deepEqual(compatibility.compatibleVersions, ['1.6 MSI 2017-2022']);
 });
 
 test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {

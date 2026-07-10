@@ -5,6 +5,7 @@ import { ProductRecord, ProviderResult, ScrapingOperationPayload, ScrapingProvid
 import {
   buildGrFrenosBrandUrl,
   extractChapareiBrandsFromHtml,
+  extractCompatibilityFromHtml,
   extractCandidateLinks,
   extractGrFrenosBrandsFromHtml,
   extractGrFrenosListingSummary,
@@ -235,7 +236,7 @@ export class DomainProvider implements ScrapingProvider {
       return {
         urls: chaparei.urls,
         pages: chaparei.pages,
-        products: dedupeProducts(qualityGate(chaparei.products, rule)).slice(0, maxItems),
+        products: await this.enrichProductDetails(dedupeProducts(qualityGate(chaparei.products, rule)), rule, maxItems),
       };
     }
 
@@ -244,7 +245,7 @@ export class DomainProvider implements ScrapingProvider {
       return {
         urls: grfrenos.urls,
         pages: grfrenos.pages,
-        products: dedupeProducts(qualityGate(grfrenos.products, rule)).slice(0, maxItems),
+        products: await this.enrichProductDetails(dedupeProducts(qualityGate(grfrenos.products, rule)), rule, maxItems),
       };
     }
 
@@ -257,7 +258,7 @@ export class DomainProvider implements ScrapingProvider {
       return {
         urls: [catalogUrl],
         pages: [{ url: response.finalUrl, method: 'europarts-http', productCount: products.length }],
-        products: dedupeProducts(products).slice(0, maxItems),
+        products: await this.enrichProductDetails(dedupeProducts(products), rule, maxItems),
       };
     }
 
@@ -318,7 +319,7 @@ export class DomainProvider implements ScrapingProvider {
     return {
       urls,
       pages,
-      products: dedupeProducts(collected).slice(0, maxItems),
+      products: await this.enrichProductDetails(dedupeProducts(collected), rule, maxItems),
     };
   }
 
@@ -477,6 +478,32 @@ export class DomainProvider implements ScrapingProvider {
       pages: results.map((result) => result.page),
       products: dedupeProducts(results.flatMap((result) => result.products)).slice(0, maxItems),
     };
+  }
+
+  private async enrichProductDetails(products: ProductRecord[], rule: DomainRule, maxItems: number): Promise<ProductRecord[]> {
+    const candidates = products.filter((product) => Boolean(product.sourceUrl)).slice(0, maxItems);
+    const enriched = await mapWithConcurrency(candidates, this.extractConcurrency, async (product) => {
+      try {
+        const response = await fetchHtml(product.sourceUrl as string);
+        const compatibility = extractCompatibilityFromHtml(response.body);
+        const detail = extractProductsFromHtml(response.body, response.finalUrl, this.name, rule)
+          .find((item) => item.sourceUrl === response.finalUrl || item.sourceUrl === product.sourceUrl);
+
+        return {
+          ...product,
+          ...(detail ?? {}),
+          sourceUrl: product.sourceUrl,
+          compatibleVehicles: mergeTextValues(product.compatibleVehicles, compatibility.compatibleVehicles),
+          compatibleModels: mergeTextValues(product.compatibleModels, compatibility.compatibleModels),
+          compatibleVersions: mergeTextValues(product.compatibleVersions, compatibility.compatibleVersions),
+        };
+      } catch (error) {
+        this.logger.warn(`No se pudo enriquecer detalle ${product.sourceUrl}: ${formatError(error)}`);
+        return product;
+      }
+    });
+
+    return enriched;
   }
 
   private async crawlChaparei(sourceUrl: string, limit: number, rule: DomainRule) {
@@ -1375,6 +1402,17 @@ function extractChapareiCanonicalBrandUrl(html: string, baseUrl: string): string
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = cleanText(value);
+    if (cleaned) {
+      values.set(cleaned.toLowerCase(), cleaned);
+    }
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 function extractChapareiBrandId(value: string | undefined): string | undefined {

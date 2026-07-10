@@ -248,6 +248,64 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   return candidates;
 }
 
+export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleModels' | 'compatibleVersions'> {
+  const root = parse(html);
+  const vehicleTexts = new Set<string>();
+  const models = new Set<string>();
+  const versions = new Set<string>();
+  const selectors = [
+    '[class*="compat"]', '[id*="compat"]', '[class*="vehicul"]', '[id*="vehicul"]',
+    '[class*="aplicacion"]', '[id*="aplicacion"]', '[class*="modelo"]', '[id*="modelo"]',
+    '[class*="version"]', '[id*="version"]', 'table', 'dl',
+  ];
+
+  for (const element of root.querySelectorAll(selectors.join(','))) {
+    const marker = `${element.getAttribute('class') ?? ''} ${element.getAttribute('id') ?? ''}`;
+    const textMarker = `${marker} ${element.text}`;
+    if (!/(compat|veh[ií]culo|aplicaci[oó]n|modelo|versi[oó]n)/i.test(textMarker)) {
+      continue;
+    }
+
+    const children = element.querySelectorAll('p,li,td,dd');
+    const texts = children.length > 0 ? children.map((child) => child.text) : [element.text];
+    for (const rawText of texts) {
+      const text = cleanText(rawText);
+      if (!text || text.length > 800) {
+        continue;
+      }
+
+      if (/(compat|veh[ií]culo|aplicaci[oó]n)/i.test(marker)) {
+        splitCompatibilityValues(text).forEach((value) => vehicleTexts.add(value));
+      }
+      if (/(modelo)/i.test(marker)) {
+        splitCompatibilityValues(text.replace(/^[^:]{0,80}:/, '')).forEach((value) => models.add(value));
+      }
+      if (/versi[oó]n/i.test(marker)) {
+        splitCompatibilityValues(text.replace(/^[^:]{0,80}:/, '')).forEach((value) => versions.add(value));
+      }
+    }
+  }
+
+  return {
+    compatibleVehicles: valuesOrUndefined(vehicleTexts),
+    compatibleModels: valuesOrUndefined(models),
+    compatibleVersions: valuesOrUndefined(versions),
+  };
+}
+
+function splitCompatibilityValues(value: string): string[] {
+  return value
+    .split(/[\n;|•]+/)
+    .map((part) => cleanText(part))
+    .filter((part): part is string => Boolean(part))
+    .filter((part) => part.length >= 2 && part.length <= 240)
+    .filter((part) => !/^(compatibilidad|veh[ií]culos?|aplicaci[oó]n|modelos?|versiones?)\s*:?[\s-]*$/i.test(part));
+}
+
+function valuesOrUndefined(values: Set<string>): string[] | undefined {
+  return values.size > 0 ? Array.from(values) : undefined;
+}
+
 function extractEuropartsListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const products: ProductRecord[] = [];
 

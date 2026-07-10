@@ -71,6 +71,7 @@ export class InventoryStoreService implements OnModuleInit {
       site: string;
       sourceUrl: string;
       product: string;
+      searchText: string;
       vehicleBrands: ReturnType<typeof inferVehicleBrands>;
     }>();
 
@@ -91,10 +92,11 @@ export class InventoryStoreService implements OnModuleInit {
           site,
           sourceUrl,
           product: JSON.stringify(enrichedProduct),
+          searchText: buildProductSearchText(enrichedProduct),
           vehicleBrands,
         };
       })
-      .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
+      .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; searchText: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
       .forEach((item) => payloadBySourceUrl.set(item.sourceUrl, item));
 
     const payload = Array.from(payloadBySourceUrl.values());
@@ -103,9 +105,9 @@ export class InventoryStoreService implements OnModuleInit {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
       const upserted = await this.postgresService.query<{ id: string; sourceUrl: string; created: boolean }>(
         `
-        INSERT INTO scraping_inventory (id, site, source_url, product, created_at, updated_at, last_seen_at)
-        SELECT item.id, item.site, item.source_url, item.product::jsonb, $1::timestamptz, $1::timestamptz, $1::timestamptz
-        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS item(id, site, source_url, product)
+        INSERT INTO scraping_inventory (id, site, source_url, product, search_text, created_at, updated_at, last_seen_at)
+        SELECT item.id, item.site, item.source_url, item.product::jsonb, item.search_text, $1::timestamptz, $1::timestamptz, $1::timestamptz
+        FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) AS item(id, site, source_url, product, search_text)
         ON CONFLICT (source_url)
         DO UPDATE SET
           site = EXCLUDED.site,
@@ -120,6 +122,7 @@ export class InventoryStoreService implements OnModuleInit {
           chunk.map((item) => item.site),
           chunk.map((item) => item.sourceUrl),
           chunk.map((item) => item.product),
+          chunk.map((item) => item.searchText),
         ],
       );
 
@@ -464,36 +467,9 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   if (search) {
     const tokens = normalizeSearchTokens(search);
     if (tokens.length) {
-      const searchableText = `
-        regexp_replace(
-          regexp_replace(
-            regexp_replace(
-              lower(
-                CONCAT_WS(
-                  ' ',
-                  COALESCE(product->>'productName', ''),
-                  COALESCE(product->>'brand', ''),
-                  COALESCE(product->>'category', ''),
-                  COALESCE(product->>'description', '')
-                )
-              ),
-              '[^[:alnum:]]+',
-              ' ',
-              'g'
-            ),
-            '([[:alpha:]])\\1+',
-            '\\1',
-            'g'
-          ),
-          '\\s+',
-          ' ',
-          'g'
-        )
-      `;
-
       for (const token of tokens) {
         params.push(`%${token.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
-        conditions.push(`${searchableText} LIKE $${params.length} ESCAPE '\\'`);
+        conditions.push(`search_text LIKE $${params.length} ESCAPE '\\'`);
       }
     }
   }
@@ -630,6 +606,27 @@ function normalizeSearchTokens(search: string): string[] {
         .trim(),
     )
     .filter((token) => token.length >= 2);
+}
+
+function buildProductSearchText(product: ProductRecord): string {
+  return [
+    product.productName,
+    product.brand,
+    product.category,
+    product.description,
+    product.compatibleVehicles?.join(' '),
+    product.compatibleModels?.join(' '),
+    product.compatibleVersions?.join(' '),
+    product.compatibleBrands?.join(' '),
+    Object.values(product.attributes ?? {}).join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/([a-z])\1+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeLimit(value?: number): number | undefined {

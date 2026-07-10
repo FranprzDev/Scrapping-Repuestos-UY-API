@@ -263,11 +263,25 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
       imageUrl: product.imageUrl ?? previous.imageUrl,
       imagePath: product.imagePath ?? previous.imagePath,
       compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, product.compatibleBrands),
+      compatibleVehicles: mergeTextValues(previous.compatibleVehicles, product.compatibleVehicles),
+      compatibleModels: mergeTextValues(previous.compatibleModels, product.compatibleModels),
+      compatibleVersions: mergeTextValues(previous.compatibleVersions, product.compatibleVersions),
       qualityWarnings: mergeWarnings(previous.qualityWarnings, product.qualityWarnings),
     });
   }
 
   return Array.from(map.values());
+}
+
+function mergeTextValues(previous?: string[], current?: string[]): string[] | undefined {
+  const values = new Map<string, string>();
+  for (const value of [...(previous ?? []), ...(current ?? [])]) {
+    const cleaned = cleanText(value);
+    if (cleaned) {
+      values.set(normalizeComparableText(cleaned), cleaned);
+    }
+  }
+  return values.size > 0 ? Array.from(values.values()) : undefined;
 }
 
 export function mergeCompatibleBrands(previous?: string[], current?: string[]): string[] | undefined {
