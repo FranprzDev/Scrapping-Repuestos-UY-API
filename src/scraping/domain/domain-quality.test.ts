@@ -93,15 +93,21 @@ test('extrae contratos de compatibilidad de Larrique, Chaparei, Familcar y GR Fr
     <a class="block" href="javascript:showmod(1)">STRADA VOLCANO 1.3cc 2024-</a>
     <div class="lstCaracteristicas"><div class="it">Compatibilidad Citroen, Peugeot</div><div class="it">Modelos 206, C3</div></div>
     <div class="item-texto"><p>Marca: FORD</p><p>Modelos: CORSA, SIERRA</p></div>
+    <div class="filtro__cont--form--campo">Modelo <select id="modelox"><option>Todos los Modelos</option></select></div>
+    <div class="producto__info--modelos"><h3>Modelos Compatibles:</h3><div class="producto__info--modelos--linea">VOLKSWAGEN: GOLF, PASSAT</div></div>
+    <div class="producto__info--modelos"><h3>Detalles del Producto:</h3><div class="producto__info--modelos--linea">Diámetro: 312 mm</div></div>
   `;
 
   const compatibility = extractCompatibilityFromHtml(html);
 
-  assert.deepEqual(compatibility.compatibleBrands, ['CHERY', 'Citroen', 'Peugeot', 'FORD']);
+  assert.deepEqual(compatibility.compatibleBrands, ['CHERY', 'Citroen', 'Peugeot', 'FORD', 'VOLKSWAGEN']);
   assert.ok(compatibility.compatibleModels?.includes('TIGGO II'));
   assert.ok(compatibility.compatibleModels?.includes('STRADA VOLCANO 1.3cc 2024-'));
   assert.ok(compatibility.compatibleModels?.includes('206'));
   assert.ok(compatibility.compatibleModels?.includes('CORSA'));
+  assert.ok(compatibility.compatibleModels?.includes('GOLF'));
+  assert.equal(compatibility.compatibleModels?.includes('Todos los Modelos'), false);
+  assert.equal(compatibility.compatibleBrands?.includes('Diámetro'), false);
   assert.ok(compatibility.compatibleVersions?.includes('2.0 16V/2010-2025'));
   assert.ok(compatibility.compatibleVersions?.includes('STRADA VOLCANO 1.3cc 2024-'));
 });

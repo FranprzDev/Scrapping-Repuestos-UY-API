@@ -301,6 +301,19 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
     }
   }
 
+  for (const line of root.querySelectorAll('.producto__info--modelos--linea')) {
+    const section = line.parentNode instanceof HTMLElement ? cleanText(line.parentNode.text) : undefined;
+    if (!section || !/^modelos? compatibles\s*:/i.test(section)) continue;
+    const text = cleanText(line.text);
+    const match = text?.match(/^([^:]+):\s*(.+)$/);
+    if (!match) continue;
+    const brand = cleanText(match[1]);
+    const values = splitCompatibilityValues(match[2]);
+    if (brand) brands.add(brand);
+    values.forEach((value) => models.add(value));
+    if (brand) values.forEach((value) => vehicleTexts.add(`${brand} - ${value}`));
+  }
+
   const selectors = [
     '[class*="compat"]', '[id*="compat"]', '[class*="vehicul"]', '[id*="vehicul"]',
     '[class*="aplicacion"]', '[id*="aplicacion"]', '.modelo', '[id*="modelo"]', '[class*="version"]', '[id*="version"]',
@@ -357,6 +370,7 @@ function splitCompatibilityValues(value: string): string[] {
     .map((part) => cleanText(part))
     .filter((part): part is string => Boolean(part))
     .filter((part) => part.length >= 2 && part.length <= 240)
+    .filter((part) => !/^(modelo\.{0,3}|buscar|todos los modelos|seleccione la marca|ver modelos)$/i.test(part))
     .filter((part) => !/^(compatibilidad|veh[ií]culos?|aplicaci[oó]n|modelos?|versiones?)\s*:?[\s-]*$/i.test(part));
 }
 
