@@ -136,7 +136,7 @@ export class ScrapingController {
 
   @Post('scraping/inventory/refresh-existing-links')
   @HttpCode(200)
-  refreshExistingLinks(@Query('site') site?: string, @Headers('x-inventory-refresh-token') token?: string) {
+  async refreshExistingLinks(@Query('site') site?: string, @Headers('x-inventory-refresh-token') token?: string) {
     if (!site?.trim()) {
       throw new BadRequestException('site es obligatorio para refrescar links existentes');
     }
@@ -145,7 +145,12 @@ export class ScrapingController {
       throw new UnauthorizedException('Token de refresh invalido');
     }
 
-    return this.catalogScrapingService.refreshExistingLinks(site);
+    const job = await this.jobQueueService.enqueue('refresh-existing-links', { site: site.trim() });
+    return {
+      message: 'Refresh de links existentes encolado',
+      jobId: job.id,
+      status: job.status,
+    };
   }
 
   @Post('scraping/quick-run')
@@ -281,7 +286,11 @@ function buildPublicJobView(job: ScrapingJob) {
 }
 
 function normalizeJobSites(payload: ScrapingOperationPayload) {
-  const urls = Array.isArray(payload.urls) ? payload.urls : [];
+  const urls = Array.isArray(payload.urls)
+    ? payload.urls
+    : typeof payload.site === 'string'
+      ? [payload.site]
+      : [];
   return urls.map((url) => formatCatalogSite(url));
 }
 

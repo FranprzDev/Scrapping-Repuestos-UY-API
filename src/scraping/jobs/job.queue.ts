@@ -189,6 +189,17 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
+    if (task === 'refresh-existing-links') {
+      const site = typeof payload.site === 'string' ? payload.site.trim() : '';
+      if (!site) {
+        throw new Error('refresh-existing-links requiere payload.site');
+      }
+
+      return this.catalogScrapingService.refreshExistingLinks(site, async (progress) => {
+        await this.updateProcessingProgress(jobId, progress);
+      });
+    }
+
     const providerOverride = typeof payload.providerOverride === 'string' ? payload.providerOverride : undefined;
     const normalizedPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'providerOverride'));
     return this.scrapingService.runTask(task, normalizedPayload, providerOverride);

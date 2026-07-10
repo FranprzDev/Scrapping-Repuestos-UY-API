@@ -59,6 +59,20 @@ export interface VehicleBrandInventoryStats {
   total: number;
 }
 
+export interface ExistingLinksRefreshProgress {
+  site: string;
+  status: 'success' | 'error';
+  stage: 'starting' | 'crawling' | 'done' | 'error';
+  timeWorkingMs: number;
+  quantityScrapped: number;
+  pagesUsedForExtract: number;
+  rawProducts: number;
+  normalizedProducts: number;
+  message?: string;
+}
+
+export type ExistingLinksRefreshReporter = (progress: ExistingLinksRefreshProgress) => Promise<void> | void;
+
 @Injectable()
 export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
@@ -266,8 +280,9 @@ export class InventoryStoreService implements OnModuleInit {
     return { scanned: pending.rows.length, enriched, failed };
   }
 
-  async refreshExistingLinks(site: string) {
+  async refreshExistingLinks(site: string, onProgress?: ExistingLinksRefreshReporter) {
     const normalizedSite = site.trim();
+    const startedAt = Date.now();
     const pending = await this.postgresService.query<CompatibilityRefreshRow>(
       `
       SELECT id, source_url, product
@@ -278,6 +293,17 @@ export class InventoryStoreService implements OnModuleInit {
       `,
       [normalizedSite],
     );
+
+    await onProgress?.({
+      site: normalizedSite,
+      status: 'success',
+      stage: 'starting',
+      timeWorkingMs: 0,
+      quantityScrapped: 0,
+      pagesUsedForExtract: pending.rows.length,
+      rawProducts: pending.rows.length,
+      normalizedProducts: 0,
+    });
 
     let refreshed = 0;
     let failed = 0;
@@ -332,11 +358,35 @@ export class InventoryStoreService implements OnModuleInit {
         relationItems.push({ id: result.row.id, vehicleBrands: result.vehicleBrands });
         refreshed += 1;
       }
+
+      await onProgress?.({
+        site: normalizedSite,
+        status: 'success',
+        stage: 'crawling',
+        timeWorkingMs: Date.now() - startedAt,
+        quantityScrapped: refreshed,
+        pagesUsedForExtract: pending.rows.length,
+        rawProducts: index + batch.length,
+        normalizedProducts: refreshed,
+        message: `Procesados ${index + batch.length} de ${pending.rows.length}`,
+      });
     }
 
     if (relationItems.length > 0) {
       await this.syncVehicleBrandRelations(relationItems);
     }
+
+    await onProgress?.({
+      site: normalizedSite,
+      status: failed > 0 ? 'error' : 'success',
+      stage: failed > 0 ? 'error' : 'done',
+      timeWorkingMs: Date.now() - startedAt,
+      quantityScrapped: refreshed,
+      pagesUsedForExtract: pending.rows.length,
+      rawProducts: pending.rows.length,
+      normalizedProducts: refreshed,
+      message: failed > 0 ? `Finalizado con ${failed} errores` : 'Finalizado',
+    });
 
     return { site: normalizedSite, scanned: pending.rows.length, refreshed, failed };
   }

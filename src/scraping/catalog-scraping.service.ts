@@ -6,7 +6,7 @@ import { type CatalogJobProgress, type CatalogJobProgressReporter, type CatalogJ
 import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
 import { countQualityWarnings, isAllowedCatalogUrl, mergeCompatibleBrands, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
-import { type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
+import { type ExistingLinksRefreshReporter, type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
@@ -285,8 +285,8 @@ export class CatalogScrapingService {
     return this.inventoryStoreService.refreshCompatibility(site);
   }
 
-  async refreshExistingLinks(site: string) {
-    return this.inventoryStoreService.refreshExistingLinks(site);
+  async refreshExistingLinks(site: string, onProgress?: ExistingLinksRefreshReporter) {
+    return this.inventoryStoreService.refreshExistingLinks(site, onProgress);
   }
 
   async resetCatalogData() {
