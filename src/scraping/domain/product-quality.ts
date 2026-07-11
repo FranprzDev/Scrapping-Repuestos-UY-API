@@ -294,6 +294,10 @@ export function mergeCompatibleBrands(previous?: string[], current?: string[]): 
     }
   }
 
+  if (brands.size > 1) {
+    brands.delete('otros');
+  }
+
   return brands.size > 0 ? Array.from(brands.values()) : undefined;
 }
 
