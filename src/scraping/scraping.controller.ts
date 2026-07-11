@@ -34,6 +34,9 @@ export class ScrapingController {
 
   @Get()
   @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   home() {
     return renderInventoryPage();
   }
@@ -49,6 +52,9 @@ export class ScrapingController {
 
   @Get('stats')
   @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   stats() {
     return renderStatsPage();
   }
