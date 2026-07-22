@@ -277,8 +277,8 @@ export class CatalogScrapingService {
     return this.inventoryStoreService.getStats();
   }
 
-  async getVehicleBrandStats() {
-    return this.inventoryStoreService.getVehicleBrandStats();
+  async getVehicleBrandStats(filters: InventoryQueryFilters = {}) {
+    return this.inventoryStoreService.getVehicleBrandStats(filters);
   }
 
   async refreshCompatibility(site?: string) {
