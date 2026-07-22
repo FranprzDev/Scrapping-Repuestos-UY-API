@@ -487,6 +487,15 @@ function renderInventoryPage(): string {
         gap: 12px;
         margin-bottom: 12px;
       }
+      .inventory-count {
+        padding: 12px 14px;
+        border: 1px solid rgba(242,184,75,0.24);
+        border-radius: 14px;
+        background: rgba(242,184,75,0.08);
+        color: var(--text);
+        font-size: 0.95rem;
+      }
+      .inventory-count strong { color: var(--accent); }
       .search-field { display: grid; gap: 8px; }
       .filters-row {
         display: grid;
@@ -697,6 +706,7 @@ function renderInventoryPage(): string {
                   </select>
                 </div>
               </div>
+              <div id="inventoryCount" class="inventory-count" aria-live="polite">Calculando productos...</div>
             </div>
             <div id="loader" class="loader" aria-live="polite" aria-busy="true">
               <div class="loader-card">
@@ -743,6 +753,7 @@ function renderInventoryPage(): string {
       const houseFilter = document.getElementById('houseFilter');
       const priceOrderFilter = document.getElementById('priceOrderFilter');
       const vehicleBrandFilter = document.getElementById('vehicleBrandFilter');
+      const inventoryCount = document.getElementById('inventoryCount');
       const loader = document.getElementById('loader');
       const loadMoreStatus = document.getElementById('loadMoreStatus');
       const scrollSentinel = document.getElementById('scrollSentinel');
@@ -750,6 +761,7 @@ function renderInventoryPage(): string {
 
       const PAGE_SIZE = 200;
       const SEARCH_DEBOUNCE_MS = 500;
+      const inventoryNumberFormat = new Intl.NumberFormat('es-UY');
 
       const inventory = {
         offset: 0,
@@ -936,6 +948,18 @@ function renderInventoryPage(): string {
         inventory.total = 0;
         inventory.hasMore = true;
         setLoadMoreStatus('');
+        inventoryCount.textContent = 'Calculando productos...';
+      }
+
+      function renderInventoryCount(total) {
+        const houseLabel = houseFilter.selectedOptions[0]?.textContent?.trim();
+        const brandLabel = vehicleBrandFilter.selectedOptions[0]?.textContent?.replace(/\s*\(\d+\)$/, '').trim();
+        const context = [
+          state.house ? houseLabel : '',
+          state.vehicleBrand ? 'para ' + brandLabel : '',
+        ].filter(Boolean).join(' ');
+        const suffix = context ? ' ' + context : '';
+        inventoryCount.innerHTML = '<strong>' + escapeHtml(inventoryNumberFormat.format(total)) + '</strong> productos encontrados' + escapeHtml(suffix);
       }
 
       function resetAndLoadInventory() {
@@ -976,13 +1000,15 @@ function renderInventoryPage(): string {
             return;
           }
 
+          inventory.total = Number(data.total ?? inventory.total ?? 0);
+          renderInventoryCount(inventory.total);
+
           if (isReset || currentOffset === 0) {
             rows.innerHTML = '';
           }
 
           if (!products.length && currentOffset === 0) {
             rows.innerHTML = renderRows([]);
-            inventory.total = Number(data.total ?? inventory.total ?? 0);
             inventory.offset = 0;
             inventory.hasMore = false;
             setLoadMoreStatus('');
@@ -992,7 +1018,6 @@ function renderInventoryPage(): string {
             rows.insertAdjacentHTML('beforeend', renderRows(products));
           }
 
-          inventory.total = Number(data.total ?? inventory.total ?? 0);
           inventory.offset = currentOffset + products.length;
           inventory.hasMore = Boolean(data.hasMore ?? (products.length === PAGE_SIZE && inventory.offset < inventory.total));
 
