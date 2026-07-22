@@ -12,7 +12,7 @@ import {
   extractProductsFromHtml,
   isGrFrenosChallengeHtml,
 } from './domain-html';
-import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, qualityGate } from './product-quality';
+import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, mergeCompatibleBrands, qualityGate } from './product-quality';
 import {
   applyChapareiContextBrand,
   applyGrFrenosContextBrand,
@@ -125,6 +125,30 @@ test('extrae compatibilidad del detalle real de Familcar', () => {
   assert.deepEqual(compatibility.compatibleBrands, ['Honda']);
   assert.deepEqual(compatibility.compatibleModels, ['Civic', 'CRV', 'Fit']);
   assert.deepEqual(compatibility.compatibleVersions, ['FIT 2018-']);
+});
+
+test('extrae modelos compatibles de Cymaco, Feyvi, Selvir y GR Frenos', () => {
+  const compatibility = extractCompatibilityFromHtml(`
+    <div class="lstCaracteristicas">
+      <div class="it"><span class="tit">Compatibilidad</span><span class="val">CHERY, SEAT, VOLKSWAGEN</span></div>
+      <div class="it"><span class="tit">Modelo</span><span class="val">CADDY, FULWIN, GOLF</span></div>
+    </div>
+    <div class="ty-product-feature-group">
+      <div class="ty-product-feature__label">Modelo</div>
+      <div class="ty-product-feature"><div class="ty-product-feature__label">Chevrolet :</div><ul><li class="ty-product-feature__multiple-item">AVEO 1.6 MPFI 16V</li><li class="ty-product-feature__multiple-item">CORSA HATCH 1.6</li></ul></div>
+    </div>
+    <div class="table_obs"><b>Observaciones</b><table class="modal-marcas-modelos"><thead><tr><th>Marca</th><th>Modelo</th><th>Comentario</th></tr></thead><tbody><tr><td>NISSAN</td><td>SX200 93-95</td><td>-</td></tr><tr><td>VW</td><td>DELIVERY 9.150</td><td>-</td></tr></tbody></table></div>
+    <div class="producto__info--modelos"><h3>Modelos Compatibles:</h3><div class="producto__info--modelos--linea"><h4>TOYOTA:</h4><h5>COROLLA, ETIOS</h5></div></div>
+  `);
+
+  assert.deepEqual(compatibility.compatibleBrands, ['NISSAN', 'VW', 'CHERY', 'SEAT', 'VOLKSWAGEN', 'Chevrolet', 'TOYOTA']);
+  assert.deepEqual(compatibility.compatibleModels, ['SX200 93-95', 'DELIVERY 9.150', 'CADDY', 'FULWIN', 'GOLF', 'AVEO 1.6 MPFI 16V', 'CORSA HATCH 1.6', 'COROLLA', 'ETIOS']);
+  assert.ok(compatibility.compatibleVehicles?.includes('Chevrolet - AVEO 1.6 MPFI 16V'));
+  assert.ok(compatibility.compatibleVehicles?.includes('TOYOTA - COROLLA'));
+});
+
+test('reemplaza el fallback Otros cuando el detalle aporta una marca compatible', () => {
+  assert.deepEqual(mergeCompatibleBrands(['Otros'], ['Chevrolet']), ['Chevrolet']);
 });
 
 test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {

@@ -274,6 +274,22 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
     vehicleTexts.add([brand, model, version].filter(Boolean).join(' - '));
   }
 
+  for (const table of root.querySelectorAll('.table_obs table, table.modal-marcas-modelos')) {
+    const headers = table.querySelectorAll('thead th').map((header) => normalizeCompatibilityLabel(header.text));
+    const brandIndex = headers.findIndex((header) => header === 'marca');
+    const modelIndex = headers.findIndex((header) => header === 'modelo');
+    if (brandIndex < 0 || modelIndex < 0) continue;
+
+    for (const row of table.querySelectorAll('tbody tr')) {
+      const cells = row.querySelectorAll('td').map((cell) => cleanText(cell.text));
+      const brand = cells[brandIndex];
+      const model = cells[modelIndex];
+      if (brand) brands.add(brand);
+      if (model) models.add(model);
+      if (brand && model) vehicleTexts.add(`${brand} - ${model}`);
+    }
+  }
+
   for (const item of root.querySelectorAll('.blkCaracteristicas .it, .lstCaracteristicas .it')) {
     const title = cleanText(item.querySelector('.tit')?.text);
     const value = cleanText(item.querySelector('.val')?.text);
@@ -305,17 +321,37 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
     }
   }
 
-  for (const line of root.querySelectorAll('.producto__info--modelos--linea')) {
-    const section = line.parentNode instanceof HTMLElement ? cleanText(line.parentNode.text) : undefined;
-    if (!section || !/^modelos? compatibles\s*:/i.test(section)) continue;
-    const text = cleanText(line.text);
-    const match = text?.match(/^([^:]+):\s*(.+)$/);
-    if (!match) continue;
-    const brand = cleanText(match[1]);
-    const values = splitCompatibilityValues(match[2]);
-    if (brand) brands.add(brand);
-    values.forEach((value) => models.add(value));
-    if (brand) values.forEach((value) => vehicleTexts.add(`${brand} - ${value}`));
+  for (const group of root.querySelectorAll('.ty-product-feature-group')) {
+    const groupLabel = cleanText(group.querySelector('.ty-subheader, .ty-product-feature__label')?.text);
+    if (normalizeCompatibilityLabel(groupLabel) !== 'modelo') continue;
+
+    for (const feature of group.querySelectorAll('.ty-product-feature')) {
+      const brand = cleanText(feature.querySelector('.ty-product-feature__label')?.text)?.replace(/\s*:\s*$/, '');
+      if (!brand || /^(fabricante|marca|modelo)$/i.test(brand)) continue;
+      const values = feature.querySelectorAll('.ty-product-feature__multiple-item').map((item) => cleanText(item.text)).filter((value): value is string => Boolean(value));
+      if (values.length === 0) continue;
+      brands.add(brand);
+      values.forEach((value) => {
+        models.add(value);
+        vehicleTexts.add(`${brand} - ${value}`);
+      });
+    }
+  }
+
+  for (const section of root.querySelectorAll('.producto__info--modelos')) {
+    if (!/^modelos? compatibles\s*:/i.test(cleanText(section.querySelector('h3')?.text) ?? '')) continue;
+    for (const line of section.querySelectorAll('.producto__info--modelos--linea')) {
+      const lineText = cleanText(line.text) ?? '';
+      const match = lineText.match(/^([^:]+):\s*(.+)$/);
+      const brand = cleanText(line.querySelector('h4')?.text)?.replace(/\s*:\s*$/, '') ?? cleanText(match?.[1]);
+      const values = splitCompatibilityValues(cleanText(line.querySelector('h5')?.text) ?? match?.[2] ?? '');
+      if (!brand || values.length === 0) continue;
+      brands.add(brand);
+      values.forEach((value) => {
+        models.add(value);
+        vehicleTexts.add(`${brand} - ${value}`);
+      });
+    }
   }
 
   const selectors = [
@@ -339,7 +375,7 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
         continue;
       }
 
-      if (/(compat|veh[ií]culo|aplicaci[oó]n)/i.test(marker)) {
+      if (/(compat|aplicaci[oó]n)/i.test(marker)) {
         splitCompatibilityValues(text).forEach((value) => vehicleTexts.add(value));
       }
       if (/(modelo|showmod)/i.test(`${marker} ${element.getAttribute('href') ?? ''}`)) {

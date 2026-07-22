@@ -120,6 +120,26 @@ test('getFilteredPage filtra por marca vehicular con tabla relacional', async ()
   assert.deepEqual(capturedParams, ['volkswagen']);
 });
 
+test('getVehicleBrandStats recalcula cantidades dentro de la casa seleccionada', async () => {
+  let capturedSql = '';
+  let capturedParams: unknown[] = [];
+
+  const service = new InventoryStoreService({
+    async query(sql: string, params?: unknown[]) {
+      capturedSql = sql;
+      capturedParams = params ?? [];
+      return { rows: [{ id: 'fiat', label: 'Fiat', total: '3' }] } as never;
+    },
+  } as never);
+
+  const stats = await service.getVehicleBrandStats({ site: 'Selvir' });
+
+  assert.deepEqual(stats, [{ id: 'fiat', label: 'Fiat', total: 3 }]);
+  assert.ok(capturedSql.includes('LEFT JOIN scraping_inventory'));
+  assert.ok(capturedSql.includes('regexp_replace'));
+  assert.deepEqual(capturedParams, [['selvir.com.uy']]);
+});
+
 test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', async () => {
   const queries: Array<{ sql: string; params: unknown[] }> = [];
 

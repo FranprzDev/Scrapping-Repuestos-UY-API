@@ -438,7 +438,9 @@ export class InventoryStoreService implements OnModuleInit {
     return Number(result.rows[0]?.total ?? 0);
   }
 
-  async getVehicleBrandStats(): Promise<VehicleBrandInventoryStats[]> {
+  async getVehicleBrandStats(filters: InventoryQueryFilters = {}): Promise<VehicleBrandInventoryStats[]> {
+    const filtersWithoutVehicleBrand = { ...filters, vehicleBrand: undefined };
+    const { whereClause, params } = buildInventoryConditions(filtersWithoutVehicleBrand);
     const result = await this.postgresService.query<{ id: string; label: string; total: string }>(`
       SELECT
         brand.id,
@@ -447,10 +449,13 @@ export class InventoryStoreService implements OnModuleInit {
       FROM vehicle_brands brand
       LEFT JOIN scraping_inventory_vehicle_brands link
         ON link.brand_id = brand.id
+      LEFT JOIN scraping_inventory
+        ON scraping_inventory.id = link.inventory_id
       WHERE brand.active = TRUE
+        ${whereClause ? `AND ${whereClause.slice('WHERE '.length)}` : ''}
       GROUP BY brand.id, brand.label
       ORDER BY brand.label ASC
-    `);
+    `, params);
 
     return result.rows.map((row) => ({
       id: row.id,

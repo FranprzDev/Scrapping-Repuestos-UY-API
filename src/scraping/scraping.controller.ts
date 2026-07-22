@@ -215,8 +215,18 @@ export class ScrapingController {
   }
 
   @Get('scraping/inventory/vehicle-brands')
-  getVehicleBrands() {
-    return this.catalogScrapingService.getVehicleBrandStats();
+  getVehicleBrands(
+    @Query('site') site?: string,
+    @Query('search') search?: string,
+    @Query('priceState') priceState?: string,
+    @Query('availability') availability?: string,
+  ) {
+    return this.catalogScrapingService.getVehicleBrandStats({
+      site,
+      search,
+      priceState,
+      availability,
+    });
   }
 
   @Get('scraping/runs')
@@ -762,13 +772,20 @@ function renderInventoryPage(): string {
       let searchTimer;
       let inFlightController;
       let scrollObserver;
+      let vehicleBrandRequestId = 0;
 
       search.addEventListener('input', () => {
         state.search = search.value;
+        // La búsqueda cambia el universo de marcas disponibles.
+        state.vehicleBrand = '';
+        vehicleBrandFilter.value = '';
         queueLoadInventory();
       });
       houseFilter.addEventListener('change', () => {
         state.house = houseFilter.value;
+        // La marca seleccionada pertenece al universo de la casa anterior.
+        state.vehicleBrand = '';
+        vehicleBrandFilter.value = '';
         resetAndLoadInventory();
       });
       priceOrderFilter.addEventListener('change', () => {
@@ -830,16 +847,22 @@ function renderInventoryPage(): string {
 
       async function renderVehicleBrandOptions() {
         const current = vehicleBrandFilter.value;
+        const requestId = ++vehicleBrandRequestId;
+        const params = new URLSearchParams();
+        if (state.house) params.set('site', state.house);
+        if (state.search.trim()) params.set('search', state.search.trim());
         try {
-          const response = await fetch('/scraping/inventory/vehicle-brands');
+          const response = await fetch('/scraping/inventory/vehicle-brands?' + params.toString());
           if (!response.ok) throw new Error('No se pudieron cargar las marcas');
           const brands = await response.json();
+          if (requestId !== vehicleBrandRequestId) return;
           vehicleBrandFilter.innerHTML = '<option value="">Todas las marcas</option>' + brands.map((item) => {
             const label = item.total ? item.label + ' (' + item.total + ')' : item.label;
             return '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(label) + '</option>';
           }).join('');
-          vehicleBrandFilter.value = current;
+          vehicleBrandFilter.value = brands.some((item) => item.id === current) ? current : '';
         } catch {
+          if (requestId !== vehicleBrandRequestId) return;
           vehicleBrandFilter.innerHTML = '<option value="">Todas las marcas</option>';
         }
       }
@@ -942,6 +965,7 @@ function renderInventoryPage(): string {
         clearTimeout(searchTimer);
         abortPendingRequest();
         resetInventoryState();
+        void renderVehicleBrandOptions();
         rows.innerHTML = renderSkeletonRows();
         setScrollObserverEnabled(false);
         void loadNextPage(true);
@@ -976,13 +1000,14 @@ function renderInventoryPage(): string {
             return;
           }
 
+          inventory.total = Number(data.total ?? inventory.total ?? 0);
+
           if (isReset || currentOffset === 0) {
             rows.innerHTML = '';
           }
 
           if (!products.length && currentOffset === 0) {
             rows.innerHTML = renderRows([]);
-            inventory.total = Number(data.total ?? inventory.total ?? 0);
             inventory.offset = 0;
             inventory.hasMore = false;
             setLoadMoreStatus('');
@@ -992,7 +1017,6 @@ function renderInventoryPage(): string {
             rows.insertAdjacentHTML('beforeend', renderRows(products));
           }
 
-          inventory.total = Number(data.total ?? inventory.total ?? 0);
           inventory.offset = currentOffset + products.length;
           inventory.hasMore = Boolean(data.hasMore ?? (products.length === PAGE_SIZE && inventory.offset < inventory.total));
 
@@ -1003,8 +1027,11 @@ function renderInventoryPage(): string {
           if (inventory.hasMore) {
             setLoadMoreStatus('Desliza para cargar mas...');
             setScrollObserverEnabled(true);
-          } else {
+          } else if (currentOffset > 0 && inventory.offset > 0) {
             setLoadMoreStatus('No hay mas productos para mostrar.');
+            setScrollObserverEnabled(false);
+          } else {
+            setLoadMoreStatus('');
             setScrollObserverEnabled(false);
           }
         } catch (error) {
@@ -1023,7 +1050,6 @@ function renderInventoryPage(): string {
       }
 
       renderHouseOptions();
-      renderVehicleBrandOptions();
       resetAndLoadInventory();
     </script>
   </body>
