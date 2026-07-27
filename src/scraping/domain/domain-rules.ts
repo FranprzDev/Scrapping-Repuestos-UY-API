@@ -5,6 +5,7 @@ export interface DomainRule {
   hostnames: string[];
   seedUrls?: string[];
   preferredMethod: PreferredMethod;
+  preserveOutOfStock?: boolean;
   productUrlPatterns: RegExp[];
   categoryUrlPatterns: RegExp[];
   excludeUrlPatterns: RegExp[];
@@ -33,6 +34,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['taxitor.uy', 'www.taxitor.uy'],
     seedUrls: ['https://taxitor.uy/articulos/filtro/1/-/-/'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/articulos\/mostrar\//i],
     categoryUrlPatterns: [/\/articulos\/filtro\//i, /\/kits/i],
     excludeUrlPatterns: [/\/resources\//i, /\/terminos/i],
@@ -49,6 +51,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['acesur.uy', 'www.acesur.uy'],
     seedUrls: ['https://acesur.uy/escritorio/ofertas/INTERNET'],
     preferredMethod: 'api',
+    preserveOutOfStock: true,
     productUrlPatterns: [],
     categoryUrlPatterns: [/\/escritorio\/ofertas\/internet/i],
     excludeUrlPatterns: [/\/escritorio\/home/i],
@@ -60,6 +63,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['chaparei.com', 'www.chaparei.com'],
     seedUrls: ['https://www.chaparei.com/productos/'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [
       /\/catalogo\/[^/?#]+\/.+\/?$/i,
     ],
@@ -86,6 +90,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['grfrenos.uy', 'www.grfrenos.uy'],
     seedUrls: ['https://www.grfrenos.uy/home/'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/art-\d+\/?$/i],
     categoryUrlPatterns: [
       /\/buscardor\.php\?marcas=\d+---(?:&.*)?$/i,
@@ -129,6 +134,7 @@ export const DOMAIN_RULES: DomainRule[] = [
       'https://www.selvir.com.uy/tanques-y-flotadores/',
     ],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/product\//i],
     categoryUrlPatterns: [
       /\/product-category\//i,
@@ -171,6 +177,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     id: 'feyvi',
     hostnames: ['feyvi.com.uy', 'www.feyvi.com.uy'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){2}[^/]+\/?$/i],
     categoryUrlPatterns: [
       /^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){1,2}(?:page-\d+\/)?$/i,
@@ -191,6 +198,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['europarts.com.uy', 'www.europarts.com.uy'],
     seedUrls: ['https://www.europarts.com.uy/es/search?recordsize=100'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/es\/[^/?#]+\/product\/\d+\/?$/i],
     categoryUrlPatterns: [/\/es\/search(?:\?|$)/i],
     excludeUrlPatterns: [/\/cart/i, /\/checkout/i, /\/profile/i, /\/contact/i],
@@ -202,6 +210,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['multishop.com.uy', 'www.multishop.com.uy'],
     seedUrls: ['https://www.multishop.com.uy/'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/products\/[^/?#]+\/?$/i],
     categoryUrlPatterns: [/\/collections\//i],
     excludeUrlPatterns: [/\/cart/i, /\/account/i, /\/blogs/i, /\/pages/i],
@@ -213,6 +222,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['cymaco.com.uy', 'www.cymaco.com.uy'],
     seedUrls: ['https://cymaco.com.uy/catalogo'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
     categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i],
     excludeUrlPatterns: [/\/mi-cuenta/i, /\/send/i, /\/blog/i, /\/tiendas/i],
@@ -224,6 +234,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['familcar.com', 'www.familcar.com'],
     seedUrls: ['https://www.familcar.com/'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
     categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i, /^https?:\/\/(?:www\.)?familcar\.com\/[a-z0-9-]+\/?(?:\?.*)?$/i],
     excludeUrlPatterns: [/\/mi-cuenta/i, /\/send/i, /\/contacto/i, /\/trabaja/i],
@@ -235,6 +246,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['larrique.com.uy', 'www.larrique.com.uy'],
     seedUrls: ['https://larrique.com.uy/repuestos-autopartes/1'],
     preferredMethod: 'http',
+    preserveOutOfStock: true,
     productUrlPatterns: [/\/p\/[^/?#]+\/\d+\/\d+\/?$/i],
     categoryUrlPatterns: [/\/search-by\/\d+/i, /\/repuestos-autopartes/i],
     excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/users/i, /\/sale/i],

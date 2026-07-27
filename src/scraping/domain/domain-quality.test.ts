@@ -479,7 +479,7 @@ test('preserva un detalle Chaparei sin precio y extrae el SKU explicito', () => 
   assert.ok(products[0].qualityWarnings?.includes('missing_price'));
 });
 
-test('continua rechazando agotados fuera de Chaparei', () => {
+test('preserva agotados en las casas configuradas para catalogo completo', () => {
   const rule = findDomainRule('https://taxitor.uy/articulos/mostrar/123');
   assert.ok(rule);
 
@@ -492,7 +492,9 @@ test('continua rechazando agotados fuera de Chaparei', () => {
     provider: 'domain',
   }], rule);
 
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+  assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
 });
 
 test('preserva productos con precio cero y los marca con warning', () => {

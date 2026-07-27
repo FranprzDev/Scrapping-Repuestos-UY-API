@@ -215,7 +215,7 @@ export function qualityGate(products: ProductRecord[], rule?: DomainRule): Produ
       .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
       .filter((product) => {
         const warnings = product.qualityWarnings ?? [];
-        const preserveUnavailable = rule?.id === 'chaparei';
+        const preserveUnavailable = rule?.preserveOutOfStock !== false;
         return (preserveUnavailable || product.availability !== 'out_of_stock')
           && !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
       }),
