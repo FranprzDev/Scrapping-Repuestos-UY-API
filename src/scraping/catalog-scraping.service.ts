@@ -834,6 +834,7 @@ function collectExtractedProducts(raw: unknown, provider: ProviderName, sourceUr
           availability: asString(item.availability),
           sourceUrl: asString(item.productUrl) ?? asString(item.sourceUrl) ?? sourceUrl,
           imageUrl: asString(item.imageUrl),
+          imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls.filter((value): value is string => typeof value === 'string') : undefined,
           imagePath: asString(item.imagePath),
           extractedAt: new Date().toISOString(),
           provider,

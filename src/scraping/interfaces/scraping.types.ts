@@ -26,6 +26,7 @@ export interface ProductRecord {
   stock?: string;
   sourceUrl?: string;
   imageUrl?: string;
+  imageUrls?: string[];
   imagePath?: string;
   compatibleVehicles?: string[];
   compatibleModels?: string[];
