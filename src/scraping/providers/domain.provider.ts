@@ -41,6 +41,10 @@ export class DomainProvider implements ScrapingProvider {
 
   constructor(@Inject(PlaywrightProvider) private readonly playwrightProvider: PlaywrightProvider) {}
 
+  protected fetchPage(url: string, redirects = 5, init: HttpRequestInit = {}): Promise<HttpResponseData> {
+    return fetchHtml(url, redirects, init);
+  }
+
   async run(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<ProviderResult> {
     const sourceUrl = typeof payload.url === 'string' ? payload.url : undefined;
 
@@ -496,7 +500,7 @@ export class DomainProvider implements ScrapingProvider {
     const candidates = products.filter((product) => Boolean(product.sourceUrl)).slice(0, maxItems);
     const enriched = await mapWithConcurrency(candidates, this.extractConcurrency, async (product) => {
       try {
-        const response = await fetchHtml(product.sourceUrl as string);
+        const response = await this.fetchPage(product.sourceUrl as string);
         const compatibility = extractCompatibilityFromHtml(response.body);
         const detail = extractProductsFromHtml(response.body, response.finalUrl, this.name, rule)
           .find((item) => item.sourceUrl === response.finalUrl || item.sourceUrl === product.sourceUrl);
@@ -520,7 +524,7 @@ export class DomainProvider implements ScrapingProvider {
   }
 
   private async crawlChaparei(sourceUrl: string, limit: number, rule: DomainRule) {
-    const session = createChapareiSession();
+    const session = createChapareiSession((url, redirects, init) => this.fetchPage(url, redirects, init));
 
     try {
       const response = await session.fetch(sourceUrl);
@@ -549,7 +553,7 @@ export class DomainProvider implements ScrapingProvider {
 
     for (const discoveryUrl of discoveryUrls) {
       try {
-        const session = createChapareiSession();
+        const session = createChapareiSession((url, redirects, init) => this.fetchPage(url, redirects, init));
         const response = await session.fetch(discoveryUrl);
         this.resolveChapareiBrandSeedEntries(response, discoveryUrl).forEach(({ sourceUrl, brandLabel }) => {
           if (!brandSeeds.has(sourceUrl)) {
@@ -592,7 +596,7 @@ export class DomainProvider implements ScrapingProvider {
     rule: DomainRule,
   ) {
     const { sourceUrl: brandUrl, brandLabel } = brandSeed;
-    const session = createChapareiSession();
+    const session = createChapareiSession((url, redirects, init) => this.fetchPage(url, redirects, init));
     const pages: Array<{ url: string; method: string; productCount: number }> = [];
     const collected: ProductRecord[] = [];
 
@@ -614,10 +618,14 @@ export class DomainProvider implements ScrapingProvider {
 
       for (let page = 1; collected.length < maxItems; page += 1) {
         const ajaxUrl = buildChapareiAjaxPageUrl(firstResponse.finalUrl, page);
-        const ajaxResponse = await session.fetch(ajaxUrl);
+        let ajaxResponse = await session.fetch(ajaxUrl);
 
         if (!ajaxResponse.body.trim()) {
-          break;
+          this.logger.warn(`Respuesta vacia de Chaparei; reintentando pagina url=${ajaxUrl}`);
+          ajaxResponse = await session.fetch(ajaxUrl);
+          if (!ajaxResponse.body.trim()) {
+            break;
+          }
         }
 
         const batch = applyChapareiContextBrand(
@@ -758,10 +766,15 @@ export class DomainProvider implements ScrapingProvider {
   ): Array<{ sourceUrl: string; brandLabel?: string }> {
     const parsedBrands = extractChapareiBrandsFromHtml(response.body, response.finalUrl);
     if (parsedBrands.length > 0 && isChapareiBrandHubUrl(response.finalUrl)) {
-      return parsedBrands.map(({ sourceUrl: parsedSourceUrl, brandLabel }) => ({
+      const brandEntries = parsedBrands.map(({ sourceUrl: parsedSourceUrl, brandLabel }) => ({
         sourceUrl: parsedSourceUrl,
         brandLabel,
       }));
+      const categoryEntries = extractCandidateLinks(response.body, response.finalUrl, findDomainRule(response.finalUrl)!)
+        .categoryLinks
+        .filter((url) => !extractChapareiBrandId(url))
+        .map((categoryUrl) => ({ sourceUrl: categoryUrl }));
+      return uniqueChapareiSeedEntries([...brandEntries, ...categoryEntries]);
     }
 
     const contextualBrandLabel =
@@ -920,6 +933,19 @@ export class DomainProvider implements ScrapingProvider {
       discoveryMethod: 'taxitor-http',
     };
   }
+}
+
+function uniqueChapareiSeedEntries(
+  entries: Array<{ sourceUrl: string; brandLabel?: string }>,
+): Array<{ sourceUrl: string; brandLabel?: string }> {
+  const unique = new Map<string, { sourceUrl: string; brandLabel?: string }>();
+  for (const entry of entries) {
+    const current = unique.get(entry.sourceUrl);
+    if (!current || (!current.brandLabel && entry.brandLabel)) {
+      unique.set(entry.sourceUrl, entry);
+    }
+  }
+  return Array.from(unique.values());
 }
 
 export function extractEuropartsTotal(body: string): number | undefined {
@@ -1307,12 +1333,12 @@ export function extractChapareiBrandLabelFromUrl(
   return brands.find((brand) => brand.brandId === brandId)?.brandLabel;
 }
 
-function createChapareiSession() {
+function createChapareiSession(fetchPage: typeof fetchHtml = fetchHtml) {
   let cookieHeader: string | undefined;
 
   return {
     async fetch(url: string): Promise<HttpResponseData> {
-      const response = await fetchHtml(url, 5, {
+      const response = await fetchPage(url, 5, {
         headers: cookieHeader
           ? {
               cookie: cookieHeader,

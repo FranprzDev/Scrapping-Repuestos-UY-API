@@ -215,7 +215,9 @@ export function qualityGate(products: ProductRecord[], rule?: DomainRule): Produ
       .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
       .filter((product) => {
         const warnings = product.qualityWarnings ?? [];
-        return product.availability !== 'out_of_stock' && !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
+        const preserveUnavailable = rule?.preserveOutOfStock === true;
+        return (preserveUnavailable || product.availability !== 'out_of_stock')
+          && !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
       }),
   );
 }
@@ -255,6 +257,7 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
       price: product.price ?? previous.price,
       currency: product.currency ?? previous.currency,
       brand: product.brand ?? previous.brand,
+      sku: product.sku ?? previous.sku,
       category: product.category ?? previous.category,
       description: product.description ?? previous.description,
       availability: product.availability ?? previous.availability,
