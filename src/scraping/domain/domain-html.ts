@@ -793,9 +793,7 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
   const articles = queryAll(root, 'article.prod_item');
 
   for (const article of articles) {
-    if (isChapareiOutOfStockCard(article)) {
-      continue;
-    }
+    const isOutOfStock = isChapareiOutOfStockCard(article);
 
     const sourceUrl = firstNonEmpty([
       normalizeUrl(firstAttributeValue(article, ['a[href*="/catalogo/"]'], 'href'), pageUrl),
@@ -810,7 +808,7 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
     const productName = extractChapareiListingName(article);
     const rawPrice = extractChapareiListingPrice(article);
 
-    if (!productName || !rawPrice) {
+    if (!productName) {
       continue;
     }
 
@@ -826,11 +824,14 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
       price: normalizePriceValue(rawPrice),
       currency: inferCurrency(rawPrice),
       brand: extractBrandFromText(cleanText(firstElementText(article, ['.copete_f'])) ?? cleanText(firstElementText(article, ['.copete_ficha']))),
+      sku: extractChapareiSku(article, sourceUrl),
       description: cleanText(firstElementText(article, ['.copete_f'])) ?? cleanText(firstElementText(article, ['.copete_ficha'])),
       imageUrl:
         normalizeUrl(firstAttributeValue(article, ['img'], 'src') ?? firstAttributeValue(article, ['img'], 'data-src') ?? firstAttributeValue(article, ['img'], 'srcset')?.split(',')[0]?.trim().split(' ')[0], pageUrl),
       sourceUrl,
-      availability: resolveAvailability(availabilityText ?? '', rule) === 'in_stock'
+      availability: isOutOfStock
+        ? 'out_of_stock'
+        : resolveAvailability(availabilityText ?? '', rule) === 'in_stock'
         ? 'in_stock'
         : resolveAvailability(availabilityText ?? '', rule) === 'out_of_stock'
           ? 'out_of_stock'
@@ -988,7 +989,7 @@ function extractChapareiDetailProduct(root: HTMLElement, pageUrl: string, provid
     cleanText(firstElementText(root, ['.pprecio'])),
   ]);
 
-  if (!title || !priceText) {
+  if (!title) {
     return undefined;
   }
 
@@ -1013,6 +1014,7 @@ function extractChapareiDetailProduct(root: HTMLElement, pageUrl: string, provid
     price: normalizePriceValue(priceText),
     currency: inferCurrency(priceText),
     brand: extractBrandFromText(brandText),
+    sku: extractChapareiSku(root, pageUrl),
     description: cleanText(firstElementText(root, ['.copete_ficha', '.copete_f'])),
     imageUrl:
       normalizeUrl(firstNonEmpty(attributeValues(root, ['figure img', '.prod_cont img', '.foto img', 'img'], 'src')), pageUrl)
@@ -1031,6 +1033,26 @@ function extractChapareiDetailProduct(root: HTMLElement, pageUrl: string, provid
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractChapareiSku(root: HTMLElement, sourceUrl: string): string | undefined {
+  const explicit = firstNonEmpty([
+    cleanText(firstElementText(root, ['[itemprop="sku"]'])),
+    cleanText(firstAttributeValue(root, ['[itemprop="sku"]'], 'content')),
+    cleanText(firstElementText(root, ['.sku', '.codigo', '.cod_producto', '[class*="codigo"]'])),
+  ]);
+  const explicitMatch = explicit?.match(/(?:sku|c[oó]d(?:igo)?(?:\s+del\s+producto)?)?\s*[:#-]?\s*([a-z]\d{5,}|[a-z0-9][a-z0-9._-]{4,})/i);
+  if (explicitMatch?.[1]) {
+    return explicitMatch[1].toUpperCase();
+  }
+
+  try {
+    const slug = new URL(sourceUrl).pathname.split('/').filter(Boolean).at(-1);
+    const slugMatch = slug?.match(/(?:^|-)([a-z]\d{5,})$/i);
+    return slugMatch?.[1]?.toUpperCase();
+  } catch {
+    return undefined;
+  }
 }
 
 function isSelvirProductCard(href: string, card: HTMLElement, cardText: string): boolean {
