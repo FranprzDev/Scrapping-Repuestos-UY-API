@@ -98,7 +98,7 @@ export const DOMAIN_RULES: DomainRule[] = [
       title: ['h1'],
       price: ['.precio', 'h4', '[class*="precio"]'],
       description: ['main p', '.copete_ficha', '.copete_f'],
-      image: ['main img', 'figure img', 'meta[property="og:image"]'],
+      image: ['.producto__imagenes img', 'section.producto img'],
     },
   },
   {

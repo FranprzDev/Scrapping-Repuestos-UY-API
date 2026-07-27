@@ -1134,6 +1134,11 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
+  const imageUrls = uniqueStrings(
+    attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')
+      .map((value) => normalizeUrl(value, pageUrl))
+      .filter((value): value is string => Boolean(value)),
+  );
 
 
   return {
@@ -1144,8 +1149,11 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1]),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
-      normalizeUrl(firstNonEmpty(attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')), pageUrl)
-      ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
+      imageUrls[0]
+      ?? (rule.id === 'grfrenos'
+        ? undefined
+        : normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl)),
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
     sourceUrl: pageUrl,
     availability:
       availability === 'in_stock'
@@ -1178,6 +1186,10 @@ function attributeValues(root: HTMLElement, selectors: string[], attribute: stri
         .map((element) => cleanText(element.getAttribute(attribute))),
     )
     .filter((value): value is string => Boolean(value));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
 }
 
 function extractPriceFromNode(node: HTMLElement): string | undefined {
