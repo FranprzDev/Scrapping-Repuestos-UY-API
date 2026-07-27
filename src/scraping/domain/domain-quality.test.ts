@@ -1205,6 +1205,20 @@ test('no confunde Consulte con agotado por defecto', () => {
   assert.equal(products.length, 1);
 });
 
+test('preserva productos agotados aunque la casa no tenga una regla explicita', () => {
+  const products = qualityGate([{
+    productName: 'REPUESTO AGOTADO DEMO',
+    price: '1234',
+    availability: 'out_of_stock',
+    sourceUrl: 'https://example.com/producto-demo',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }]);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+});
+
 test('resume correctamente el archive de Selvir y limpia labels de categoria', () => {
   const html = `
     <html>
