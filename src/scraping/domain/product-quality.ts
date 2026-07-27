@@ -264,6 +264,7 @@ export function dedupeProducts(products: ProductRecord[]): ProductRecord[] {
       stock: product.stock ?? previous.stock,
       sourceUrl: product.sourceUrl ?? previous.sourceUrl,
       imageUrl: product.imageUrl ?? previous.imageUrl,
+      imageUrls: mergeTextValues(previous.imageUrls, product.imageUrls),
       imagePath: product.imagePath ?? previous.imagePath,
       compatibleBrands: mergeCompatibleBrands(previous.compatibleBrands, product.compatibleBrands),
       compatibleVehicles: mergeTextValues(previous.compatibleVehicles, product.compatibleVehicles),

@@ -36,6 +36,11 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
   - URL base: `https://larrique.com.uy/repuestos-autopartes/1`
   - Cobertura: descubrimiento dinámico de 142 marcas, cálculo de página final acumulada, precio, SKU y relaciones producto-marca
 
+- `GR Frenos`
+  - URL base: `https://www.grfrenos.uy/home/`
+  - Cobertura: descubrimiento de marcas, catálogo por marca, detalle de producto, precio, compatibilidad e imagen del producto
+  - Imágenes: se toma la imagen real del bloque `.producto__imagenes` (o `section.producto`) y se normaliza a una URL absoluta. No se usa `og:image` como sustituto porque en este sitio puede apuntar a una imagen genérica o distinta del producto.
+
 ## Pendientes
 
 - `Autopartes Gil`

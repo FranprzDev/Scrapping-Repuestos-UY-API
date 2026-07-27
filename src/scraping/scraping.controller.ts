@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, Inject, NotFoundException, Param, Post, Query, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Inject, NotFoundException, Param, Post, Query, UnauthorizedException } from '@nestjs/common';
 import { CatalogScrapeRequestDto, DEFAULT_CATALOG_SITES, SingleSiteCatalogScrapeRequestDto } from './dto/catalog-request.dto';
 import { CrawlRequestDto, DomainProviderConfigDto, ExtractRequestDto, JobIdParamDto, ScrapeRequestDto } from './dto/scrape-request.dto';
 import { ADMITTED_HOUSES, findDomainRule } from './domain/domain-rules';
@@ -32,15 +32,6 @@ export class ScrapingController {
     private readonly catalogScrapingService: CatalogScrapingService,
   ) {}
 
-  @Get()
-  @Header('Content-Type', 'text/html; charset=utf-8')
-  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
-  @Header('Pragma', 'no-cache')
-  @Header('Expires', '0')
-  home() {
-    return renderInventoryPage();
-  }
-
   @Get('health')
   health() {
     return {
@@ -48,15 +39,6 @@ export class ScrapingController {
       service: 'Scrapping-Repuestos-UY-API',
       mode: 'hybrid-provider',
     };
-  }
-
-  @Get('stats')
-  @Header('Content-Type', 'text/html; charset=utf-8')
-  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
-  @Header('Pragma', 'no-cache')
-  @Header('Expires', '0')
-  stats() {
-    return renderStatsPage();
   }
 
   @Get('stats/data')

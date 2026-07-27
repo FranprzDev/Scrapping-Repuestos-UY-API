@@ -75,11 +75,6 @@ npm run start:dev
 
 - `GET /health`
 
-### Home
-
-- `GET /`
-- Landing ligera para operacion y acceso rapido a los endpoints principales.
-
 ### Scrape individual
 
 - `POST /scraping/scrape`
@@ -117,6 +112,8 @@ Body opcional:
 
 - `GET /scraping/inventory`
 - `GET /scraping/inventory?site=https://taxitor.uy/`
+
+La API no expone frontend HTML. El consumo se realiza exclusivamente mediante sus endpoints HTTP/JSON.
 
 ### Refresh completo
 
