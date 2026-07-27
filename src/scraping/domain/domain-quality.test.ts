@@ -27,7 +27,7 @@ import {
   parseAcesurFilterOptions,
 } from '../providers/domain.provider';
 
-test('rechaza productos agotados en cards tipo Chaparei', () => {
+test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
 
@@ -62,7 +62,9 @@ test('rechaza productos agotados en cards tipo Chaparei', () => {
   `;
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+  assert.equal(products[0].sku, 'F0104160');
 });
 
 test('extrae compatibilidades de modelo y version desde el detalle', () => {
@@ -151,7 +153,7 @@ test('reemplaza el fallback Otros cuando el detalle aporta una marca compatible'
   assert.deepEqual(mergeCompatibleBrands(['Otros'], ['Chevrolet']), ['Chevrolet']);
 });
 
-test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {
+test('preserva cards Chaparei con clase prod_sin_stock aunque no digan agotado en el texto', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
 
@@ -185,7 +187,9 @@ test('ignora cards Chaparei con clase prod_sin_stock aunque no digan agotado en 
   `;
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+  assert.equal(products[0].sku, 'T1501180');
 });
 
 test('acepta productos con carrito en detalle tipo Taxitor', () => {
@@ -360,7 +364,9 @@ test('no duplica productos Taxitor al unir paginas consecutivas', () => {
   );
 });
 
-test('Taxitor live crawl devuelve un producto correcto por cada pagina recorrida', async () => {
+test('Taxitor live crawl devuelve un producto correcto por cada pagina recorrida', {
+  skip: process.env.RUN_LIVE_TESTS !== '1' ? 'requiere RUN_LIVE_TESTS=1 y acceso de red' : false,
+}, async () => {
   const rule = findDomainRule('https://taxitor.uy/articulos/filtro/1/-/-/');
   assert.ok(rule);
 
@@ -449,7 +455,44 @@ test('acepta detalle de Chaparei con boton comprar y agotado oculto', () => {
   assert.equal(products.length, 1);
   assert.equal(products[0].price, '3.894');
   assert.equal(products[0].brand, 'BMW');
+  assert.equal(products[0].sku, 'B2200381');
   assert.equal(products[0].availability, 'in_stock');
+});
+
+test('preserva un detalle Chaparei sin precio y extrae el SKU explicito', () => {
+  const detailUrl = 'https://www.chaparei.com/catalogo/carroceria/puerta-tras-der-k0801480/';
+  const rule = findDomainRule(detailUrl);
+  assert.ok(rule);
+
+  const products = qualityGate(extractProductsFromHtml(`
+    <main>
+      <h1>PUERTA TRAS. DER.</h1>
+      <div itemprop="sku">Código: K0801480</div>
+      <h2 class="copete_ficha">KIA - PICANTO 2018-</h2>
+      <button>Consultar</button>
+    </main>
+  `, detailUrl, 'domain', rule), rule);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].price, undefined);
+  assert.equal(products[0].sku, 'K0801480');
+  assert.ok(products[0].qualityWarnings?.includes('missing_price'));
+});
+
+test('continua rechazando agotados fuera de Chaparei', () => {
+  const rule = findDomainRule('https://taxitor.uy/articulos/mostrar/123');
+  assert.ok(rule);
+
+  const products = qualityGate([{
+    productName: 'FARO DELANTERO',
+    price: '1.500',
+    availability: 'out_of_stock',
+    sourceUrl: 'https://taxitor.uy/articulos/mostrar/123',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], rule);
+
+  assert.equal(products.length, 0);
 });
 
 test('preserva productos con precio cero y los marca con warning', () => {
