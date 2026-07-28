@@ -979,6 +979,7 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
       const noComprable = String(item.no_comprable ?? '').trim().toUpperCase();
       const explicitlyUnavailable = ['S', 'SI', '1', 'TRUE'].includes(noComprable);
       const rawPrice = String(item.precio ?? item.precio_anterior_con_iva ?? '').trim();
+      const sku = String(item.codigo ?? item.codigo_fabrica ?? '').trim();
 
       accumulator.push({
         productName: String(item.descripcion_corta ?? '').trim() || String(item.descripcion_larga ?? '').trim(),
@@ -996,7 +997,7 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
                 ? 'in_stock'
                 : 'out_of_stock',
         stock,
-        sourceUrl: `${sourceUrl}?codigo=${encodeURIComponent(String(item.codigo ?? item.codigo_fabrica ?? ''))}`,
+        sourceUrl: buildAcesurProductUrl(sku) ?? sourceUrl,
         imageUrl: buildAcesurImageUrl(String(item.nombre_foto ?? '').trim()),
         attributes: {
           oferta: String(item.oferta ?? ''),
@@ -1010,6 +1011,13 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
     }, []);
 
   return { totalRecords, products };
+}
+
+export function buildAcesurProductUrl(sku: string): string | undefined {
+  const normalizedSku = sku.trim();
+  return normalizedSku
+    ? `https://acesur.uy/detalle-producto/?articulo=${encodeURIComponent(normalizedSku)}`
+    : undefined;
 }
 
 export function parseAcesurFilterOptions(body: string): string[] {

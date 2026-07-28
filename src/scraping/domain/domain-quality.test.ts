@@ -26,7 +26,16 @@ import {
   buildAcesurEndpoint,
   parseAcesurFilterOptions,
   parseAcesurApi,
+  buildAcesurProductUrl,
 } from '../providers/domain.provider';
+
+test('arma la ficha de Acesur usando el SKU del producto', () => {
+  assert.equal(
+    buildAcesurProductUrl('14.1015'),
+    'https://acesur.uy/detalle-producto/?articulo=14.1015',
+  );
+  assert.equal(buildAcesurProductUrl(''), undefined);
+});
 
 test('interpreta las variantes de no_comprable de la API de Acesur', () => {
   const result = parseAcesurApi(JSON.stringify({
@@ -42,6 +51,14 @@ test('interpreta las variantes de no_comprable de la API de Acesur', () => {
   assert.deepEqual(result.products.map((product) => product.availability), [
     'out_of_stock', 'out_of_stock', 'out_of_stock', 'out_of_stock', 'in_stock',
   ]);
+});
+
+test('guarda la ficha de Acesur como sourceUrl al parsear un producto', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [{ codigo: '14.1015', descripcion_corta: 'Producto demo', stock: '1' }],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.equal(result.products[0].sourceUrl, 'https://acesur.uy/detalle-producto/?articulo=14.1015');
 });
 
 test('preserva productos agotados en cards tipo Chaparei', () => {
