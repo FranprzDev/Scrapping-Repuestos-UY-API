@@ -61,6 +61,23 @@ test('guarda la ficha de Acesur como sourceUrl al parsear un producto', () => {
   assert.equal(result.products[0].sourceUrl, 'https://acesur.uy/detalle-producto/?articulo=14.1015');
 });
 
+test('usa foto_grande de Acesur como imagen principal y conserva foto_chica', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [{
+      codigo: '14.1015',
+      descripcion_corta: 'Producto con imagen',
+      foto_grande: 'https://acesur.uy/fotos/grandes/14_1015.jpg',
+      foto_chica: 'https://acesur.uy/fotos/chicas/14_1015.jpg',
+    }],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.equal(result.products[0].imageUrl, 'https://acesur.uy/fotos/grandes/14_1015.jpg');
+  assert.deepEqual(result.products[0].imageUrls, [
+    'https://acesur.uy/fotos/grandes/14_1015.jpg',
+    'https://acesur.uy/fotos/chicas/14_1015.jpg',
+  ]);
+});
+
 test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
