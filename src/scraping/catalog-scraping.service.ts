@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 export interface CatalogSiteProgress {
   site: string;
   url?: string;
-  status: 'success' | 'error';
+  status: 'processing' | 'success' | 'error';
   stage?: 'starting' | 'crawling' | 'extracting' | 'saving' | 'done' | 'error';
   timeWorkingMs: number;
   quantityScrapped: number;
@@ -68,7 +68,7 @@ export class CatalogScrapingService {
         await onSiteProgress?.({
           site: url,
           url,
-          status: 'success',
+          status: 'processing',
           stage: 'starting',
           timeWorkingMs: 0,
           quantityScrapped: 0,
@@ -90,7 +90,7 @@ export class CatalogScrapingService {
         await onSiteProgress?.({
           site: url,
           url,
-          status: 'success',
+          status: 'processing',
           stage: 'crawling',
           timeWorkingMs: Date.now() - siteStartedAt,
           quantityScrapped: 0,
@@ -120,7 +120,7 @@ export class CatalogScrapingService {
         await onSiteProgress?.({
           site: url,
           url,
-          status: 'success',
+          status: 'processing',
           stage: 'extracting',
           timeWorkingMs: Date.now() - siteStartedAt,
           quantityScrapped: 0,
@@ -147,7 +147,7 @@ export class CatalogScrapingService {
           await onSiteProgress?.({
             site: url,
             url,
-            status: 'success',
+            status: 'processing',
             stage: 'saving',
             timeWorkingMs: Date.now() - siteStartedAt,
             quantityScrapped: refreshedMergedProducts.length,
