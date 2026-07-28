@@ -215,7 +215,9 @@ export function qualityGate(products: ProductRecord[], rule?: DomainRule): Produ
       .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
       .filter((product) => {
         const warnings = product.qualityWarnings ?? [];
-        const preserveUnavailable = rule?.id === 'chaparei';
+        // Out-of-stock products remain useful catalog entries for every scraper.
+        // Keep the flag as an explicit opt-out for future exceptional rules.
+        const preserveUnavailable = rule?.preserveOutOfStock !== false;
         return (preserveUnavailable || product.availability !== 'out_of_stock')
           && !warnings.some((warning) => HARD_REJECTION_WARNINGS.has(warning));
       }),

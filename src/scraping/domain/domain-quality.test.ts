@@ -25,7 +25,41 @@ import {
   parseSelvirAjaxResponse,
   buildAcesurEndpoint,
   parseAcesurFilterOptions,
+  parseAcesurApi,
+  buildAcesurProductUrl,
 } from '../providers/domain.provider';
+
+test('arma la ficha de Acesur usando el SKU del producto', () => {
+  assert.equal(
+    buildAcesurProductUrl('14.1015'),
+    'https://acesur.uy/detalle-producto/?articulo=14.1015',
+  );
+  assert.equal(buildAcesurProductUrl(''), undefined);
+});
+
+test('interpreta las variantes de no_comprable de la API de Acesur', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [
+      { codigo: 'S', descripcion_corta: 'Sin compra S', no_comprable: 'S', stock: '5' },
+      { codigo: 'SI', descripcion_corta: 'Sin compra SI', no_comprable: ' SI ', stock: '5' },
+      { codigo: '1', descripcion_corta: 'Sin compra 1', no_comprable: '1', stock: '5' },
+      { codigo: 'TRUE', descripcion_corta: 'Sin compra TRUE', no_comprable: 'true', stock: '5' },
+      { codigo: 'N', descripcion_corta: 'Disponible', no_comprable: 'N', stock: '5' },
+    ],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.deepEqual(result.products.map((product) => product.availability), [
+    'out_of_stock', 'out_of_stock', 'out_of_stock', 'out_of_stock', 'in_stock',
+  ]);
+});
+
+test('guarda la ficha de Acesur como sourceUrl al parsear un producto', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [{ codigo: '14.1015', descripcion_corta: 'Producto demo', stock: '1' }],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.equal(result.products[0].sourceUrl, 'https://acesur.uy/detalle-producto/?articulo=14.1015');
+});
 
 test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
@@ -479,7 +513,7 @@ test('preserva un detalle Chaparei sin precio y extrae el SKU explicito', () => 
   assert.ok(products[0].qualityWarnings?.includes('missing_price'));
 });
 
-test('continua rechazando agotados fuera de Chaparei', () => {
+test('preserva agotados en las casas configuradas para catalogo completo', () => {
   const rule = findDomainRule('https://taxitor.uy/articulos/mostrar/123');
   assert.ok(rule);
 
@@ -492,7 +526,9 @@ test('continua rechazando agotados fuera de Chaparei', () => {
     provider: 'domain',
   }], rule);
 
-  assert.equal(products.length, 0);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
+  assert.ok(products[0].qualityWarnings?.includes('not_sellable'));
 });
 
 test('preserva productos con precio cero y los marca con warning', () => {
@@ -1201,6 +1237,20 @@ test('no confunde Consulte con agotado por defecto', () => {
   ], rule);
 
   assert.equal(products.length, 1);
+});
+
+test('preserva productos agotados aunque la casa no tenga una regla explicita', () => {
+  const products = qualityGate([{
+    productName: 'REPUESTO AGOTADO DEMO',
+    price: '1234',
+    availability: 'out_of_stock',
+    sourceUrl: 'https://example.com/producto-demo',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }]);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'out_of_stock');
 });
 
 test('resume correctamente el archive de Selvir y limpia labels de categoria', () => {
