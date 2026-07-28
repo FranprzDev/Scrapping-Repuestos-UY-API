@@ -980,6 +980,10 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
       const explicitlyUnavailable = ['S', 'SI', '1', 'TRUE'].includes(noComprable);
       const rawPrice = String(item.precio ?? item.precio_anterior_con_iva ?? '').trim();
       const sku = String(item.codigo ?? item.codigo_fabrica ?? '').trim();
+      const imageUrls = uniqueAcesurImageUrls([
+        String(item.foto_grande ?? '').trim(),
+        String(item.foto_chica ?? '').trim(),
+      ]);
 
       accumulator.push({
         productName: String(item.descripcion_corta ?? '').trim() || String(item.descripcion_larga ?? '').trim(),
@@ -998,7 +1002,8 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
                 : 'out_of_stock',
         stock,
         sourceUrl: buildAcesurProductUrl(sku) ?? sourceUrl,
-        imageUrl: buildAcesurImageUrl(String(item.nombre_foto ?? '').trim()),
+        imageUrl: imageUrls[0],
+        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
         attributes: {
           oferta: String(item.oferta ?? ''),
           promocion: String(item.promocion ?? ''),
@@ -1011,6 +1016,10 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
     }, []);
 
   return { totalRecords, products };
+}
+
+function uniqueAcesurImageUrls(urls: string[]): string[] {
+  return Array.from(new Set(urls.filter((url) => /^https?:\/\//i.test(url))));
 }
 
 export function buildAcesurProductUrl(sku: string): string | undefined {
