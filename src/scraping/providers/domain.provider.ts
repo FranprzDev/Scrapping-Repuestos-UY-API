@@ -976,7 +976,8 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
     const products = items.reduce<ProductRecord[]>((accumulator, item) => {
       const stock = String(item.stock ?? '').trim();
       const stockValue = Number(stock.replace(',', '.'));
-      const noComprable = String(item.no_comprable ?? '').toUpperCase();
+      const noComprable = String(item.no_comprable ?? '').trim().toUpperCase();
+      const explicitlyUnavailable = ['S', 'SI', '1', 'TRUE'].includes(noComprable);
       const rawPrice = String(item.precio ?? item.precio_anterior_con_iva ?? '').trim();
 
       accumulator.push({
@@ -987,7 +988,7 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
         category: [item.rubro, item.subrubro].filter(Boolean).join(' / ') || undefined,
         description: String(item.descripcion_larga ?? item.comentarios ?? '').trim() || undefined,
         availability:
-          noComprable === 'S'
+          explicitlyUnavailable
             ? 'out_of_stock'
             : Number.isNaN(stockValue)
               ? 'unknown'

@@ -25,7 +25,24 @@ import {
   parseSelvirAjaxResponse,
   buildAcesurEndpoint,
   parseAcesurFilterOptions,
+  parseAcesurApi,
 } from '../providers/domain.provider';
+
+test('interpreta las variantes de no_comprable de la API de Acesur', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [
+      { codigo: 'S', descripcion_corta: 'Sin compra S', no_comprable: 'S', stock: '5' },
+      { codigo: 'SI', descripcion_corta: 'Sin compra SI', no_comprable: ' SI ', stock: '5' },
+      { codigo: '1', descripcion_corta: 'Sin compra 1', no_comprable: '1', stock: '5' },
+      { codigo: 'TRUE', descripcion_corta: 'Sin compra TRUE', no_comprable: 'true', stock: '5' },
+      { codigo: 'N', descripcion_corta: 'Disponible', no_comprable: 'N', stock: '5' },
+    ],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.deepEqual(result.products.map((product) => product.availability), [
+    'out_of_stock', 'out_of_stock', 'out_of_stock', 'out_of_stock', 'in_stock',
+  ]);
+});
 
 test('preserva productos agotados en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
