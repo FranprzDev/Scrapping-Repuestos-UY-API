@@ -91,6 +91,10 @@ export class CatalogScrapeRequestDto {
   @IsInt()
   @Min(1)
   siteConcurrency?: number;
+
+  @IsOptional()
+  @IsArray()
+  acesurRubros?: string[];
 }
 
 export class SingleSiteCatalogScrapeRequestDto {
