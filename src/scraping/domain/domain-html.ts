@@ -609,6 +609,10 @@ function extractJsonLdProducts(root: HTMLElement, pageUrl: string, provider: Pro
 }
 
 function extractListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  if (rule.id === 'selvir') {
+    return extractSelvirListProducts(root, pageUrl, provider, rule);
+  }
+
   const products: ProductRecord[] = [];
   const seen = new Set<string>();
 
@@ -665,6 +669,67 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       provider,
     });
   });
+
+  return products;
+}
+
+function extractSelvirListProducts(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
+  const products: ProductRecord[] = [];
+  const seen = new Set<string>();
+
+  for (const card of root.querySelectorAll('.product-item-container')) {
+    let parentAnchor: HTMLElement | undefined = card.parentNode;
+    while (parentAnchor && parentAnchor.rawTagName?.toLowerCase() !== 'a') {
+      parentAnchor = parentAnchor.parentNode;
+    }
+    if (parentAnchor?.rawTagName?.toLowerCase() !== 'a') {
+      parentAnchor = undefined;
+    }
+    const productAnchor = card.querySelector('a[href*="/product/"]') ?? parentAnchor;
+    const sourceUrl = normalizeUrl(productAnchor?.getAttribute('href'), pageUrl);
+    if (!sourceUrl || seen.has(sourceUrl) || !isAllowedCatalogUrl(sourceUrl, pageUrl)) {
+      continue;
+    }
+
+    const cardText = cleanText(card.text) ?? '';
+    if (!isSelvirProductCard(sourceUrl, card, cardText)) {
+      continue;
+    }
+
+    const productName = extractSelvirListingNameV2(productAnchor ?? card, card, cardText);
+    if (!productName) {
+      continue;
+    }
+
+    const rawPrice = extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card);
+    const imageUrls = uniqueStrings(
+      ['src', 'data-src', 'data-lazy-src', 'srcset']
+        .flatMap((attribute) => card.querySelectorAll('img').map((image) => cleanText(image.getAttribute(attribute))))
+        .filter((value): value is string => Boolean(value))
+        .flatMap((value) => value.split(',').map((part) => part.trim().split(/\s+/)[0]))
+        .map((value) => normalizeUrl(value, pageUrl))
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    seen.add(sourceUrl);
+    products.push({
+      productName,
+      price: normalizePriceValue(rawPrice),
+      currency: inferCurrency(rawPrice),
+      description: cleanText(firstElementText(card, ['p'])),
+      imageUrl: imageUrls[0],
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+      sourceUrl,
+      availability:
+        resolveAvailability(cardText, rule) === 'in_stock'
+          ? 'in_stock'
+          : resolveAvailability(cardText, rule) === 'out_of_stock'
+            ? 'out_of_stock'
+            : undefined,
+      extractedAt: new Date().toISOString(),
+      provider,
+    });
+  }
 
   return products;
 }

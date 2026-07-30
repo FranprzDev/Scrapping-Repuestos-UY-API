@@ -1048,17 +1048,23 @@ test('extrae tarjetas Selvir reales sin mezclar titulo y precio entre productos'
       productName: product.productName,
       price: product.price,
       sourceUrl: product.sourceUrl,
+      imageUrl: product.imageUrl,
+      imageUrls: product.imageUrls,
     })),
     [
       {
         productName: '10 BROCHES GM 86-1Y0143',
         price: '153',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0143/',
+        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
+        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
       },
       {
         productName: '10 BROCHES GM 86-1Y0144',
         price: '182',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0144/',
+        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
+        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
       },
     ],
   );
