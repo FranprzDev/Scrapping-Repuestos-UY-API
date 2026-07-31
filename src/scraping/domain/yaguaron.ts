@@ -80,20 +80,22 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
   const root = parse(html);
   const detailRoot = findDetailRoot(root);
   const jsonLd = extractJsonLd(root);
-  const embedded = extractEmbeddedYaguaronProduct(root);
   const labels = extractLabelValues(detailRoot);
+  const visibleSku = label(labels, ['art', 'articulo']);
+  const fallbackSku = skuFromUrl(sourceUrl);
+  const embedded = extractEmbeddedYaguaronProduct(root, visibleSku ?? fallbackSku);
   const characteristics = extractCharacteristics(detailRoot);
   const productName = firstText(detailRoot, ['h1', '.aFichaProducto .tit', '.fichaProducto .tit', '[itemprop="name"]'])
     ?? textValue(embedded?.producto, ['nombre'])
     ?? asText(jsonLd?.name);
   if (!productName) return undefined;
 
-  const rawPrice = firstText(detailRoot, ['.precio.venta', '.precio', '[itemprop="price"]', '.precios'])
-    ?? asText(embedded?.precioMonto)
+  const rawPrice = asText(embedded?.precioMonto)
+    ?? firstText(detailRoot, ['.precio.venta', '.precio', '[itemprop="price"]', '.precios'])
     ?? asText(jsonLd?.offers?.price);
-  const sku = label(labels, ['art', 'articulo'])
+  const sku = visibleSku
     ?? textValue(embedded?.producto, ['codigo'])
-    ?? skuFromUrl(sourceUrl);
+    ?? fallbackSku;
   const quality = label(labels, ['calidad']) ?? embeddedCharacteristic(embedded?.carac, ['calidad']);
   const manufacturer = label(labels, ['fabricante'])
     ?? embeddedCharacteristic(embedded?.carac, ['fabricante'])
@@ -224,18 +226,20 @@ function extractJsonLd(root: HTMLElement): JsonLdProduct | undefined {
   return undefined;
 }
 
-function extractEmbeddedYaguaronProduct(root: HTMLElement): EmbeddedYaguaronProduct | undefined {
+function extractEmbeddedYaguaronProduct(root: HTMLElement, expectedSku?: string): EmbeddedYaguaronProduct | undefined {
+  const found: EmbeddedYaguaronProduct[] = [];
   for (const script of root.querySelectorAll('script')) {
     const text = script.text;
     if (!/("producto"\s*:|precioMonto|tieneStock)/.test(text)) continue;
     for (const candidate of jsonObjectCandidates(text)) {
       try {
-        const found = findEmbeddedProduct(JSON.parse(candidate));
-        if (found) return found;
+        const product = findEmbeddedProduct(JSON.parse(candidate));
+        if (product) found.push(product);
       } catch { /* Ignore non-JSON executable snippets. */ }
     }
   }
-  return undefined;
+  const expected = cleanText(expectedSku);
+  return found.find((product) => expected && textValue(product.producto, ['codigo']) === expected) ?? found[0];
 }
 
 function jsonObjectCandidates(text: string): string[] {
