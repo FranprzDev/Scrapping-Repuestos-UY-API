@@ -34,18 +34,19 @@ test('Yaguarón descubre categorías, productos y total declarado del listado Fe
   assert.equal(extractYaguaronProductUrls(fixture('listing-page-2.ajax.html'), 'https://www.yaguaron.com.uy/')[0], 'https://www.yaguaron.com.uy/catalogo/soporte-de-motor_111111_222222');
 });
 
-test('Yaguarón extrae la ficha disponible y excluye imágenes ajenas al producto', () => {
+test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores amplios', () => {
   const html = fixture('detail-123251.html');
   const product = extractYaguaronDetail(`${html}<img src="/banner-home.jpg">`, `${productUrl}?utm_source=test#comprar`, 'domain');
   assert.ok(product);
   assert.equal(product.productName, 'KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS');
   assert.equal(product.sku, '123251');
-  assert.equal(product.price, '1.643');
+  assert.equal(product.price, '1643');
   assert.equal(product.currency, 'UYU');
   assert.equal(product.attributes?.calidad, 'ORIGINAL');
   assert.equal(product.attributes?.fabricante, 'ORIGINAL GM / AC DELCO');
   assert.equal(product.attributes?.referencias, '90531677 / 93353848');
-  assert.match(product.description ?? '', /Kit original/);
+  assert.equal(product.description, 'Kit original de tensor y correa para los modelos indicados.');
+  assert.doesNotMatch(product.description ?? '', /env[ií]os|medios de pago|cambios|devoluciones|redes sociales|productos relacionados|precioMonto|producto/i);
   assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg');
   assert.deepEqual(product.imageUrls, [
     'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg',
@@ -54,7 +55,7 @@ test('Yaguarón extrae la ficha disponible y excluye imágenes ajenas al product
   assert.equal(product.imageUrls?.some((url) => /logo|banner|relacionado/i.test(url)), false);
   assert.equal(product.availability, 'in_stock');
   assert.equal(product.sourceUrl, productUrl);
-  assert.deepEqual(product.compatibleModels, ['Celta', 'Prisma']);
+  assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
   assert.deepEqual(extractYaguaronArticlePosition(html), { current: 1, total: 437 });
   assert.equal(extractYaguaronDeclaredTotal(html), undefined);
 });
