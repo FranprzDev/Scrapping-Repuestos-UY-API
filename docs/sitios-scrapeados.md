@@ -47,7 +47,9 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
   - URL base: `https://www.yaguaron.com.uy/`
   - Integración Fenicio específica: menú de categorías/modelos, listado `aListProductos`, paginación AJAX `js=1&pag=N` y fichas `/catalogo/{slug}_{id1}_{id2}`.
   - Campos: título, Art./SKU, precio UYU, descripción, características, calidad, fabricante, referencias, imágenes, disponibilidad, stock, categoría y modelos compatibles.
-  - Diagnóstico: `pnpm run catalog:probe --site=yaguaron`; escribe `tmp/catalog-probe/yaguaron.json` y admite `--capture-html=true`.
+  - Diagnóstico de catálogo: `pnpm run catalog:probe --site=yaguaron --max-pages=3 --max-products=20 --capture-html=true`.
+  - Diagnóstico de ficha: `pnpm run catalog:probe --site=yaguaron --product-url=https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251 --capture-html=true`.
+  - Ambos modos escriben `tmp/catalog-probe/yaguaron.json`; `--capture-har=true` guarda un HAR cuando se utiliza el fallback de Playwright.
   - Falta una corrida live exitosa desde un entorno con acceso al origen; no debe considerarse cerrado hasta comparar el total declarado, URLs únicas, guardados y rechazados.
 
 - `Italur` y `Mirvic`

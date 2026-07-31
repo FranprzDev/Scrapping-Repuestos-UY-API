@@ -16,12 +16,13 @@ const SITE_URL = 'https://www.yaguaron.com.uy/';
 const args = new Map(process.argv.slice(2).map((arg) => { const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2); return [key, value]; }));
 const site = args.get('site');
 if (site !== 'yaguaron') {
-  console.error('Uso: pnpm run catalog:probe --site=yaguaron [--max-pages=5000] [--max-products=100000] [--capture-html=true] [--capture-har=true] [--playwright=false]');
+  console.error('Uso: pnpm run catalog:probe --site=yaguaron [--max-pages=5000] [--max-products=100000] [--product-url=https://www.yaguaron.com.uy/catalogo/...] [--capture-html=true] [--capture-har=true] [--playwright=false]');
   process.exit(2);
 }
 
 const maxPages = positiveInt(args.get('max-pages'), 5000);
 const maxProducts = positiveInt(args.get('max-products'), 100000);
+const productUrl = args.get('product-url');
 const captureHtml = args.get('capture-html') === 'true';
 const allowPlaywright = args.get('playwright') !== 'false';
 const captureHar = args.get('capture-har') === 'true';
@@ -32,6 +33,7 @@ const report = {
   site,
   initialUrl: SITE_URL,
   method: 'HTTP/Fenicio',
+  mode: productUrl ? 'product' : 'catalog',
   status: 'running',
   categoriesDiscovered: [] as string[],
   pagesVisited: [] as Array<{ url: string; method: string; discovered: number; declaredTotal?: number }>,
@@ -43,23 +45,67 @@ const report = {
   rejected: [] as Array<{ url: string; reason: string }>,
   duplicates: [] as Array<{ url: string; duplicateOf: string; reason: 'canonical_url' | 'sku' }>,
   httpErrors: [] as Array<{ url: string; message: string }>,
+  requests: [] as Array<{
+    url: string;
+    finalUrl?: string;
+    transport: 'HTTP' | 'Playwright';
+    attempt: number;
+    statusCode?: number;
+    contentType?: string;
+    bytes?: number;
+    durationMs: number;
+    error?: string;
+  }>,
   durationMs: 0,
   samples: [] as ProductRecord[],
   products: [] as ProductRecord[],
+  directProduct: productUrl ? { downloaded: false, sourceUrl: productUrl } as Record<string, unknown> : undefined as undefined | Record<string, unknown>,
 };
 
 async function main() {
 await mkdir('tmp/catalog-probe', { recursive: true });
 try {
+  if (productUrl) {
+    report.productUrlsDiscovered = [productUrl];
+    const response = await get(productUrl);
+    if (captureHtml) await capture(`${site}-direct-product.html`, response.body);
+    const product = extractYaguaronDetail(response.body, response.finalUrl, 'domain');
+    report.extracted = 1;
+    if (!product) {
+      report.rejected.push({ url: productUrl, reason: 'La respuesta no cumple el contrato de ficha Yaguarón' });
+      report.status = 'unvalidated-empty';
+      return;
+    }
+    report.products = [product];
+    report.normalized = 1;
+    report.samples = [product];
+    report.directProduct = {
+      downloaded: true,
+      statusCode: response.statusCode,
+      productName: product.productName,
+      sku: product.sku,
+      price: normalizeProbePrice(product.price),
+      currency: product.currency,
+      manufacturer: product.attributes?.fabricante,
+      references: product.attributes?.referencias,
+      imageUrl: product.imageUrl,
+      availability: product.availability,
+      sourceUrl: product.sourceUrl,
+    };
+    report.status = 'success';
+    return;
+  }
+
   const home = await get(SITE_URL);
   report.categoriesDiscovered = extractYaguaronCategoryUrls(home.body, home.finalUrl);
   const queue = report.categoriesDiscovered.length > 0 ? report.categoriesDiscovered : [SITE_URL];
   const productUrls = new Set<string>(extractYaguaronProductUrls(home.body, home.finalUrl));
 
   for (const category of queue) {
+    if (report.pagesVisited.length >= maxPages || productUrls.size >= maxProducts) break;
     const categoryStart = productUrls.size;
     let previous = productUrls.size;
-    for (let page = 1; page <= maxPages && productUrls.size < maxProducts; page += 1) {
+    for (let page = 1; report.pagesVisited.length < maxPages && productUrls.size < maxProducts; page += 1) {
       const url = page === 1 ? category : buildFenicioPageUrl(category, page);
       let response: HttpResponseData;
       try { response = await get(url, page > 1 ? { 'x-requested-with': 'XMLHttpRequest', referer: category } : undefined); }
@@ -120,24 +166,57 @@ void main();
 async function get(url: string, headers?: Record<string, string>): Promise<HttpResponseData> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const requestStarted = performance.now();
     try {
       const response = await fetchHtml(url, 5, { headers, timeoutMs: 45_000 });
+      report.requests.push({
+        url,
+        finalUrl: response.finalUrl,
+        transport: 'HTTP',
+        attempt,
+        statusCode: response.statusCode,
+        contentType: headerValue(response.headers['content-type']),
+        bytes: Buffer.byteLength(response.body),
+        durationMs: Math.round(performance.now() - requestStarted),
+      });
       if (response.statusCode >= 200 && response.statusCode < 300 && response.body.trim()) return response;
       throw new Error(`HTTP ${response.statusCode}; bytes=${response.body.length}`);
     } catch (error) {
       lastError = error;
+      if (!report.requests.some((request) => request.url === url && request.transport === 'HTTP' && request.attempt === attempt)) {
+        report.requests.push({
+          url,
+          transport: 'HTTP',
+          attempt,
+          durationMs: Math.round(performance.now() - requestStarted),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
   report.httpErrors.push({ url, message: `HTTP: ${message}` });
   if (allowPlaywright) {
+    const requestStarted = performance.now();
     try {
       browser ??= await chromium.launch({ headless: true });
       browserContext ??= await browser.newContext(captureHar ? { recordHar: { path: `tmp/catalog-probe/${site}.har`, mode: 'minimal' } } : {});
       const page = await browserContext.newPage();
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       const body = await page.content();
+      const statusCode = response?.status() ?? 0;
+      const responseHeaders = response?.headers() ?? {};
+      report.requests.push({
+        url,
+        finalUrl: response?.url(),
+        transport: 'Playwright',
+        attempt: 1,
+        statusCode,
+        contentType: responseHeaders['content-type'],
+        bytes: Buffer.byteLength(body),
+        durationMs: Math.round(performance.now() - requestStarted),
+      });
       await page.close();
       if (response?.ok() && body.trim()) {
         report.method = 'HTTP + Playwright fallback';
@@ -146,6 +225,9 @@ async function get(url: string, headers?: Record<string, string>): Promise<HttpR
       throw new Error(`Playwright HTTP ${response?.status() ?? 0}; bytes=${body.length}`);
     } catch (error) {
       const playwrightMessage = error instanceof Error ? error.message : String(error);
+      if (!report.requests.some((request) => request.url === url && request.transport === 'Playwright')) {
+        report.requests.push({ url, transport: 'Playwright', attempt: 1, durationMs: Math.round(performance.now() - requestStarted), error: playwrightMessage });
+      }
       report.httpErrors.push({ url, message: `Playwright: ${playwrightMessage}` });
     }
   }
@@ -154,3 +236,10 @@ async function get(url: string, headers?: Record<string, string>): Promise<HttpR
 async function capture(name: string, body: string) { await mkdir('tmp/catalog-probe/html', { recursive: true }); await writeFile(`tmp/catalog-probe/html/${name}`, sanitize(body)); }
 function sanitize(html: string): string { return html.replace(/<script\b[\s\S]*?<\/script>/gi, '').replace(/(<input\b[^>]*(?:csrf|token|email|phone)[^>]*value=")[^"]*/gi, '$1[REDACTED]'); }
 function positiveInt(value: string | undefined, fallback: number): number { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : fallback; }
+function headerValue(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value.join(', ') : value; }
+function normalizeProbePrice(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/\s/g, '');
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(normalized)) return normalized.replace(/\./g, '');
+  return normalized.replace(',', '.');
+}
