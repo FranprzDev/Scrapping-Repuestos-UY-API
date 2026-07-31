@@ -99,15 +99,15 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
       return;
     }
 
+    if (rule.categoryUrlPatterns.some((pattern) => pattern.test(href))) {
+      categoryLinks.add(href);
+      return;
+    }
+
     const card = findCardContainer(anchor);
     const cardText = cleanText(card.text) ?? '';
     if (isSemanticProductLink(href, cardText, rule)) {
       productLinks.add(href);
-      return;
-    }
-
-    if (rule.categoryUrlPatterns.some((pattern) => pattern.test(href))) {
-      categoryLinks.add(href);
       return;
     }
 

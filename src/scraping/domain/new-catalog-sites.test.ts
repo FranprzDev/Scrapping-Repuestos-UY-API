@@ -13,6 +13,8 @@ import {
   extractShopifyProducts,
   parseLarriqueBrandResponse,
 } from './new-catalog-sites';
+import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
+import { findDomainRule, isAdmittedHouseUrl } from './domain-rules';
 
 test('Multishop pagina y normaliza el JSON público de Shopify', () => {
   assert.equal(
@@ -113,4 +115,37 @@ test('Larrique interpreta la respuesta de marcas sin duplicados', () => {
     parseLarriqueBrandResponse('{"status":"ok","results":[{"name":"BMW"},{"name":"FIAT"},{"name":"BMW"}]}'),
     ['BMW', 'FIAT'],
   );
+});
+
+test('Yaguarón, Italur y Mirvic admiten catálogo, paginación y fichas de producto', () => {
+  for (const baseUrl of [
+    'https://www.yaguaron.com.uy/',
+    'https://www.italur.com/',
+    'https://mirvic.com.uy/',
+  ]) {
+    assert.equal(isAdmittedHouseUrl(baseUrl), true);
+    const rule = findDomainRule(baseUrl);
+    assert.ok(rule);
+
+    const links = extractCandidateLinks(`
+      <a href="/producto/filtro-aceite">Filtro de aceite - $ 450 - Comprar</a>
+      <a href="/product-category/filtros/page/2/">Siguiente</a>
+      <a href="/carrito/">Carrito</a>
+    `, baseUrl, rule);
+    assert.deepEqual(links.productLinks, [new URL('/producto/filtro-aceite', baseUrl).toString()]);
+    assert.deepEqual(links.categoryLinks, [new URL('/product-category/filtros/page/2/', baseUrl).toString()]);
+
+    const products = extractProductsFromHtml(`
+      <main class="product">
+        <h1 class="product_title">Filtro de aceite</h1>
+        <span class="sku">SKU: FO-123</span>
+        <p class="price">$ 450</p>
+        <button>Agregar al carrito</button>
+        <figure><img src="/images/filtro.jpg"></figure>
+      </main>
+    `, new URL('/producto/filtro-aceite', baseUrl).toString(), 'domain', rule);
+    assert.equal(products[0]?.productName, 'Filtro de aceite');
+    assert.equal(products[0]?.price, '450');
+    assert.equal(products[0]?.sku, 'FO-123');
+  }
 });

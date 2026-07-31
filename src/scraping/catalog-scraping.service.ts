@@ -532,7 +532,7 @@ function isEuropartsSite(siteUrl: string): boolean {
 
 function isExpandedCatalogSite(siteUrl: string): boolean {
   try {
-    return ['multishop.com.uy', 'cymaco.com.uy', 'familcar.com', 'larrique.com.uy']
+    return ['multishop.com.uy', 'cymaco.com.uy', 'familcar.com', 'larrique.com.uy', 'yaguaron.com.uy', 'italur.com', 'mirvic.com.uy']
       .includes(new URL(siteUrl).hostname.replace(/^www\./, ''));
   } catch {
     return false;
