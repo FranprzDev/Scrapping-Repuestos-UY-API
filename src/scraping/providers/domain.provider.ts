@@ -16,6 +16,7 @@ import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules'
 import { type HttpRequestInit, type HttpResponseData, fetchHtml } from '../domain/http-client';
 import {
   buildFenicioPageUrl,
+  buildCatalogSitemapUrls,
   buildLarriqueBrandUrl,
   buildLarriqueFinalPageUrl,
   buildShopifyProductsUrl,
@@ -24,6 +25,7 @@ import {
   extractFamilcarBrandSeeds,
   extractFenicioPageSummary,
   extractFenicioProducts,
+  extractSitemapLocations,
   extractLarriqueContextBrand,
   extractLarriqueProducts,
   extractLarriqueTotalResults,
@@ -150,6 +152,13 @@ export class DomainProvider implements ScrapingProvider {
 
     if (rule.id === 'larrique') {
       return await this.crawlLarrique(sourceUrl);
+    }
+
+    if (isSitemapCatalog(rule)) {
+      const sitemap = await this.crawlSitemapCatalog(sourceUrl, rule, limit);
+      if (sitemap.discoveredUrls.length > 0) {
+        return sitemap;
+      }
     }
 
     if (rule.preferredMethod === 'api') {
@@ -382,6 +391,46 @@ export class DomainProvider implements ScrapingProvider {
       pages: [{ url: response.finalUrl, depth: 0, productCount: brands.length }],
       discoveredUrls: brands.map((brand) => buildLarriqueBrandUrl(response.finalUrl, brand)),
       discoveryMethod: 'larrique-http',
+    };
+  }
+
+  private async crawlSitemapCatalog(sourceUrl: string, rule: DomainRule, limit: number) {
+    const queue = buildCatalogSitemapUrls(sourceUrl);
+    const visited = new Set<string>();
+    const productUrls = new Set<string>();
+    const pages: Array<{ url: string; depth: number; productCount: number }> = [];
+
+    while (queue.length > 0 && visited.size < limit) {
+      const sitemapUrl = queue.shift();
+      if (!sitemapUrl || visited.has(sitemapUrl)) continue;
+      visited.add(sitemapUrl);
+
+      try {
+        const response = await fetchHtml(sitemapUrl);
+        if (response.statusCode < 200 || response.statusCode >= 300 || !/<(?:urlset|sitemapindex)\b/i.test(response.body)) {
+          continue;
+        }
+
+        const locations = extractSitemapLocations(response.body, response.finalUrl);
+        for (const location of locations) {
+          if (!isSameCatalogHost(location, sourceUrl) || rule.excludeUrlPatterns.some((pattern) => pattern.test(location))) continue;
+          if (rule.productUrlPatterns.some((pattern) => pattern.test(location))) {
+            productUrls.add(location);
+          } else if (/\.xml(?:\?|$)/i.test(location) && !visited.has(location)) {
+            queue.push(location);
+          }
+        }
+        pages.push({ url: response.finalUrl, depth: 0, productCount: productUrls.size });
+      } catch (error) {
+        this.logger.warn(`No se pudo leer sitemap ${sitemapUrl}: ${formatError(error)}`);
+      }
+    }
+
+    return {
+      seedUrl: sourceUrl,
+      pages,
+      discoveredUrls: Array.from(productUrls),
+      discoveryMethod: 'sitemap-http',
     };
   }
 
@@ -1512,6 +1561,19 @@ function inferFenicioBrandSeed(value: string, site: 'cymaco' | 'familcar'): Cata
     return { brandLabel, sourceUrl: url.toString() };
   } catch {
     return undefined;
+  }
+}
+
+function isSitemapCatalog(rule: DomainRule): boolean {
+  return ['yaguaron', 'italur', 'mirvic'].includes(rule.id);
+}
+
+function isSameCatalogHost(value: string, baseUrl: string): boolean {
+  try {
+    const normalize = (hostname: string) => hostname.toLowerCase().replace(/^www\./, '');
+    return normalize(new URL(value).hostname) === normalize(new URL(baseUrl).hostname);
+  } catch {
+    return false;
   }
 }
 

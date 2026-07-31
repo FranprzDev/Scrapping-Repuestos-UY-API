@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
   buildFenicioPageUrl,
+  buildCatalogSitemapUrls,
   buildLarriqueFinalPageUrl,
   buildShopifyProductsUrl,
   extractCymacoBrandSeeds,
@@ -11,6 +12,7 @@ import {
   extractLarriqueProducts,
   extractLarriqueTotalResults,
   extractShopifyProducts,
+  extractSitemapLocations,
   parseLarriqueBrandResponse,
 } from './new-catalog-sites';
 import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
@@ -148,4 +150,23 @@ test('Yaguarón, Italur y Mirvic admiten catálogo, paginación y fichas de prod
     assert.equal(products[0]?.price, '450');
     assert.equal(products[0]?.sku, 'FO-123');
   }
+});
+
+test('descubre fichas de producto desde sitemaps HTTP e índices anidados', () => {
+  assert.deepEqual(buildCatalogSitemapUrls('https://www.yaguaron.com.uy/catalogo'), [
+    'https://www.yaguaron.com.uy/wp-sitemap.xml',
+    'https://www.yaguaron.com.uy/sitemap_index.xml',
+    'https://www.yaguaron.com.uy/sitemap.xml',
+  ]);
+
+  assert.deepEqual(extractSitemapLocations(`
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.yaguaron.com.uy/producto/filtro-aceite?motor=1&amp;marca=2</loc></url>
+      <url><loc>https://www.yaguaron.com.uy/producto/pastillas-freno</loc></url>
+      <url><loc>https://www.yaguaron.com.uy/producto/pastillas-freno</loc></url>
+    </urlset>
+  `, 'https://www.yaguaron.com.uy/'), [
+    'https://www.yaguaron.com.uy/producto/filtro-aceite?motor=1&marca=2',
+    'https://www.yaguaron.com.uy/producto/pastillas-freno',
+  ]);
 });

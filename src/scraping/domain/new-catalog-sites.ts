@@ -12,6 +12,20 @@ export interface FenicioPageSummary {
   totalResults: number;
 }
 
+export function buildCatalogSitemapUrls(baseUrl: string): string[] {
+  return ['/wp-sitemap.xml', '/sitemap_index.xml', '/sitemap.xml']
+    .map((pathname) => new URL(pathname, baseUrl).toString());
+}
+
+export function extractSitemapLocations(xml: string, baseUrl: string): string[] {
+  const locations = Array.from(xml.matchAll(/<loc\b[^>]*>([\s\S]*?)<\/loc>/gi))
+    .map((match) => decodeXmlEntities(cleanText(match[1])))
+    .map((value) => normalizeUrl(value, baseUrl))
+    .filter((value): value is string => Boolean(value));
+
+  return Array.from(new Set(locations));
+}
+
 type ShopifyProduct = {
   title?: unknown;
   handle?: unknown;
@@ -257,6 +271,15 @@ function normalizeUrl(value: string | undefined, baseUrl: string): string | unde
   } catch {
     return undefined;
   }
+}
+
+function decodeXmlEntities(value: string | undefined): string | undefined {
+  return value
+    ?.replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
 }
 
 function stripHtml(value: string): string {

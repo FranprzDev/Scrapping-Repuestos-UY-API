@@ -41,17 +41,13 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
   - Cobertura: descubrimiento de marcas, catálogo por marca, detalle de producto, precio, compatibilidad e imagen del producto
   - Imágenes: se toma la imagen real del bloque `.producto__imagenes` (o `section.producto`) y se normaliza a una URL absoluta. No se usa `og:image` como sustituto porque en este sitio puede apuntar a una imagen genérica o distinta del producto.
 
-- `Yaguarón`
-  - URL base: `https://www.yaguaron.com.uy/`
-  - Cobertura: descubrimiento de catálogo y paginación, listado y detalle de producto, precio, stock, SKU, descripción e imagen
+## Integrados pendientes de validación live
 
-- `Italur`
-  - URL base: `https://www.italur.com/`
-  - Cobertura: descubrimiento de catálogo y paginación, listado y detalle de producto, precio, stock, SKU, descripción e imagen
-
-- `Mirvic`
-  - URL base: `https://mirvic.com.uy/`
-  - Cobertura: descubrimiento de catálogo y paginación, listado y detalle de producto, precio, stock, SKU, descripción e imagen
+- `Yaguarón`, `Italur` y `Mirvic`
+  - URLs base: `https://www.yaguaron.com.uy/`, `https://www.italur.com/` y `https://mirvic.com.uy/`
+  - Campos buscados en cada ficha: título, precio, descripción, imagen, SKU y disponibilidad.
+  - El scraper intenta primero los sitemaps HTTP públicos y, si no están disponibles, recorre categorías y paginación con fallback de Playwright.
+  - Falta registrar una corrida completa contra los orígenes para confirmar cantidad y cobertura real; no deben considerarse cerrados hasta completar esa validación.
 
 ## Pendientes
 
