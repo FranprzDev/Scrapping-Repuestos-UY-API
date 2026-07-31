@@ -43,11 +43,15 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
 
 ## Integrados pendientes de validación live
 
-- `Yaguarón`, `Italur` y `Mirvic`
-  - URLs base: `https://www.yaguaron.com.uy/`, `https://www.italur.com/` y `https://mirvic.com.uy/`
-  - Campos buscados en cada ficha: título, precio, descripción, imagen, SKU y disponibilidad.
-  - El scraper intenta primero los sitemaps HTTP públicos y, si no están disponibles, recorre categorías y paginación con fallback de Playwright.
-  - Falta registrar una corrida completa contra los orígenes para confirmar cantidad y cobertura real; no deben considerarse cerrados hasta completar esa validación.
+- `Yaguarón`
+  - URL base: `https://www.yaguaron.com.uy/`
+  - Integración Fenicio específica: menú de categorías/modelos, listado `aListProductos`, paginación AJAX `js=1&pag=N` y fichas `/catalogo/{slug}_{id1}_{id2}`.
+  - Campos: título, Art./SKU, precio UYU, descripción, características, calidad, fabricante, referencias, imágenes, disponibilidad, stock, categoría y modelos compatibles.
+  - Diagnóstico: `pnpm run catalog:probe --site=yaguaron`; escribe `tmp/catalog-probe/yaguaron.json` y admite `--capture-html=true`.
+  - Falta una corrida live exitosa desde un entorno con acceso al origen; no debe considerarse cerrado hasta comparar el total declarado, URLs únicas, guardados y rechazados.
+
+- `Italur` y `Mirvic`
+  - Permanecen sin adaptador específico y pendientes de implementación/validación live.
 
 ## Pendientes
 

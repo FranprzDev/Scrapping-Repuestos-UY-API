@@ -119,9 +119,8 @@ test('Larrique interpreta la respuesta de marcas sin duplicados', () => {
   );
 });
 
-test('Yaguarón, Italur y Mirvic admiten catálogo, paginación y fichas de producto', () => {
+test('Italur y Mirvic conservan la admisión previa', () => {
   for (const baseUrl of [
-    'https://www.yaguaron.com.uy/',
     'https://www.italur.com/',
     'https://mirvic.com.uy/',
   ]) {
@@ -152,21 +151,21 @@ test('Yaguarón, Italur y Mirvic admiten catálogo, paginación y fichas de prod
   }
 });
 
-test('descubre fichas de producto desde sitemaps HTTP e índices anidados', () => {
-  assert.deepEqual(buildCatalogSitemapUrls('https://www.yaguaron.com.uy/catalogo'), [
-    'https://www.yaguaron.com.uy/wp-sitemap.xml',
-    'https://www.yaguaron.com.uy/sitemap_index.xml',
-    'https://www.yaguaron.com.uy/sitemap.xml',
+test('interpreta índices sitemap para los adaptadores previos', () => {
+  assert.deepEqual(buildCatalogSitemapUrls('https://www.italur.com/tienda/'), [
+    'https://www.italur.com/wp-sitemap.xml',
+    'https://www.italur.com/sitemap_index.xml',
+    'https://www.italur.com/sitemap.xml',
   ]);
 
   assert.deepEqual(extractSitemapLocations(`
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-      <url><loc>https://www.yaguaron.com.uy/producto/filtro-aceite?motor=1&amp;marca=2</loc></url>
-      <url><loc>https://www.yaguaron.com.uy/producto/pastillas-freno</loc></url>
-      <url><loc>https://www.yaguaron.com.uy/producto/pastillas-freno</loc></url>
+      <url><loc>https://www.italur.com/producto/filtro-aceite?motor=1&amp;marca=2</loc></url>
+      <url><loc>https://www.italur.com/producto/pastillas-freno</loc></url>
+      <url><loc>https://www.italur.com/producto/pastillas-freno</loc></url>
     </urlset>
-  `, 'https://www.yaguaron.com.uy/'), [
-    'https://www.yaguaron.com.uy/producto/filtro-aceite?motor=1&marca=2',
-    'https://www.yaguaron.com.uy/producto/pastillas-freno',
+  `, 'https://www.italur.com/'), [
+    'https://www.italur.com/producto/filtro-aceite?motor=1&marca=2',
+    'https://www.italur.com/producto/pastillas-freno',
   ]);
 });

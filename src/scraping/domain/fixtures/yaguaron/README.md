@@ -1,0 +1,3 @@
+# Yaguarón fixtures
+
+Fixtures contractuales sanitizados reconstruidos a partir de las rutas y campos reales observados y aportados para las fichas públicas indicadas. No son una copia byte a byte descargada por Codex: el proxy devolvió HTTP 403 antes de recibir el HTML. Se omitieron scripts, analytics, cookies, tokens, navegación no relacionada y datos de sesión. Estos archivos verifican el parser, pero no constituyen una validación live ni permiten afirmar cobertura completa del catálogo. El probe puede reemplazarlos por capturas directas usando `--capture-html=true --capture-har=true` en un servidor con acceso.

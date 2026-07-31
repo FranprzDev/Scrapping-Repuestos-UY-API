@@ -3,6 +3,7 @@ node_modules
 dist
 npm-debug.log*
 output/
+tmp/
 .DS_Store
 .pnpm-store/
 *.tsbuildinfo
