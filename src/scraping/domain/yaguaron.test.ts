@@ -82,7 +82,7 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
     'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-detalle.jpg',
   ]);
-  assert.equal(product.imageUrls?.some((url) => /logo|banner|relacionado/i.test(url)), false);
+  assert.equal(product.imageUrls?.some((url) => /\/recursos\/|topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|footer|header/i.test(url)), false);
   assert.equal(product.availability, 'in_stock');
   assert.equal(product.sourceUrl, productUrl);
   assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
@@ -90,13 +90,16 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
   assert.equal(extractYaguaronDeclaredTotal(html), undefined);
 });
 
-test('Yaguarón prioriza producto.img y conserva galería visible sin imágenes ajenas', () => {
+test('Yaguarón prioriza producto.img del SKU actual y conserva galería visible sin imágenes ajenas', () => {
   const product = extractYaguaronDetail(`
     <main class="aFichaProducto">
       <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
       <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <img src="https://f.fcdn.app/123/recursos/129/1920x50/ayala-ecommerceyaguaron-topbar-1.jpg">
+      <header><img src="/imagenes/logo-yaguaron.png"></header>
       <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
       <div class="imagenes">
+        <img src="https://f.fcdn.app/123/recursos/129/1920x50/ayala-ecommerceyaguaron-topbar-1.jpg">
         <a href="/imagenes/productos/123251-visible.jpg"><img src="/imagenes/productos/123251-thumb.jpg" data-zoom-image="/imagenes/productos/123251-zoom.jpg"></a>
         <img data-src="/imagenes/productos/123251-galeria.webp">
         <img src="/imagenes/logo-yaguaron.png">
@@ -104,7 +107,8 @@ test('Yaguarón prioriza producto.img y conserva galería visible sin imágenes 
         <img src="/imagenes/placeholder.png">
       </div>
       <section class="productosRelacionados"><img src="/imagenes/productos/relacionado.jpg"></section>
-      <script type="application/json">{"producto":{"codigo":"123251","nombre":"KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS","img":"/imagenes/productos/123251-principal.jpg"},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+      <script type="application/json">{"producto":{"codigo":"999999","nombre":"OTRO PRODUCTO","img":"/imagenes/productos/999999-ajeno.jpg"},"precioMonto":999,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+      <script type="application/json">{"producto":{"codigo":"123251","nombre":"KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS","img":{"principal":"%2Fimagenes%2Fproductos%2F123251-principal.jpg"},"imagenes":[{"url":"\/imagenes\/productos\/123251-extra.jpg"}]},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
     </main>
   `, productUrl, 'domain');
 
@@ -112,12 +116,30 @@ test('Yaguarón prioriza producto.img y conserva galería visible sin imágenes 
   assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg');
   assert.deepEqual(product.imageUrls, [
     'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-extra.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-zoom.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-galeria.webp',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-visible.jpg',
   ]);
-  assert.equal(product.imageUrls?.some((url) => /logo|banner|placeholder|relacionado/i.test(url)), false);
+  assert.equal(product.imageUrls?.some((url) => /\/recursos\/|topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|999999|footer|header/i.test(url)), false);
+});
+
+test('Yaguarón rechaza el banner topbar de recursos aunque aparezca en el área de imágenes', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <div class="imagenes">
+        <img src="https://f.fcdn.app/123/recursos/129/1920x50/ayala-ecommerceyaguaron-topbar-1.jpg">
+      </div>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, undefined);
+  assert.equal(product.imageUrls, undefined);
 });
 
 test('Yaguarón extrae referencias cuando sólo aparecen dentro de la descripción', () => {
