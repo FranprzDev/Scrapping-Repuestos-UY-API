@@ -88,6 +88,26 @@ test('Yaguarón extrae referencias cuando sólo aparecen dentro de la descripci�
   });
 });
 
+test('Yaguarón usa la descripción si una referencia visible ruidosa es rechazada', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas">
+        <div class="it"><span class="tit">Art.</span><span class="val">123251</span></div>
+        <div class="it"><span class="tit">Calidad</span><span class="val">ORIGINAL</span></div>
+        <div class="it"><span class="tit">Fabricante</span><span class="val">ORIGINAL GM / AC DELCO</span></div>
+        <div class="it"><span class="tit">Referencias</span><span class="val">Inicio Catálogo Envíos medios de pago redes sociales</span></div>
+        <div class="it"><span class="tit">Modelo</span><span class="val">Agile, Celta, Corsa, Montana, Onix, Prisma</span></div>
+      </section>
+      <section class="descripcion">Calidad: ORIGINAL Fabricante: ORIGINAL GM / AC DELCO Referencia: 90531677 / 93353848</section>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.attributes?.referencias, '90531677 / 93353848');
+});
+
 test('Yaguarón conserva una ficha agotada', () => {
   const url = 'https://www.yaguaron.com.uy/catalogo/farol-trasero-izquierdo-fume-prisma-ltz_135595_135595';
   const product = extractYaguaronDetail(fixture('detail-135595.html'), url, 'domain');
