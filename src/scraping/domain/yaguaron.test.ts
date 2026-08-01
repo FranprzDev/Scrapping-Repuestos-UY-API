@@ -42,9 +42,12 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
   assert.equal(product.sku, '123251');
   assert.equal(product.price, '1643');
   assert.equal(product.currency, 'UYU');
-  assert.equal(product.attributes?.calidad, 'ORIGINAL');
-  assert.equal(product.attributes?.fabricante, 'ORIGINAL GM / AC DELCO');
-  assert.equal(product.attributes?.referencias, '90531677 / 93353848');
+  assert.deepEqual(product.attributes, {
+    calidad: 'ORIGINAL',
+    fabricante: 'ORIGINAL GM / AC DELCO',
+    referencias: '90531677 / 93353848',
+    caracteristicas: 'Modelo: Agile, Celta, Corsa, Montana, Onix, Prisma',
+  });
   assert.equal(product.description, 'Kit original de tensor y correa para los modelos indicados.');
   assert.doesNotMatch(product.description ?? '', /env[ií]os|medios de pago|cambios|devoluciones|redes sociales|productos relacionados|precioMonto|producto/i);
   assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg');
@@ -58,6 +61,31 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
   assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
   assert.deepEqual(extractYaguaronArticlePosition(html), { current: 1, total: 437 });
   assert.equal(extractYaguaronDeclaredTotal(html), undefined);
+});
+
+test('Yaguarón extrae referencias cuando sólo aparecen dentro de la descripción', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas">
+        <div class="it"><span class="tit">Art.</span><span class="val">123251</span></div>
+        <div class="it"><span class="tit">Calidad</span><span class="val">ORIGINAL</span></div>
+        <div class="it"><span class="tit">Fabricante</span><span class="val">ORIGINAL GM / AC DELCO</span></div>
+        <div class="it"><span class="tit">Modelo</span><span class="val">Agile, Celta, Corsa, Montana, Onix, Prisma</span></div>
+      </section>
+      <section class="descripcion">Calidad: ORIGINAL Fabricante: ORIGINAL GM / AC DELCO Referencia: 90531677 / 93353848</section>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.attributes?.referencias, '90531677 / 93353848');
+  assert.deepEqual(product.attributes, {
+    calidad: 'ORIGINAL',
+    fabricante: 'ORIGINAL GM / AC DELCO',
+    referencias: '90531677 / 93353848',
+    caracteristicas: 'Modelo: Agile, Celta, Corsa, Montana, Onix, Prisma',
+  });
 });
 
 test('Yaguarón conserva una ficha agotada', () => {
