@@ -2293,3 +2293,35 @@ test('Acesur sigue con el siguiente rubro si uno falla', async () => {
   assert.equal(products[0].productName, 'Producto MOTOR');
   assert.match(warns.join('\n'), /Acesur rubro fallido rubro=FRENO/);
 });
+
+test('Acesur permite seleccionar rubros y reporta progreso acumulado', async () => {
+  const progress: Array<{ category: string; page: number; productsAccumulated: number }> = [];
+  const visited: string[] = [];
+  const products = await extractAcesurProductsByRubro(['FRENO', 'MOTOR'], {
+    uuid: 'uuid-demo',
+    seedUrl: 'https://acesur.uy/escritorio/ofertas/INTERNET',
+    provider: 'domain',
+    maxItems: 10,
+    requestedRubros: ['motor'],
+    onProgress: (entry) => {
+      progress.push(entry);
+    },
+    logger: { log() {}, warn() {} } as unknown as Logger,
+    crawlCategory: async (_uuid, filters, _sourceUrl, _provider, _maxItems, _logger, _customerCode, report) => {
+      visited.push(filters.primerFiltro);
+      await report?.({ page: 1, productsInPage: 2 });
+      return [
+        {
+          productName: 'Producto MOTOR',
+          sourceUrl: 'https://acesur.uy/detalle-producto/?articulo=1',
+          extractedAt: '2026-07-29T00:00:00.000Z',
+          provider: 'domain',
+        },
+      ];
+    },
+  });
+
+  assert.deepEqual(visited, ['MOTOR']);
+  assert.equal(products.length, 1);
+  assert.deepEqual(progress, [{ category: 'MOTOR', page: 1, productsAccumulated: 2 }]);
+});

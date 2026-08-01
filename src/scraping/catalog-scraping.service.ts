@@ -21,6 +21,9 @@ export interface CatalogSiteProgress {
   pagesUsedForExtract: number;
   rawProducts: number;
   normalizedProducts: number;
+  currentCategory?: string;
+  currentPage?: number;
+  productsAccumulated?: number;
   lastScrapedProduct?: CatalogProductSummary;
   message?: string;
 }
@@ -115,6 +118,21 @@ export class CatalogScrapingService {
           urls: targetUrls,
           maxItems: maxProductsPerSite,
           url,
+          acesurRubros: request.acesurRubros,
+          onAcesurProgress: (acesurProgress: { category: string; page: number; productsAccumulated: number }) => onSiteProgress?.({
+            site: url,
+            url,
+            status: 'processing',
+            stage: 'extracting',
+            timeWorkingMs: Date.now() - siteStartedAt,
+            quantityScrapped: acesurProgress.productsAccumulated,
+            pagesUsedForExtract: targetUrls.length,
+            rawProducts: acesurProgress.productsAccumulated,
+            normalizedProducts: acesurProgress.productsAccumulated,
+            currentCategory: acesurProgress.category,
+            currentPage: acesurProgress.page,
+            productsAccumulated: acesurProgress.productsAccumulated,
+          }),
         };
 
         await onSiteProgress?.({

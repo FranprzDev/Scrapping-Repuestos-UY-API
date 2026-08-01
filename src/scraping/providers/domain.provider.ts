@@ -227,7 +227,7 @@ export class DomainProvider implements ScrapingProvider {
     }
 
     if (rule.preferredMethod === 'api') {
-      const products = await this.extractAcesurProducts(sourceUrl, maxItems);
+      const products = await this.extractAcesurProducts(sourceUrl, maxItems, payload);
       return {
         urls: [sourceUrl],
         pages: [{ url: sourceUrl, method: 'api', productCount: products.length }],
@@ -798,7 +798,7 @@ export class DomainProvider implements ScrapingProvider {
     return [{ sourceUrl }];
   }
 
-  private async extractAcesurProducts(seedUrl: string, maxItems: number): Promise<ProductRecord[]> {
+  private async extractAcesurProducts(seedUrl: string, maxItems: number, payload: ScrapingOperationPayload): Promise<ProductRecord[]> {
     const uuid = randomUUID();
     const customerCode = process.env.ACESUR_CUSTOMER_CODE?.trim();
     this.logger.log(`Acesur extract start seed=${seedUrl} customerCode=${customerCode ? 'yes' : 'no'}`);
@@ -811,6 +811,12 @@ export class DomainProvider implements ScrapingProvider {
       maxItems,
       logger: this.logger,
       customerCode,
+      requestedRubros: Array.isArray(payload.acesurRubros)
+        ? payload.acesurRubros.filter((value): value is string => typeof value === 'string')
+        : undefined,
+      onProgress: typeof payload.onAcesurProgress === 'function'
+        ? payload.onAcesurProgress as (progress: { category: string; page: number; productsAccumulated: number }) => void | Promise<void>
+        : undefined,
       crawlCategory: crawlAcesurCategory,
     });
   }
@@ -1046,10 +1052,16 @@ export async function extractAcesurProductsByRubro(
     maxItems: number;
     logger: Logger;
     customerCode?: string;
+    requestedRubros?: string[];
+    onProgress?: (progress: { category: string; page: number; productsAccumulated: number }) => void | Promise<void>;
     crawlCategory: typeof crawlAcesurCategory;
   },
 ): Promise<ProductRecord[]> {
-  const categorySeeds = rubros.length > 0 ? rubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
+  const requested = new Set((options.requestedRubros ?? []).map((rubro) => rubro.trim().toUpperCase()).filter(Boolean));
+  const selectedRubros = requested.size > 0
+    ? rubros.filter((rubro) => requested.has(rubro.trim().toUpperCase()))
+    : rubros;
+  const categorySeeds = selectedRubros.length > 0 ? selectedRubros.map((rubro) => ({ primerFiltro: rubro })) : [{ primerFiltro: '' }];
   const products: ProductRecord[] = [];
 
   for (const seed of categorySeeds) {
@@ -1066,6 +1078,11 @@ export async function extractAcesurProductsByRubro(
         options.maxItems - products.length,
         options.logger,
         options.customerCode,
+        (progress) => options.onProgress?.({
+          category: seed.primerFiltro || 'todos',
+          page: progress.page,
+          productsAccumulated: products.length + progress.productsInPage,
+        }),
       );
 
       if (batch.length === 0) {
@@ -1089,6 +1106,7 @@ async function crawlAcesurCategory(
   maxItems: number,
   logger: Logger,
   customerCode?: string,
+  onProgress?: (progress: { page: number; productsInPage: number }) => void | Promise<void>,
 ): Promise<ProductRecord[]> {
   if (maxItems <= 0) {
     return [];
@@ -1101,6 +1119,7 @@ async function crawlAcesurCategory(
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const products = [...firstBatch.products];
   logger.log(`Acesur page=1 rubro=${filters.primerFiltro || 'todos'} total=${total} firstBatch=${firstBatch.products.length}`);
+  await onProgress?.({ page: 1, productsInPage: firstBatch.products.length });
 
   for (let page = 2; page <= totalPages && products.length < maxItems; page += 1) {
     try {
@@ -1113,6 +1132,7 @@ async function crawlAcesurCategory(
       }
 
       products.push(...batch.products);
+      await onProgress?.({ page, productsInPage: batch.products.length });
     } catch (error) {
       logger.warn(`Fallo leyendo Acesur pagina ${page} (${filters.primerFiltro || 'todos'}): ${formatError(error)}`);
       break;

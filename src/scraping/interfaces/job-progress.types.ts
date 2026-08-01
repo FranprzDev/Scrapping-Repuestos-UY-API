@@ -11,6 +11,9 @@ export interface CatalogJobSiteProgress {
   quantityScrapped?: number;
   rawProducts?: number;
   normalizedProducts?: number;
+  currentCategory?: string;
+  currentPage?: number;
+  productsAccumulated?: number;
   message?: string;
   updatedAt: string;
 }
