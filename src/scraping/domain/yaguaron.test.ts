@@ -34,6 +34,33 @@ test('Yaguarón descubre categorías, productos y total declarado del listado Fe
   assert.equal(extractYaguaronProductUrls(fixture('listing-page-2.ajax.html'), 'https://www.yaguaron.com.uy/')[0], 'https://www.yaguaron.com.uy/catalogo/soporte-de-motor_111111_222222');
 });
 
+test('Yaguarón excluye páginas informativas sin bloquear modelos ni categorías reales', () => {
+  const html = `
+    <nav class="menu">
+      <a href="/nosotros">Nosotros</a>
+      <a href="/salir">Salir</a>
+      <a href="/tiendas">Tiendas</a>
+      <a href="/terminos-condiciones">Términos</a>
+      <a href="/trabaja-con-nosotros">Trabaja con nosotros</a>
+      <a href="/como-comprar">Cómo comprar</a>
+      <a href="/condiciones-de-compra">Condiciones</a>
+      <a href="/envios-devoluciones">Envíos</a>
+      <a href="/preguntas-frecuentes">Preguntas</a>
+      <a href="/agile">Agile</a>
+      <a href="/corsa">Corsa</a>
+      <a href="/onix">Onix</a>
+      <a href="/motor-y-componentes">Motor y componentes</a>
+    </nav>
+  `;
+
+  assert.deepEqual(extractYaguaronCategoryUrls(html, 'https://www.yaguaron.com.uy/'), [
+    'https://www.yaguaron.com.uy/agile',
+    'https://www.yaguaron.com.uy/corsa',
+    'https://www.yaguaron.com.uy/onix',
+    'https://www.yaguaron.com.uy/motor-y-componentes',
+  ]);
+});
+
 test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores amplios', () => {
   const html = fixture('detail-123251.html');
   const product = extractYaguaronDetail(`${html}<img src="/banner-home.jpg">`, `${productUrl}?utm_source=test#comprar`, 'domain');
@@ -61,6 +88,35 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
   assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
   assert.deepEqual(extractYaguaronArticlePosition(html), { current: 1, total: 437 });
   assert.equal(extractYaguaronDeclaredTotal(html), undefined);
+});
+
+test('Yaguarón prioriza producto.img y conserva galería visible sin imágenes ajenas', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <div class="imagenes">
+        <a href="/imagenes/productos/123251-visible.jpg"><img src="/imagenes/productos/123251-thumb.jpg" data-zoom-image="/imagenes/productos/123251-zoom.jpg"></a>
+        <img data-src="/imagenes/productos/123251-galeria.webp">
+        <img src="/imagenes/logo-yaguaron.png">
+        <img src="/imagenes/banner-home.jpg">
+        <img src="/imagenes/placeholder.png">
+      </div>
+      <section class="productosRelacionados"><img src="/imagenes/productos/relacionado.jpg"></section>
+      <script type="application/json">{"producto":{"codigo":"123251","nombre":"KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS","img":"/imagenes/productos/123251-principal.jpg"},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg');
+  assert.deepEqual(product.imageUrls, [
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-zoom.jpg',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-galeria.webp',
+  ]);
+  assert.equal(product.imageUrls?.some((url) => /logo|banner|placeholder|relacionado/i.test(url)), false);
 });
 
 test('Yaguarón extrae referencias cuando sólo aparecen dentro de la descripción', () => {
