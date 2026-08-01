@@ -4,6 +4,11 @@ import { cleanText, normalizePriceValue } from './product-quality';
 
 export const YAGUARON_PRODUCT_PATH = /\/catalogo\/[^/?#]+_\d+_\d+\/?$/i;
 
+const DESCRIPTION_NOISE_PATTERN = /env[ií]os?|medios? de pago|cambios?|devoluciones?|redes sociales|facebook|instagram|whatsapp|productos relacionados|inicio\s+cat[aá]logo/i;
+const DESCRIPTION_REJECT_PATTERN = /({"?producto"?|precioMonto|tieneStock|productos relacionados|medios de pago|redes sociales)/i;
+const REFERENCES_NOISE_PATTERN = /({"?producto"?|inicio|cat[aá]logo|env[ií]os?|medios de pago|redes sociales|productos relacionados|facebook|instagram|whatsapp)/i;
+const REFERENCE_CODE_PATTERN = /\b[A-Z0-9][A-Z0-9.-]{4,}\b/g;
+
 export interface YaguaronListingSummary {
   pageItems: number;
   declaredTotal?: number;
@@ -101,7 +106,9 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
     ?? embeddedCharacteristic(embedded?.carac, ['fabricante'])
     ?? textValue(embedded?.producto, ['marca']);
   const references = cleanReferences(
-    label(labels, ['referencias', 'referencia']) ?? embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia']),
+    label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numerooreferencias'])
+      ?? embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
+      ?? extractReferencesFromDetail(detailRoot),
   );
   const description = cleanDescription(
     firstText(detailRoot, ['.descripcion', '[itemprop="description"]', '.blkDescripcion', '.detalleProducto .texto'])
@@ -181,7 +188,7 @@ function extractLabelValues(root: HTMLElement): Map<string, string> {
     if (key && value) result.set(normalizeLabel(key), value);
   }
   const text = cleanText(root.text) ?? '';
-  for (const match of text.matchAll(/(?:^|\s)(Art\.?|Artículo|Calidad|Fabricante|Referencias?|Stock|Disponibilidad)\s*:?\s*([^\n|]+?)(?=\s+(?:Art\.?|Artículo|Calidad|Fabricante|Referencias?|Stock|Disponibilidad)\s*:|$)/gim)) {
+  for (const match of text.matchAll(/(?:^|\s)(Art\.?|Artículo|Calidad|Fabricante|Referencias?|Nro\.?\s*Referencias?|N[uú]mero\s*Referencias?|Stock|Disponibilidad)\s*:?\s*([^\n|]+?)(?=\s+(?:Art\.?|Artículo|Calidad|Fabricante|Referencias?|Nro\.?\s*Referencias?|N[uú]mero\s*Referencias?|Stock|Disponibilidad)\s*:|$)/gim)) {
     const key = normalizeLabel(match[1]);
     if (!result.has(key)) result.set(key, cleanText(match[2]) ?? '');
   }
@@ -310,11 +317,14 @@ function extractCompatibility(characteristics: Array<[string, string]>, labels: 
 function embeddedCharacteristic(carac: unknown, keys: string[]): string | undefined {
   if (isRecord(carac)) return textValue(carac, keys);
   if (!Array.isArray(carac)) return undefined;
+  const normalizedKeys = keys.map(normalizeLabel);
   for (const item of carac) {
+    const match = embeddedCharacteristic(item, keys);
+    if (match) return match;
     if (!isRecord(item)) continue;
-    const key = textValue(item, ['nombre', 'titulo', 'label', 'key', 'caracteristica']);
-    if (!key || !keys.map(normalizeLabel).includes(normalizeLabel(key))) continue;
-    const value = textValue(item, ['valor', 'value', 'texto', 'descripcion']);
+    const key = textValue(item, ['nombre', 'titulo', 'label', 'key', 'caracteristica', 'carac', 'codigo']);
+    if (!key || !normalizedKeys.includes(normalizeLabel(key))) continue;
+    const value = textValue(item, ['valor', 'value', 'texto', 'descripcion', 'desc']);
     if (value) return value;
   }
   return undefined;
@@ -333,16 +343,31 @@ function textValue(record: JsonRecord | undefined, keys: string[]): string | und
 
 function cleanDescription(value: string | undefined): string | undefined {
   const text = cleanText(value);
-  if (!text || text.length > 1200 || /({"?producto"?|precioMonto|tieneStock|productos relacionados|medios de pago|redes sociales)/i.test(text)) return undefined;
-  const kept = text.split(/(?:\n|\s{2,}| - )/).map((part) => cleanText(part)).filter((part): part is string => Boolean(part) && !/env[ií]os?|medios? de pago|cambios?|devoluciones?|redes sociales|facebook|instagram|whatsapp|productos relacionados|inicio\s+cat[aá]logo/i.test(part));
+  if (!text || text.length > 1200 || DESCRIPTION_REJECT_PATTERN.test(text)) return undefined;
+  const kept = text
+    .split(/(?:\n|\s{2,}| - )/)
+    .map((part) => cleanText(part))
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .filter((part) => !DESCRIPTION_NOISE_PATTERN.test(part));
   return kept.length > 0 ? kept.join(' ') : undefined;
 }
 
 function cleanReferences(value: string | undefined): string | undefined {
   const text = cleanText(value);
-  if (!text || text.length > 200 || /({"?producto"?|inicio|cat[aá]logo|env[ií]os?|medios de pago|redes sociales)/i.test(text)) return undefined;
-  const codes = text.match(/\b[A-Z0-9][A-Z0-9.-]{4,}\b/g);
+  if (!text || text.length > 240 || REFERENCES_NOISE_PATTERN.test(text)) return undefined;
+  const codes = text.match(REFERENCE_CODE_PATTERN);
   return codes && codes.length > 0 ? Array.from(new Set(codes)).join(' / ') : text;
+}
+
+function extractReferencesFromDetail(root: HTMLElement): string | undefined {
+  for (const element of root.querySelectorAll('*')) {
+    const text = cleanText(element.text);
+    if (!text || !/(referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)/i.test(text)) continue;
+    const match = text.match(/(?:referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)\s*:?\s*([A-Z0-9][A-Z0-9.\-/\s]{4,80})/i);
+    const references = cleanReferences(match?.[1]);
+    if (references) return references;
+  }
+  return undefined;
 }
 
 function skuFromUrl(value: string): string | undefined {
