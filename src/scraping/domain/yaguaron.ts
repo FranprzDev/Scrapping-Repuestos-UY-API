@@ -249,8 +249,8 @@ function extractEmbeddedProductImages(embedded?: EmbeddedYaguaronProduct): strin
   const product = embedded?.producto;
   if (!product) return [];
   const prioritized = ['img', 'imagen', 'image', 'urlImagen', 'urlimagen', 'foto', 'fotoPrincipal', 'imagenPrincipal'];
-  const direct = prioritized.flatMap((key) => unknownImageValues(product[key]));
-  const nested = ['imagenes', 'images', 'fotos', 'galeria', 'galería'].flatMap((key) => unknownImageValues(product[key]));
+  const direct = prioritized.flatMap((key) => unknownImageValues(product[key], true));
+  const nested = ['imagenes', 'images', 'fotos', 'galeria', 'galería'].flatMap((key) => unknownImageValues(product[key], true));
   return [...direct, ...nested];
 }
 
@@ -320,11 +320,11 @@ function imageAttributes(element: HTMLElement, pageUrl: string): string[] {
   return values.filter((value): value is string => Boolean(value)).filter((value) => isImageLikeValue(value, pageUrl));
 }
 
-function unknownImageValues(value: unknown): string[] {
+function unknownImageValues(value: unknown, includeObjectValues = false): string[] {
   if (typeof value === 'string' || typeof value === 'number') return [String(value)];
-  if (Array.isArray(value)) return value.flatMap(unknownImageValues);
+  if (Array.isArray(value)) return value.flatMap((child) => unknownImageValues(child, includeObjectValues));
   if (!isRecord(value)) return [];
-  return Object.entries(value).flatMap(([key, child]) => /img|imagen|image|foto|src|url/i.test(key) ? unknownImageValues(child) : []);
+  return Object.entries(value).flatMap(([key, child]) => includeObjectValues || /img|imagen|image|foto|src|url/i.test(key) ? unknownImageValues(child, includeObjectValues) : []);
 }
 
 function normalizeProductImage(value: string, pageUrl: string): string[] {
