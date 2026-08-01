@@ -45,6 +45,9 @@ type JsonRecord = Record<string, unknown>;
 type JsonLdProduct = { name?: unknown; sku?: unknown; description?: unknown; image?: unknown; offers?: { price?: unknown } };
 type EmbeddedYaguaronProduct = {
   producto?: JsonRecord;
+  variantes?: unknown;
+  variante?: unknown;
+  variaciones?: unknown;
   precioMonto?: unknown;
   moneda?: JsonRecord;
   carac?: unknown;
@@ -235,7 +238,7 @@ function extractCharacteristics(root: HTMLElement): Array<[string, string]> {
 
 function extractProductImages(root: HTMLElement, pageUrl: string, sku: string | undefined, embedded?: EmbeddedYaguaronProduct, jsonLd?: JsonLdProduct): string[] {
   const candidates = [
-    ...extractEmbeddedProductImages(skuMatchesEmbeddedProduct(embedded, sku) ? embedded : undefined),
+    ...extractEmbeddedProductImages(skuMatchesEmbeddedProduct(embedded, sku) ? embedded : undefined, sku),
     ...extractVisibleProductImages(root, pageUrl),
   ];
   if (jsonLdMatchesSku(jsonLd, sku)) {
@@ -245,13 +248,40 @@ function extractProductImages(root: HTMLElement, pageUrl: string, sku: string | 
   return uniqueStrings(candidates.flatMap((value) => normalizeProductImage(value, pageUrl)));
 }
 
-function extractEmbeddedProductImages(embedded?: EmbeddedYaguaronProduct): string[] {
+function extractEmbeddedProductImages(embedded?: EmbeddedYaguaronProduct, sku?: string): string[] {
+  const variantImages = extractVariantImages(embedded, sku);
   const product = embedded?.producto;
-  if (!product) return [];
+  if (!product) return variantImages;
   const prioritized = ['img', 'imagen', 'image', 'urlImagen', 'urlimagen', 'foto', 'fotoPrincipal', 'imagenPrincipal'];
   const direct = prioritized.flatMap((key) => unknownImageValues(product[key], true));
   const nested = ['imagenes', 'images', 'fotos', 'galeria', 'galería'].flatMap((key) => unknownImageValues(product[key], true));
+  return [...variantImages, ...direct, ...nested];
+}
+
+function extractVariantImages(embedded: EmbeddedYaguaronProduct | undefined, sku: string | undefined): string[] {
+  const variants = [embedded?.variantes, embedded?.variante, embedded?.variaciones].flatMap(variantEntries);
+  const matching = variants.filter((variant) => variantMatchesSku(variant, sku));
+  const selected = matching.length > 0 ? matching : variants;
+  return selected.flatMap((variant) => unknownImageValues(variant, true));
+}
+
+function variantEntries(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(variantEntries);
+  if (!isRecord(value)) return [];
+  const direct = hasVariantSignal(value) ? [value] : [];
+  const nested = Object.values(value).filter((child) => Array.isArray(child) || isRecord(child)).flatMap(variantEntries);
   return [...direct, ...nested];
+}
+
+function hasVariantSignal(value: JsonRecord): boolean {
+  return Object.keys(value).some((key) => ['codigo', 'codigocompleto', 'sku', 'com', 'img', 'imagen', 'image', 'foto', 'galeria', 'imagenes', 'images'].includes(normalizeLabel(key)));
+}
+
+function variantMatchesSku(value: unknown, sku: string | undefined): boolean {
+  const expected = cleanText(sku);
+  if (!expected || !isRecord(value)) return Boolean(expected);
+  const codes = ['codigo', 'codigocompleto', 'sku', 'com'].map((key) => textValue(value, [key])).filter((code): code is string => Boolean(code));
+  return codes.some((code) => code === expected || code.startsWith(expected) || code.includes(expected));
 }
 
 function extractVisibleProductImages(root: HTMLElement, pageUrl: string): string[] {
