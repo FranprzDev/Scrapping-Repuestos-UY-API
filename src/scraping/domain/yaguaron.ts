@@ -111,12 +111,10 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
     firstText(detailRoot, ['.descripcion', '[itemprop="description"]', '.blkDescripcion', '.detalleProducto .texto'])
       ?? asText(jsonLd?.description),
   );
-  const references = cleanReferences(
-    label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
-      ?? embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
-      ?? extractReferencesFromDetail(detailRoot)
-      ?? extractReferencesFromDescription(description),
-  );
+  const references = cleanReferences(label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias']))
+    ?? cleanReferences(embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias']))
+    ?? extractReferencesFromDetail(detailRoot)
+    ?? extractReferencesFromDescription(description);
   const imageUrls = extractProductImages(detailRoot, sourceUrl, embedded, jsonLd);
   const pageText = cleanText(detailRoot.text) ?? '';
   const stockState = normalizeStock(embedded?.tieneStock);
