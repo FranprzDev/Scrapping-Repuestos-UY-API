@@ -15,6 +15,7 @@ import {
 
 const fixture = (name: string) => readFileSync(`src/scraping/domain/fixtures/yaguaron/${name}`, 'utf8');
 const productUrl = 'https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251';
+const variantImageUrl = 'https://f.fcdn.app/abc/catalogo/123251_123251_1/1024-1024/producto.jpg';
 
 test('Yaguarón reconoce IDs iguales o diferentes y rechaza rutas WooCommerce', () => {
   assert.equal(isYaguaronProductUrl(productUrl), true);
@@ -125,6 +126,39 @@ test('Yaguarón prioriza producto.img del SKU actual y conserva galería visible
     'https://www.yaguaron.com.uy/imagenes/productos/123251-visible.jpg',
   ]));
   assert.equal(product.imageUrls?.some((url) => /topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|999999|footer|header/i.test(url)), false);
+});
+
+test('Yaguarón extrae la imagen real desde variantes.img aunque producto no tenga img', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <script type="application/json">{"producto":{"codigo":"123251","nombre":"KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS"},"variantes":{"codigo":"123251","codigoCompleto":"123251123251","img":"//f.fcdn.app/abc/catalogo/123251_123251_1/1024-1024/producto.jpg"},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, variantImageUrl);
+  assert.deepEqual(product.imageUrls, [variantImageUrl]);
+});
+
+test('Yaguarón conserva sólo variantes.img frente a topbar y productos relacionados', () => {
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <div class="imagenes"><img src="https://f.fcdn.app/123/recursos/129/1920x50/ayala-ecommerceyaguaron-topbar-1.jpg"></div>
+      <section class="productosRelacionados"><img src="/imagenes/productos/relacionado.jpg"></section>
+      <script type="application/json">{"producto":{"codigo":"123251","nombre":"KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS"},"variantes":{"codigo":"123251","codigoCompleto":"123251123251","img":"//f.fcdn.app/abc/catalogo/123251_123251_1/1024-1024/producto.jpg"},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, variantImageUrl);
+  assert.deepEqual(product.imageUrls, [variantImageUrl]);
+  assert.equal(product.imageUrls?.some((url) => /topbar|ayala-ecommerce|banner|logo|placeholder|relacionado|footer|header/i.test(url)), false);
 });
 
 test('Yaguarón rechaza el banner topbar de recursos aunque aparezca en el área de imágenes', () => {
