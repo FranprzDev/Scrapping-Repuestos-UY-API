@@ -10,6 +10,31 @@ const REFERENCES_NOISE_PATTERN = /({"?producto"?|inicio|cat[aá]logo|env[ií]os?
 const REFERENCE_CODE_PATTERN = /\b[A-Z0-9][A-Z0-9.-]{4,}\b/g;
 const REFERENCE_LABEL_PATTERN = /(?:referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)\s*:/i;
 const NEXT_DESCRIPTION_LABEL_PATTERN = /\s+(?:art\.?|art[ií]culo|calidad|fabricante|modelo|modelos|aplicaci[oó]n|compatibilidad|stock|disponibilidad)\s*:/i;
+const INFO_PATHS = new Set([
+  '/nosotros',
+  '/salir',
+  '/tiendas',
+  '/terminos-condiciones',
+  '/trabaja-con-nosotros',
+  '/como-comprar',
+  '/condiciones-de-compra',
+  '/envios-devoluciones',
+  '/preguntas-frecuentes',
+]);
+const PRODUCT_IMAGE_SELECTORS = [
+  '[data-zoom-image]',
+  '[data-large-image]',
+  '[data-full]',
+  '[data-src]',
+  '[data-original]',
+  'img[src]',
+  'source[srcset]',
+  'a[href]',
+];
+const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|producto(?:__)?(?:imagen|foto|galeria)|imagenes|galeria|thumb|zoom|swiper|slick|carousel|foto|image|pic)/i;
+const RELATED_IMAGE_CONTAINER_HINT = /(?:relacionad|recomendad|similares|tambien|también|otros-productos|aListProductos|listProductos|productosRelacionados)/i;
+const NON_PRODUCT_IMAGE_PATTERN = /(?:logo|banner|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
+const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)|\/imagenes?\/|\/img\//i;
 
 export interface YaguaronListingSummary {
   pageItems: number;
@@ -73,8 +98,9 @@ export function extractYaguaronCategoryUrls(html: string, pageUrl: string): stri
     const value = normalizeUrl(anchor.getAttribute('href'), pageUrl);
     if (!value || new URL(value).origin !== origin || isYaguaronProductUrl(value)) return [];
     const url = new URL(value);
-    if (/\/(?:contacto|carrito|mi-cuenta|blog)(?:\/|$)/i.test(url.pathname)) return [];
-    const segments = url.pathname.split('/').filter(Boolean);
+    const pathname = normalizePathname(url.pathname);
+    if (INFO_PATHS.has(pathname) || /\/(?:contacto|carrito|mi-cuenta|blog)(?:\/|$)/i.test(pathname)) return [];
+    const segments = pathname.split('/').filter(Boolean);
     const hasCatalogFilter = ['marca', 'modelo', 'marca-comp', 'modelo-comp'].some((key) => url.searchParams.has(key));
     return segments.length > 0 && segments.length <= 3 || hasCatalogFilter ? [url.toString()] : [];
   });
@@ -208,19 +234,91 @@ function extractCharacteristics(root: HTMLElement): Array<[string, string]> {
 }
 
 function extractProductImages(root: HTMLElement, pageUrl: string, embedded?: EmbeddedYaguaronProduct, jsonLd?: JsonLdProduct): string[] {
-  const selectors = ['.imagenes img', '.galeriaProducto img', '[itemprop="image"]', 'main .producto img'];
-  const candidates = selectors.flatMap((selector) => root.querySelectorAll(selector)).flatMap((image) => [
-    image.getAttribute('data-zoom-image'), image.getAttribute('data-src'), image.getAttribute('src'), image.getAttribute('content'),
-  ]);
-  const embeddedImage = textValue(embedded?.producto, ['img', 'imagen', 'image']);
-  if (embeddedImage) candidates.push(embeddedImage);
+  const candidates = [
+    ...extractEmbeddedProductImages(embedded),
+    ...extractVisibleProductImages(root, pageUrl, true),
+    ...extractVisibleProductImages(root, pageUrl, false),
+  ];
   if (typeof jsonLd?.image === 'string') candidates.push(jsonLd.image);
   if (Array.isArray(jsonLd?.image)) candidates.push(...jsonLd.image.filter((value): value is string => typeof value === 'string'));
-  return Array.from(new Set(candidates.flatMap((value) => {
-    const url = normalizeUrl(value, pageUrl);
-    if (!url || /logo|banner|placeholder|sin[-_]?imagen|no[-_]?image|relacionad/i.test(url)) return [];
-    return [url];
-  })));
+  return uniqueStrings(candidates.flatMap((value) => normalizeProductImage(value, pageUrl)));
+}
+
+function extractEmbeddedProductImages(embedded?: EmbeddedYaguaronProduct): string[] {
+  const product = embedded?.producto;
+  if (!product) return [];
+  const prioritized = ['img', 'imagen', 'image', 'urlImagen', 'urlimagen', 'foto', 'fotoPrincipal', 'imagenPrincipal'];
+  const direct = prioritized.flatMap((key) => unknownImageValues(product[key]));
+  const nested = ['imagenes', 'images', 'fotos', 'galeria', 'galería'].flatMap((key) => unknownImageValues(product[key]));
+  return [...direct, ...nested];
+}
+
+function extractVisibleProductImages(root: HTMLElement, pageUrl: string, mainOnly: boolean): string[] {
+  const containers = mainOnly
+    ? root.querySelectorAll('.imagenes, .galeriaProducto, .producto__imagenes, .producto-imagenes, .fichaProducto, .aFichaProducto, [class*="imagen"], [class*="galeria"], [class*="gallery"], [class*="zoom"], [class*="swiper"], [class*="slick"]')
+    : [root];
+  const candidates: string[] = [];
+  for (const container of containers) {
+    if (isRelatedImageNode(container)) continue;
+    for (const selector of PRODUCT_IMAGE_SELECTORS) {
+      for (const element of container.querySelectorAll(selector)) {
+        if (isRelatedImageNode(element) || !isLikelyProductImageNode(element)) continue;
+        candidates.push(...imageAttributes(element, pageUrl));
+      }
+    }
+  }
+  return candidates;
+}
+
+function imageAttributes(element: HTMLElement, pageUrl: string): string[] {
+  const values = [
+    element.getAttribute('data-zoom-image'),
+    element.getAttribute('data-large-image'),
+    element.getAttribute('data-full'),
+    element.getAttribute('data-src'),
+    element.getAttribute('data-original'),
+    element.getAttribute('src'),
+    element.getAttribute('href'),
+    firstSrcsetUrl(element.getAttribute('srcset')),
+    firstSrcsetUrl(element.getAttribute('data-srcset')),
+  ];
+  return values.filter((value): value is string => Boolean(value)).filter((value) => isImageLikeValue(value, pageUrl));
+}
+
+function unknownImageValues(value: unknown): string[] {
+  if (typeof value === 'string' || typeof value === 'number') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(unknownImageValues);
+  if (!isRecord(value)) return [];
+  return Object.entries(value).flatMap(([key, child]) => /img|imagen|image|foto|src|url/i.test(key) ? unknownImageValues(child) : []);
+}
+
+function normalizeProductImage(value: string, pageUrl: string): string[] {
+  const url = normalizeUrl(value, pageUrl);
+  if (!url || !isImageLikeValue(url, pageUrl) || NON_PRODUCT_IMAGE_PATTERN.test(url)) return [];
+  return [url];
+}
+
+function isImageLikeValue(value: string, pageUrl: string): boolean {
+  const normalized = normalizeUrl(value, pageUrl);
+  if (!normalized) return false;
+  return IMAGE_URL_PATTERN.test(normalized);
+}
+
+function isLikelyProductImageNode(element: HTMLElement): boolean {
+  const attrs = [element.getAttribute('class'), element.getAttribute('id'), element.getAttribute('alt'), element.getAttribute('title')].filter(Boolean).join(' ');
+  return !attrs || PRODUCT_IMAGE_CONTAINER_HINT.test(attrs) || element.tagName.toLowerCase() === 'img' || element.tagName.toLowerCase() === 'source';
+}
+
+function isRelatedImageNode(element: HTMLElement): boolean {
+  for (let current: HTMLElement | null = element; current; current = current.parentNode instanceof HTMLElement ? current.parentNode : null) {
+    const attrs = [current.getAttribute('class'), current.getAttribute('id')].filter(Boolean).join(' ');
+    if (RELATED_IMAGE_CONTAINER_HINT.test(attrs)) return true;
+  }
+  return false;
+}
+
+function firstSrcsetUrl(value: string | undefined): string | undefined {
+  return value?.split(',').map((part) => cleanText(part)?.split(/\s+/)[0]).find((part): part is string => Boolean(part));
 }
 
 function extractJsonLd(root: HTMLElement): JsonLdProduct | undefined {
@@ -391,6 +489,15 @@ function extractReferencesFromDescription(value: string | undefined): string | u
   const nextLabel = afterLabel.search(NEXT_DESCRIPTION_LABEL_PATTERN);
   const candidate = nextLabel >= 0 ? afterLabel.slice(0, nextLabel) : afterLabel;
   return cleanReferences(candidate);
+}
+
+function normalizePathname(value: string): string {
+  const pathname = value.replace(/\/+$/, '') || '/';
+  return pathname.toLowerCase();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
 }
 
 function skuFromUrl(value: string): string | undefined {
