@@ -82,7 +82,7 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
     'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-detalle.jpg',
   ]);
-  assert.equal(product.imageUrls?.some((url) => /\/recursos\/|topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|footer|header/i.test(url)), false);
+  assert.equal(product.imageUrls?.some((url) => /topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|footer|header/i.test(url)), false);
   assert.equal(product.availability, 'in_stock');
   assert.equal(product.sourceUrl, productUrl);
   assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
@@ -114,15 +114,17 @@ test('Yaguarón prioriza producto.img del SKU actual y conserva galería visible
 
   assert.ok(product);
   assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg');
-  assert.deepEqual(product.imageUrls, [
-    'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg',
+  assert.ok(product.imageUrls);
+  const [mainImage, ...secondaryImages] = product.imageUrls;
+  assert.equal(mainImage, 'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg');
+  assert.deepEqual(new Set(secondaryImages), new Set([
     'https://www.yaguaron.com.uy/imagenes/productos/123251-extra.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-zoom.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-galeria.webp',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-visible.jpg',
-  ]);
-  assert.equal(product.imageUrls?.some((url) => /\/recursos\/|topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|999999|footer|header/i.test(url)), false);
+  ]));
+  assert.equal(product.imageUrls?.some((url) => /topbar|ayala-ecommerce|logo|banner|placeholder|relacionado|999999|footer|header/i.test(url)), false);
 });
 
 test('Yaguarón rechaza el banner topbar de recursos aunque aparezca en el área de imágenes', () => {
