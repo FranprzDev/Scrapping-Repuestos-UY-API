@@ -105,14 +105,15 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
   const manufacturer = label(labels, ['fabricante'])
     ?? embeddedCharacteristic(embedded?.carac, ['fabricante'])
     ?? textValue(embedded?.producto, ['marca']);
-  const references = cleanReferences(
-    label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numerooreferencias'])
-      ?? embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
-      ?? extractReferencesFromDetail(detailRoot),
-  );
   const description = cleanDescription(
     firstText(detailRoot, ['.descripcion', '[itemprop="description"]', '.blkDescripcion', '.detalleProducto .texto'])
       ?? asText(jsonLd?.description),
+  );
+  const references = cleanReferences(
+    label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
+      ?? embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias'])
+      ?? extractReferencesFromDetail(detailRoot)
+      ?? extractReferencesFromDescription(description),
   );
   const imageUrls = extractProductImages(detailRoot, sourceUrl, embedded, jsonLd);
   const pageText = cleanText(detailRoot.text) ?? '';
@@ -122,6 +123,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
   const stock = label(labels, ['stock', 'existencia', 'disponibilidad']) ?? (stockState === 'in_stock' ? 'Disponible' : undefined);
   const category = breadcrumb(root).at(-1) ?? textValue(embedded?.producto, ['categoria']);
   const compatibility = extractCompatibility(characteristics, labels, embedded?.carac);
+  const attributeCharacteristics = extractAttributeCharacteristics(characteristics, embedded?.carac);
 
   return {
     productName,
@@ -141,7 +143,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
       calidad: quality,
       fabricante: manufacturer,
       referencias: references,
-      caracteristicas: characteristics.length > 0 ? characteristics.map(([key, value]) => `${key}: ${value}`).join('; ') : undefined,
+      caracteristicas: attributeCharacteristics,
     }),
     extractedAt: new Date().toISOString(),
     provider,
@@ -314,6 +316,17 @@ function extractCompatibility(characteristics: Array<[string, string]>, labels: 
   return Array.from(new Set(values.flatMap((value) => value.split(/[,;|]+/).map((part) => cleanText(part)).filter((part): part is string => Boolean(part)))));
 }
 
+function extractAttributeCharacteristics(characteristics: Array<[string, string]>, embeddedCarac: unknown): string | undefined {
+  const values = characteristics.filter(([key]) => !isStructuredAttributeKey(key));
+  const model = embeddedCharacteristic(embeddedCarac, ['modelo', 'modelos']);
+  if (model && !values.some(([key]) => normalizeLabel(key) === 'modelo')) values.push(['Modelo', model]);
+  return values.length > 0 ? values.map(([key, value]) => `${key}: ${value}`).join('; ') : undefined;
+}
+
+function isStructuredAttributeKey(value: string): boolean {
+  return ['art', 'articulo', 'codigo', 'calidad', 'fabricante', 'referencia', 'referencias', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias', 'stock', 'disponibilidad'].includes(normalizeLabel(value));
+}
+
 function embeddedCharacteristic(carac: unknown, keys: string[]): string | undefined {
   if (isRecord(carac)) return textValue(carac, keys);
   if (!Array.isArray(carac)) return undefined;
@@ -368,6 +381,13 @@ function extractReferencesFromDetail(root: HTMLElement): string | undefined {
     if (references) return references;
   }
   return undefined;
+}
+
+function extractReferencesFromDescription(value: string | undefined): string | undefined {
+  const text = cleanText(value);
+  if (!text) return undefined;
+  const match = text.match(/(?:referencias?|nro\.?\s*referencia|n[uú]mero\s*referencia)\s*:?\s*([A-Z0-9][A-Z0-9.\-/\s]{4,80})(?=\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s*:|$)/i);
+  return cleanReferences(match?.[1]);
 }
 
 function skuFromUrl(value: string): string | undefined {
