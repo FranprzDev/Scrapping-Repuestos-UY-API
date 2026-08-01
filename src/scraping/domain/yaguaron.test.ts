@@ -113,8 +113,9 @@ test('Yaguarón prioriza producto.img y conserva galería visible sin imágenes 
   assert.deepEqual(product.imageUrls, [
     'https://www.yaguaron.com.uy/imagenes/productos/123251-principal.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-zoom.jpg',
-    'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-galeria.webp',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
+    'https://www.yaguaron.com.uy/imagenes/productos/123251-visible.jpg',
   ]);
   assert.equal(product.imageUrls?.some((url) => /logo|banner|placeholder|relacionado/i.test(url)), false);
 });
