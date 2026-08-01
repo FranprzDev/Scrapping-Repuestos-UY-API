@@ -8,6 +8,8 @@ const DESCRIPTION_NOISE_PATTERN = /env[ií]os?|medios? de pago|cambios?|devoluci
 const DESCRIPTION_REJECT_PATTERN = /({"?producto"?|precioMonto|tieneStock|productos relacionados|medios de pago|redes sociales)/i;
 const REFERENCES_NOISE_PATTERN = /({"?producto"?|inicio|cat[aá]logo|env[ií]os?|medios de pago|redes sociales|productos relacionados|facebook|instagram|whatsapp)/i;
 const REFERENCE_CODE_PATTERN = /\b[A-Z0-9][A-Z0-9.-]{4,}\b/g;
+const REFERENCE_LABEL_PATTERN = /(?:referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)\s*:/i;
+const NEXT_DESCRIPTION_LABEL_PATTERN = /\s+(?:art\.?|art[ií]culo|calidad|fabricante|modelo|modelos|aplicaci[oó]n|compatibilidad|stock|disponibilidad)\s*:/i;
 
 export interface YaguaronListingSummary {
   pageItems: number;
@@ -375,9 +377,8 @@ function cleanReferences(value: string | undefined): string | undefined {
 function extractReferencesFromDetail(root: HTMLElement): string | undefined {
   for (const element of root.querySelectorAll('*')) {
     const text = cleanText(element.text);
-    if (!text || !/(referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)/i.test(text)) continue;
-    const match = text.match(/(?:referencias?|nro\.?\s*referencias?|n[uú]mero\s*referencias?)\s*:?\s*([A-Z0-9][A-Z0-9.\-/\s]{4,80})/i);
-    const references = cleanReferences(match?.[1]);
+    if (!text || !REFERENCE_LABEL_PATTERN.test(text)) continue;
+    const references = extractReferencesFromDescription(text);
     if (references) return references;
   }
   return undefined;
@@ -386,8 +387,12 @@ function extractReferencesFromDetail(root: HTMLElement): string | undefined {
 function extractReferencesFromDescription(value: string | undefined): string | undefined {
   const text = cleanText(value);
   if (!text) return undefined;
-  const match = text.match(/(?:referencias?|nro\.?\s*referencia|n[uú]mero\s*referencia)\s*:?\s*([A-Z0-9][A-Z0-9.\-/\s]{4,80})(?=\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s*:|$)/i);
-  return cleanReferences(match?.[1]);
+  const label = text.match(REFERENCE_LABEL_PATTERN);
+  if (!label || label.index === undefined) return undefined;
+  const afterLabel = text.slice(label.index + label[0].length);
+  const nextLabel = afterLabel.search(NEXT_DESCRIPTION_LABEL_PATTERN);
+  const candidate = nextLabel >= 0 ? afterLabel.slice(0, nextLabel) : afterLabel;
+  return cleanReferences(candidate);
 }
 
 function skuFromUrl(value: string): string | undefined {
