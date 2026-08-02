@@ -25,15 +25,18 @@ const PRODUCT_IMAGE_SELECTORS = [
   '[data-zoom-image]',
   '[data-large-image]',
   '[data-full]',
+  '[data-src-g]',
   '[data-src]',
   '[data-original]',
+  '[data-standard]',
+  'img[itemprop="image"]',
   'img[src]',
   'source[srcset]',
   'a[href]',
 ];
-const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|producto(?:__)?(?:imagen|foto|galeria)|imagenes|galeria|thumb|zoom|swiper|slick|carousel|foto|image|pic)/i;
+const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|fichaImagenes|imagenProducto|producto(?:__)?(?:imagen|foto|galeria)|imagenes|galeria|thumb|zoom|swiper|slick|carousel|foto|image|pic)/i;
 const RELATED_IMAGE_CONTAINER_HINT = /(?:relacionad|recomendad|similares|tambien|también|otros-productos|aListProductos|listProductos|productosRelacionados)/i;
-export const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
+export const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp|logoMarca|medios?[-_]?pago)/i;
 export const LOGO_IMAGE_PATTERN = /(?:^|[\/_*.-])logo(?:[\/_*.-]|$)/i;
 const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)|\/imagenes?\/|\/img\/|\/productos?\/|\/catalogo\//i;
 
@@ -145,7 +148,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
     ?? cleanReferences(embeddedCharacteristic(embedded?.carac, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias']))
     ?? extractReferencesFromDetail(detailRoot)
     ?? extractReferencesFromDescription(description);
-  const imageUrls = extractProductImages(detailRoot, sourceUrl, sku, embedded, jsonLd);
+  const imageUrls = extractProductImages(root, sourceUrl, sku, embedded, jsonLd);
   const pageText = cleanText(detailRoot.text) ?? '';
   const stockState = normalizeStock(embedded?.tieneStock);
   const available = stockState === 'in_stock' || (/comprar|agregar al carrito/i.test(pageText) && !/agotado|sin stock|no disponible/i.test(pageText));
@@ -209,7 +212,7 @@ export function dedupeYaguaronProducts(products: ProductRecord[]): { products: P
 }
 
 function findDetailRoot(root: HTMLElement): HTMLElement {
-  return root.querySelector('.aFichaProducto, .fichaProducto, main[itemtype*="Product"], main') ?? root;
+  return root.querySelector('#fichaProducto, .aFichaProducto, .fichaProducto, main[itemtype*="Product"], main') ?? root;
 }
 
 function extractLabelValues(root: HTMLElement): Map<string, string> {
@@ -239,6 +242,7 @@ function extractCharacteristics(root: HTMLElement): Array<[string, string]> {
 
 function extractProductImages(root: HTMLElement, pageUrl: string, sku: string | undefined, embedded?: EmbeddedYaguaronProduct, jsonLd?: JsonLdProduct): string[] {
   const candidates = [
+    ...extractMetaProductImages(root),
     ...extractEmbeddedProductImages(skuMatchesEmbeddedProduct(embedded, sku) ? embedded : undefined, sku),
     ...extractVisibleProductImages(root, pageUrl),
   ];
@@ -247,6 +251,13 @@ function extractProductImages(root: HTMLElement, pageUrl: string, sku: string | 
     if (Array.isArray(jsonLd?.image)) candidates.push(...jsonLd.image.filter((value): value is string => typeof value === 'string'));
   }
   return uniqueStrings(candidates.flatMap((value) => normalizeProductImage(value, pageUrl)));
+}
+
+function extractMetaProductImages(root: HTMLElement): string[] {
+  return [
+    root.querySelector('meta[property="og:image"]')?.getAttribute('content'),
+    root.querySelector('meta[name="twitter:image"]')?.getAttribute('content'),
+  ].filter((value): value is string => Boolean(value));
 }
 
 function extractEmbeddedProductImages(embedded?: EmbeddedYaguaronProduct, sku?: string): string[] {
@@ -302,6 +313,10 @@ function extractVisibleProductImages(root: HTMLElement, pageUrl: string): string
 
 function productImageContainers(root: HTMLElement): HTMLElement[] {
   const selectors = [
+    '#fichaProducto .fichaImagenes',
+    '#fichaProducto .imagenProducto',
+    '#fichaProducto .swiperThumbs',
+    '#fichaProducto img[itemprop="image"]',
     '.imagenes',
     '.galeriaProducto',
     '.producto__imagenes',
@@ -342,8 +357,10 @@ function imageAttributes(element: HTMLElement, pageUrl: string): string[] {
     element.getAttribute('data-zoom-image'),
     element.getAttribute('data-large-image'),
     element.getAttribute('data-full'),
+    element.getAttribute('data-src-g'),
     element.getAttribute('data-src'),
     element.getAttribute('data-original'),
+    element.getAttribute('data-standard'),
     element.getAttribute('src'),
     element.getAttribute('href'),
     firstSrcsetUrl(element.getAttribute('srcset')),
@@ -356,7 +373,7 @@ function unknownImageValues(value: unknown, includeObjectValues = false): string
   if (typeof value === 'string' || typeof value === 'number') return [String(value)];
   if (Array.isArray(value)) return value.flatMap((child) => unknownImageValues(child, includeObjectValues));
   if (!isRecord(value)) return [];
-  return Object.entries(value).flatMap(([key, child]) => includeObjectValues || /img|imagen|image|foto|src|url/i.test(key) ? unknownImageValues(child, includeObjectValues) : []);
+  return Object.entries(value).flatMap(([key, child]) => includeObjectValues || /img|imagen|image|foto|src|url|u/i.test(key) ? unknownImageValues(child, includeObjectValues) : []);
 }
 
 function normalizeProductImage(value: string, pageUrl: string): string[] {
@@ -440,19 +457,35 @@ function extractJsonLd(root: HTMLElement): JsonLdProduct | undefined {
 
 function extractEmbeddedYaguaronProduct(root: HTMLElement, expectedSku?: string): EmbeddedYaguaronProduct | undefined {
   const found: EmbeddedYaguaronProduct[] = [];
+  const fichaJson = parseEmbeddedProductJsonText(fichaJsonText(root));
+  if (fichaJson) found.push(fichaJson);
   for (const script of root.querySelectorAll('script')) {
     const text = script.text;
-    if (!/("producto"\s*:|precioMonto|tieneStock)/.test(text)) continue;
+    if (!/("producto"\s*:|precioMonto|tieneStock|"variantes?"\s*:|"variaciones"\s*:)/.test(text)) continue;
     for (const candidate of jsonObjectCandidates(text)) {
-      try {
-        const product = findEmbeddedProduct(JSON.parse(candidate));
-        if (product) found.push(product);
-      } catch { /* Ignore non-JSON executable snippets. */ }
+      const product = parseEmbeddedProductJsonText(candidate);
+      if (product) found.push(product);
     }
   }
   const expected = cleanText(expectedSku);
   const matching = found.filter((product) => expected && textValue(product.producto, ['codigo']) === expected);
   return mergeEmbeddedProducts(matching.length > 0 ? matching : found, expected);
+}
+
+function fichaJsonText(root: HTMLElement): string | undefined {
+  const node = root.querySelector('#jsonDataFicha');
+  if (!node) return undefined;
+  const textNode = node as HTMLElement & { textContent?: string; innerText?: string };
+  return textNode.textContent ?? textNode.innerText ?? node.text;
+}
+
+function parseEmbeddedProductJsonText(text: string | undefined): EmbeddedYaguaronProduct | undefined {
+  if (!text) return undefined;
+  try {
+    return findEmbeddedProduct(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 function mergeEmbeddedProducts(products: EmbeddedYaguaronProduct[], expectedSku: string | undefined): EmbeddedYaguaronProduct | undefined {
