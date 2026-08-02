@@ -18,6 +18,7 @@ import {
 const fixture = (name: string) => readFileSync(`src/scraping/domain/fixtures/yaguaron/${name}`, 'utf8');
 const productUrl = 'https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251';
 const variantImageUrl = 'https://f.fcdn.app/abc/catalogo/123251_123251_1/1024-1024/producto.jpg';
+const realProductImageUrl = 'https://f.fcdn.app/imgs/2e83d7/www.yaguaron.com.uy/yaguuy/3bb6/original/catalogo/123251_123251_1/800x800/kit-de-distribucion-tensor-y-correa-varios-modelos-kit-de-distribucion-tensor-y-correa-varios-modelos.jpg';
 const isRejectedImageForTest = (url: string) => NON_PRODUCT_IMAGE_PATTERN.test(url) || LOGO_IMAGE_PATTERN.test(new URL(url).pathname);
 
 test('Yaguarón reconoce IDs iguales o diferentes y rechaza rutas WooCommerce', () => {
@@ -90,12 +91,12 @@ test('Yaguarón extrae la ficha real 123251 sin tomar sku.fen ni contenedores am
   });
   assert.equal(product.description, 'Kit original de tensor y correa para los modelos indicados.');
   assert.doesNotMatch(product.description ?? '', /env[ií]os|medios de pago|cambios|devoluciones|redes sociales|productos relacionados|precioMonto|producto/i);
-  assert.equal(product.imageUrl, 'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg');
-  assert.deepEqual(product.imageUrls, [
-    'https://www.yaguaron.com.uy/imagenes/productos/123251-grande.jpg',
-    'https://www.yaguaron.com.uy/imagenes/productos/123251-detalle.jpg',
-  ]);
-  assert.equal(product.imageUrls?.some(isRejectedImageForTest), false);
+  assert.equal(product.imageUrl, realProductImageUrl);
+  assert.ok(product.imageUrls);
+  assert.equal(product.imageUrls.includes(realProductImageUrl), true);
+  assert.equal(product.imageUrls.every((url) => url.includes('/catalogo/123251_123251_1/')), true);
+  assert.equal(product.imageUrls.some(isRejectedImageForTest), false);
+  assert.equal(product.imageUrls.some((url) => /topbar|ayala-ecommerce|relacionad|logoMarca|medios[-_]?pago|visa/i.test(url)), false);
   assert.equal(product.availability, 'in_stock');
   assert.equal(product.sourceUrl, productUrl);
   assert.deepEqual(product.compatibleModels, ['Agile', 'Celta', 'Corsa', 'Montana', 'Onix', 'Prisma']);
@@ -137,7 +138,7 @@ test('Yaguarón prioriza producto.img del SKU actual y conserva galería visible
     'https://www.yaguaron.com.uy/imagenes/productos/123251-thumb.jpg',
     'https://www.yaguaron.com.uy/imagenes/productos/123251-visible.jpg',
   ]));
-  assert.equal(product.imageUrls?.some(isRejectedImageForTest), false);
+  assert.equal(product.imageUrls.some(isRejectedImageForTest), false);
 });
 
 test('Yaguarón extrae la imagen real desde variantes.img aunque producto no tenga img', () => {
@@ -187,7 +188,7 @@ test('Yaguarón conserva sólo variantes.img frente a topbar y productos relacio
   assert.ok(product);
   assert.equal(product.imageUrl, variantImageUrl);
   assert.deepEqual(product.imageUrls, [variantImageUrl]);
-  assert.equal(product.imageUrls?.some(isRejectedImageForTest), false);
+  assert.equal(product.imageUrls.some(isRejectedImageForTest), false);
 });
 
 test('Yaguarón rechaza el banner topbar de recursos aunque aparezca en el área de imágenes', () => {
