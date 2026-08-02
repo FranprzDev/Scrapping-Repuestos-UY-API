@@ -440,7 +440,28 @@ function extractEmbeddedYaguaronProduct(root: HTMLElement, expectedSku?: string)
     }
   }
   const expected = cleanText(expectedSku);
-  return found.find((product) => expected && textValue(product.producto, ['codigo']) === expected) ?? found[0];
+  const matching = found.filter((product) => expected && textValue(product.producto, ['codigo']) === expected);
+  return bestEmbeddedProduct(matching, expected) ?? bestEmbeddedProduct(found, expected);
+}
+
+function bestEmbeddedProduct(products: EmbeddedYaguaronProduct[], expectedSku: string | undefined): EmbeddedYaguaronProduct | undefined {
+  return [...products].sort((left, right) => embeddedProductScore(right, expectedSku) - embeddedProductScore(left, expectedSku))[0];
+}
+
+function embeddedProductScore(product: EmbeddedYaguaronProduct, expectedSku: string | undefined): number {
+  const variants = [product.variantes, product.variante, product.variaciones].flatMap(variantEntries);
+  const matchingVariants = variants.filter((variant) => variantMatchesSku(variant, expectedSku));
+  const selectedVariants = matchingVariants.length > 0 ? matchingVariants : variants;
+  const variantImages = selectedVariants.flatMap((variant) => unknownImageValues(variant, true)).filter((value) => normalizeProductImage(value, 'https://www.yaguaron.com.uy/').length > 0);
+  const productImages = extractEmbeddedProductImages({ producto: product.producto }, expectedSku).filter((value) => normalizeProductImage(value, 'https://www.yaguaron.com.uy/').length > 0);
+  const usefulKeys = ['producto', 'variantes', 'variante', 'variaciones', 'precioMonto', 'moneda', 'carac', 'tieneStock']
+    .filter((key) => (product as JsonRecord)[key] !== undefined).length;
+  return (matchingVariants.length > 0 && variantImages.length > 0 ? 10_000 : 0)
+    + (variantImages.length > 0 ? 5_000 : 0)
+    + (productImages.length > 0 ? 1_000 : 0)
+    + usefulKeys * 100
+    + Object.keys(product).length
+    + JSON.stringify(product).length / 10_000;
 }
 
 function jsonObjectCandidates(text: string): string[] {
@@ -483,7 +504,7 @@ function findEmbeddedProduct(value: unknown): EmbeddedYaguaronProduct | undefine
     return undefined;
   }
   if (!isRecord(value)) return undefined;
-  if (isRecord(value.producto) && ('precioMonto' in value || 'moneda' in value || 'carac' in value || 'tieneStock' in value)) {
+  if (isRecord(value.producto) && ('precioMonto' in value || 'moneda' in value || 'carac' in value || 'tieneStock' in value || 'variantes' in value || 'variante' in value || 'variaciones' in value)) {
     return value as EmbeddedYaguaronProduct;
   }
   for (const child of Object.values(value)) {
