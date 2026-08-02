@@ -143,6 +143,23 @@ test('Yaguarón extrae la imagen real desde variantes.img aunque producto no ten
   assert.deepEqual(product.imageUrls, [variantImageUrl]);
 });
 
+test('Yaguarón prefiere el JSON completo con variantes.img frente al objeto corto del mismo SKU', () => {
+  const completeVariantUrl = 'https://f.fcdn.app/catalogo/123251_123251_1/producto.jpg';
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>KIT DE DISTRIBUCIÓN TENSOR Y CORREA - VARIOS MODELOS</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <script type="application/json">{"producto":{"codigo":"123251"},"precioMonto":1643}</script>
+      <script type="application/json">{"producto":{"codigo":"123251"},"variantes":{"codigo":"123251","img":"//f.fcdn.app/catalogo/123251_123251_1/producto.jpg"},"precioMonto":1643}</script>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, completeVariantUrl);
+  assert.deepEqual(product.imageUrls, [completeVariantUrl]);
+});
+
 test('Yaguarón conserva sólo variantes.img frente a topbar y productos relacionados', () => {
   const product = extractYaguaronDetail(`
     <main class="aFichaProducto">
