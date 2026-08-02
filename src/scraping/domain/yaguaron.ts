@@ -33,7 +33,7 @@ const PRODUCT_IMAGE_SELECTORS = [
 ];
 const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|producto(?:__)?(?:imagen|foto|galeria)|imagenes|galeria|thumb|zoom|swiper|slick|carousel|foto|image|pic)/i;
 const RELATED_IMAGE_CONTAINER_HINT = /(?:relacionad|recomendad|similares|tambien|también|otros-productos|aListProductos|listProductos|productosRelacionados)/i;
-const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|logo|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
+const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|(?:^|[\/_-])logo(?:[\/_\-.]|$)|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
 const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)|\/imagenes?\/|\/img\/|\/productos?\/|\/catalogo\//i;
 
 export interface YaguaronListingSummary {
@@ -278,8 +278,9 @@ function hasVariantSignal(value: JsonRecord): boolean {
 }
 
 function variantMatchesSku(value: unknown, sku: string | undefined): boolean {
+  if (!isRecord(value)) return false;
   const expected = cleanText(sku);
-  if (!expected || !isRecord(value)) return Boolean(expected);
+  if (!expected) return true;
   const codes = ['codigo', 'codigocompleto', 'sku', 'com'].map((key) => textValue(value, [key])).filter((code): code is string => Boolean(code));
   return codes.some((code) => code === expected || code.startsWith(expected) || code.includes(expected));
 }
@@ -441,11 +442,27 @@ function extractEmbeddedYaguaronProduct(root: HTMLElement, expectedSku?: string)
   }
   const expected = cleanText(expectedSku);
   const matching = found.filter((product) => expected && textValue(product.producto, ['codigo']) === expected);
-  return bestEmbeddedProduct(matching, expected) ?? bestEmbeddedProduct(found, expected);
+  return mergeEmbeddedProducts(matching.length > 0 ? matching : found, expected);
 }
 
-function bestEmbeddedProduct(products: EmbeddedYaguaronProduct[], expectedSku: string | undefined): EmbeddedYaguaronProduct | undefined {
-  return [...products].sort((left, right) => embeddedProductScore(right, expectedSku) - embeddedProductScore(left, expectedSku))[0];
+function mergeEmbeddedProducts(products: EmbeddedYaguaronProduct[], expectedSku: string | undefined): EmbeddedYaguaronProduct | undefined {
+  return [...products]
+    .sort((left, right) => embeddedProductScore(left, expectedSku) - embeddedProductScore(right, expectedSku))
+    .reduce<EmbeddedYaguaronProduct | undefined>((merged, product) => mergeEmbeddedProduct(merged, product), undefined);
+}
+
+function mergeEmbeddedProduct(left: EmbeddedYaguaronProduct | undefined, right: EmbeddedYaguaronProduct): EmbeddedYaguaronProduct {
+  if (!left) return right;
+  return {
+    producto: { ...left.producto, ...right.producto },
+    variantes: right.variantes ?? left.variantes,
+    variante: right.variante ?? left.variante,
+    variaciones: right.variaciones ?? left.variaciones,
+    precioMonto: right.precioMonto ?? left.precioMonto,
+    moneda: right.moneda ?? left.moneda,
+    carac: right.carac ?? left.carac,
+    tieneStock: right.tieneStock ?? left.tieneStock,
+  };
 }
 
 function embeddedProductScore(product: EmbeddedYaguaronProduct, expectedSku: string | undefined): number {
