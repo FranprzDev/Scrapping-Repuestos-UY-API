@@ -33,7 +33,8 @@ const PRODUCT_IMAGE_SELECTORS = [
 ];
 const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|producto(?:__)?(?:imagen|foto|galeria)|imagenes|galeria|thumb|zoom|swiper|slick|carousel|foto|image|pic)/i;
 const RELATED_IMAGE_CONTAINER_HINT = /(?:relacionad|recomendad|similares|tambien|también|otros-productos|aListProductos|listProductos|productosRelacionados)/i;
-const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|(?:^|[\/_-])logo(?:[\/_\-.]|$)|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
+export const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp)/i;
+export const LOGO_IMAGE_PATTERN = /(?:^|[\/_*.-])logo(?:[\/_*.-]|$)/i;
 const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)|\/imagenes?\/|\/img\/|\/productos?\/|\/catalogo\//i;
 
 export interface YaguaronListingSummary {
@@ -361,7 +362,7 @@ function unknownImageValues(value: unknown, includeObjectValues = false): string
 function normalizeProductImage(value: string, pageUrl: string): string[] {
   const imageValue = normalizeImageCandidateText(value);
   const url = normalizeUrl(imageValue, pageUrl);
-  if (!url || !isImageLikeValue(url, pageUrl) || NON_PRODUCT_IMAGE_PATTERN.test(url)) return [];
+  if (!url || !isImageLikeValue(url, pageUrl) || isNonProductImageUrl(url)) return [];
   return [url];
 }
 
@@ -383,8 +384,17 @@ function normalizeImageCandidateText(value: string): string | undefined {
 function isImageLikeValue(value: string, pageUrl: string): boolean {
   const imageValue = normalizeImageCandidateText(value);
   const normalized = normalizeUrl(imageValue, pageUrl);
-  if (!normalized || NON_PRODUCT_IMAGE_PATTERN.test(normalized)) return false;
+  if (!normalized || isNonProductImageUrl(normalized)) return false;
   return IMAGE_URL_PATTERN.test(normalized);
+}
+
+function isNonProductImageUrl(url: string): boolean {
+  if (NON_PRODUCT_IMAGE_PATTERN.test(url)) return true;
+  try {
+    return LOGO_IMAGE_PATTERN.test(new URL(url).pathname);
+  } catch {
+    return LOGO_IMAGE_PATTERN.test(url);
+  }
 }
 
 function skuMatchesEmbeddedProduct(embedded: EmbeddedYaguaronProduct | undefined, sku: string | undefined): boolean {
