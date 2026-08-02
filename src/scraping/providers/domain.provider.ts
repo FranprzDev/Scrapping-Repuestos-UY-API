@@ -43,6 +43,7 @@ import {
   extractYaguaronProductUrls,
   isYaguaronProductUrl,
 } from '../domain/yaguaron';
+import { addYaguaronListingProducts } from '../domain/yaguaron-pagination';
 
 @Injectable()
 export class DomainProvider implements ScrapingProvider {
@@ -473,21 +474,26 @@ export class DomainProvider implements ScrapingProvider {
     }
     if (listings.length === 0) listings = [sourceUrl];
 
-    const pages: Array<{ url: string; method: string; productCount: number; declaredTotal?: number }> = [];
+    const pages: Array<{ url: string; method: string; productCount: number; listingUrl?: string; page?: number; newInListing?: number; uniqueInListing?: number; declaredTotal?: number }> = [];
     for (const listing of listings) {
-      const listingStartCount = directProducts.size;
-      let previousCount = directProducts.size;
+      const listingProducts = new Set<string>();
       for (let page = 1; directProducts.size < maxItems; page += 1) {
         const pageUrl = page === 1 ? listing : buildFenicioPageUrl(listing, page);
         const response = await fetchHtmlWithRetry(pageUrl, page === 1 ? {} : { headers: { 'x-requested-with': 'XMLHttpRequest', referer: listing } });
         const summary = extractYaguaronListingSummary(response.body);
         const found = extractYaguaronProductUrls(response.body, response.finalUrl);
-        found.forEach((url) => directProducts.add(url));
-        pages.push({ url: response.finalUrl, method: page === 1 ? 'yaguaron-fenicio-http' : 'yaguaron-fenicio-ajax', productCount: found.length, declaredTotal: summary.declaredTotal });
-        const reachedDeclaredTotal = Boolean(summary.declaredTotal && directProducts.size - listingStartCount >= summary.declaredTotal);
-        const noNewProducts = directProducts.size === previousCount;
-        if (reachedDeclaredTotal || noNewProducts || found.length === 0) break;
-        previousCount = directProducts.size;
+        const progress = addYaguaronListingProducts(found, listingProducts, directProducts, summary.declaredTotal);
+        pages.push({
+          url: response.finalUrl,
+          method: page === 1 ? 'yaguaron-fenicio-http' : 'yaguaron-fenicio-ajax',
+          productCount: found.length,
+          listingUrl: listing,
+          page,
+          newInListing: progress.newInListing,
+          uniqueInListing: progress.uniqueInListing,
+          declaredTotal: summary.declaredTotal,
+        });
+        if (progress.reachedDeclaredTotal || progress.noNewInThisListing || found.length === 0) break;
       }
       if (directProducts.size >= maxItems) break;
     }

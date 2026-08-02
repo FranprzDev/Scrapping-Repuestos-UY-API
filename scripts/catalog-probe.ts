@@ -9,6 +9,7 @@ import {
   extractYaguaronListingSummary,
   extractYaguaronProductUrls,
 } from '../src/scraping/domain/yaguaron';
+import { addYaguaronListingProducts } from '../src/scraping/domain/yaguaron-pagination';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 
@@ -36,7 +37,7 @@ const report = {
   mode: productUrl ? 'product' : 'catalog',
   status: 'running',
   categoriesDiscovered: [] as string[],
-  pagesVisited: [] as Array<{ url: string; method: string; discovered: number; declaredTotal?: number }>,
+  pagesVisited: [] as Array<{ url: string; method: string; listingUrl?: string; page?: number; discovered: number; newInListing?: number; uniqueInListing?: number; declaredTotal?: number }>,
   productUrlsDiscovered: [] as string[],
   declaredTotals: [] as Array<{ url: string; total: number }>,
   detailPositions: [] as Array<{ url: string; current: number; total: number; note: string }>,
@@ -103,8 +104,7 @@ try {
 
   for (const category of queue) {
     if (report.pagesVisited.length >= maxPages || productUrls.size >= maxProducts) break;
-    const categoryStart = productUrls.size;
-    let previous = productUrls.size;
+    const listingProducts = new Set<string>();
     for (let page = 1; report.pagesVisited.length < maxPages && productUrls.size < maxProducts; page += 1) {
       const url = page === 1 ? category : buildFenicioPageUrl(category, page);
       let response: HttpResponseData;
@@ -113,13 +113,19 @@ try {
       if (captureHtml) await capture(`${site}-${report.pagesVisited.length + 1}.html`, response.body);
       const summary = extractYaguaronListingSummary(response.body);
       const found = extractYaguaronProductUrls(response.body, response.finalUrl);
-      found.forEach((value) => productUrls.add(value));
-      report.pagesVisited.push({ url: response.finalUrl, method: page === 1 ? 'HTTP' : 'Fenicio AJAX', discovered: found.length, declaredTotal: summary.declaredTotal });
+      const progress = addYaguaronListingProducts(found, listingProducts, productUrls, summary.declaredTotal);
+      report.pagesVisited.push({
+        url: response.finalUrl,
+        method: page === 1 ? 'HTTP' : 'Fenicio AJAX',
+        listingUrl: category,
+        page,
+        discovered: progress.discovered,
+        newInListing: progress.newInListing,
+        uniqueInListing: progress.uniqueInListing,
+        declaredTotal: summary.declaredTotal,
+      });
       if (summary.declaredTotal) report.declaredTotals.push({ url: category, total: summary.declaredTotal });
-      const noNew = productUrls.size === previous;
-      const reachedTotal = Boolean(summary.declaredTotal && productUrls.size - categoryStart >= summary.declaredTotal);
-      if (noNew || found.length === 0 || reachedTotal) break;
-      previous = productUrls.size;
+      if (progress.noNewInThisListing || found.length === 0 || progress.reachedDeclaredTotal) break;
     }
   }
 

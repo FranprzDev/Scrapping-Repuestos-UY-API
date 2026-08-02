@@ -14,6 +14,7 @@ import {
   LOGO_IMAGE_PATTERN,
   NON_PRODUCT_IMAGE_PATTERN,
 } from './yaguaron';
+import { addYaguaronListingProducts } from './yaguaron-pagination';
 
 const fixture = (name: string) => readFileSync(`src/scraping/domain/fixtures/yaguaron/${name}`, 'utf8');
 const productUrl = 'https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251';
@@ -46,6 +47,45 @@ test('Yaguarón descubre categorías, productos y total declarado del listado Fe
   assert.deepEqual(extractYaguaronListingSummary(html), { pageItems: 2, declaredTotal: 437 });
   assert.equal(extractYaguaronProductUrls(html, 'https://www.yaguaron.com.uy/').length, 2);
   assert.equal(extractYaguaronProductUrls(fixture('listing-page-2.ajax.html'), 'https://www.yaguaron.com.uy/')[0], 'https://www.yaguaron.com.uy/catalogo/soporte-de-motor_111111_222222');
+});
+
+test('Yaguarón pagina una categoría aunque sus primeros productos ya existan globalmente', () => {
+  const globalProducts = new Set<string>();
+  const categoryA = new Set<string>();
+  const categoryB = new Set<string>();
+  const productUrlFor = (id: number) => `https://www.yaguaron.com.uy/catalogo/producto-${id}_${id}_${id}`;
+  const firstPage = Array.from({ length: 12 }, (_, index) => productUrlFor(index + 1));
+  const secondPage = Array.from({ length: 12 }, (_, index) => productUrlFor(index + 13));
+
+  const categoryAProgress = addYaguaronListingProducts(firstPage, categoryA, globalProducts, 12);
+  assert.equal(categoryAProgress.reachedDeclaredTotal, true);
+  assert.equal(globalProducts.size, 12);
+
+  const categoryBFirstPage = addYaguaronListingProducts(firstPage, categoryB, globalProducts, 24);
+  assert.equal(categoryBFirstPage.newInListing, 12);
+  assert.equal(categoryBFirstPage.noNewInThisListing, false);
+  assert.equal(categoryBFirstPage.reachedDeclaredTotal, false);
+  assert.equal(globalProducts.size, 12);
+
+  const categoryBSecondPage = addYaguaronListingProducts(secondPage, categoryB, globalProducts, 24);
+  assert.equal(categoryBSecondPage.newInListing, 12);
+  assert.equal(categoryBSecondPage.uniqueInListing, 24);
+  assert.equal(categoryBSecondPage.reachedDeclaredTotal, true);
+  assert.equal(globalProducts.size, 24);
+});
+
+test('Yaguarón controla declaredTotal con el total local del listing, no con el global', () => {
+  const globalProducts = new Set<string>(
+    Array.from({ length: 30 }, (_, index) => `https://www.yaguaron.com.uy/catalogo/global-${index + 1}_${index + 1}_${index + 1}`),
+  );
+  const listingProducts = new Set<string>();
+  const found = Array.from({ length: 12 }, (_, index) => `https://www.yaguaron.com.uy/catalogo/local-${index + 1}_${index + 1}_${index + 1}`);
+
+  const progress = addYaguaronListingProducts(found, listingProducts, globalProducts, 24);
+
+  assert.equal(progress.uniqueInListing, 12);
+  assert.equal(progress.reachedDeclaredTotal, false);
+  assert.equal(globalProducts.size, 42);
 });
 
 test('Yaguarón excluye páginas informativas sin bloquear modelos ni categorías reales', () => {
