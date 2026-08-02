@@ -38,7 +38,7 @@ const PRODUCT_IMAGE_CONTAINER_HINT = /(?:aFichaProducto|fichaProducto|fichaImage
 const RELATED_IMAGE_CONTAINER_HINT = /(?:relacionad|recomendad|similares|tambien|también|otros-productos|aListProductos|listProductos|productosRelacionados)/i;
 export const NON_PRODUCT_IMAGE_PATTERN = /(?:topbar|banner|ayala-ecommerce|placeholder|sin[-_]?imagen|no[-_]?image|relacionad|footer|header|sprite|icon|favicon|loading|loader|blank|default|pixel|analytics|facebook|instagram|whatsapp|logoMarca|medios?[-_]?pago)/i;
 export const LOGO_IMAGE_PATTERN = /(?:^|[\/_*.-])logo(?:[\/_*.-]|$)/i;
-const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)|\/imagenes?\/|\/img\/|\/productos?\/|\/catalogo\//i;
+const IMAGE_URL_PATTERN = /\.(?:avif|webp|jpe?g|png|gif)(?:[?#]|$)/i;
 
 export interface YaguaronListingSummary {
   pageItems: number;
@@ -274,7 +274,26 @@ function extractVariantImages(embedded: EmbeddedYaguaronProduct | undefined, sku
   const variants = [embedded?.variantes, embedded?.variante, embedded?.variaciones].flatMap(variantEntries);
   const matching = variants.filter((variant) => variantMatchesSku(variant, sku));
   const selected = matching.length > 0 ? matching : variants;
-  return selected.flatMap((variant) => unknownImageValues(variant, true));
+  return selected.flatMap(extractImagesFromVariant);
+}
+
+function extractImagesFromVariant(variant: unknown): string[] {
+  if (!isRecord(variant)) return [];
+  const imageKeys = [
+    'img',
+    'imagen',
+    'image',
+    'foto',
+    'fotos',
+    'imagenes',
+    'images',
+    'galeria',
+    'galería',
+    'fotoPrincipal',
+    'imagenPrincipal',
+    'urlImagen',
+  ];
+  return imageKeys.flatMap((key) => unknownImageValues(variant[key], true));
 }
 
 function variantEntries(value: unknown): unknown[] {
@@ -512,7 +531,7 @@ function embeddedProductScore(product: EmbeddedYaguaronProduct, expectedSku: str
   const variants = [product.variantes, product.variante, product.variaciones].flatMap(variantEntries);
   const matchingVariants = variants.filter((variant) => variantMatchesSku(variant, expectedSku));
   const selectedVariants = matchingVariants.length > 0 ? matchingVariants : variants;
-  const variantImages = selectedVariants.flatMap((variant) => unknownImageValues(variant, true)).filter((value) => normalizeProductImage(value, 'https://www.yaguaron.com.uy/').length > 0);
+  const variantImages = selectedVariants.flatMap(extractImagesFromVariant).filter((value) => normalizeProductImage(value, 'https://www.yaguaron.com.uy/').length > 0);
   const productImages = extractEmbeddedProductImages({ producto: product.producto }, expectedSku).filter((value) => normalizeProductImage(value, 'https://www.yaguaron.com.uy/').length > 0);
   const usefulKeys = ['producto', 'variantes', 'variante', 'variaciones', 'precioMonto', 'moneda', 'carac', 'tieneStock']
     .filter((key) => (product as JsonRecord)[key] !== undefined).length;
