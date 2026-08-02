@@ -156,6 +156,23 @@ test('Yaguarón extrae la imagen real desde variantes.img aunque producto no ten
   assert.deepEqual(product.imageUrls, [variantImageUrl]);
 });
 
+test('Yaguarón no transforma códigos de variante en URLs de imagen', () => {
+  const expected = 'https://f.fcdn.app/catalogo/123251/producto.jpg';
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>PRODUCTO</h1>
+      <div class="precio venta">$ 1.643</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas"><div class="it"><span class="tit">Art.</span><span class="val">123251</span></div></section>
+      <script type="application/json">{"producto":{"codigo":"123251","nombre":"PRODUCTO"},"variante":{"codigo":"123251","codigoCompleto":"123251123251","nombre":"PRODUCTO","url":"/catalogo/123251","tieneStock":true,"ordenVariante":1,"img":{"u":"//f.fcdn.app/catalogo/123251/producto.jpg"}},"precioMonto":1643,"moneda":{"cod":"UYU"},"tieneStock":true}</script>
+    </main>
+  `, productUrl, 'domain');
+
+  assert.ok(product);
+  assert.deepEqual(product.imageUrls, [expected]);
+  assert.equal(product.imageUrls?.includes('https://www.yaguaron.com.uy/catalogo/123251'), false);
+  assert.equal(product.imageUrls?.includes('https://www.yaguaron.com.uy/catalogo/123251123251'), false);
+});
+
 test('Yaguarón prefiere el JSON completo con variantes.img frente al objeto corto del mismo SKU', () => {
   const completeVariantUrl = 'https://f.fcdn.app/catalogo/123251_123251_1/producto.jpg';
   const product = extractYaguaronDetail(`
