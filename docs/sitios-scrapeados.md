@@ -41,6 +41,20 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
   - Cobertura: descubrimiento de marcas, catálogo por marca, detalle de producto, precio, compatibilidad e imagen del producto
   - Imágenes: se toma la imagen real del bloque `.producto__imagenes` (o `section.producto`) y se normaliza a una URL absoluta. No se usa `og:image` como sustituto porque en este sitio puede apuntar a una imagen genérica o distinta del producto.
 
+## Integrados pendientes de validación live
+
+- `Yaguarón`
+  - URL base: `https://www.yaguaron.com.uy/`
+  - Integración Fenicio específica: menú de categorías/modelos, listado `aListProductos`, paginación AJAX `js=1&pag=N` y fichas `/catalogo/{slug}_{id1}_{id2}`.
+  - Campos: título, Art./SKU, precio UYU, descripción, características, calidad, fabricante, referencias, imágenes, disponibilidad, stock, categoría y modelos compatibles.
+  - Diagnóstico de catálogo: `pnpm run catalog:probe --site=yaguaron --max-pages=3 --max-products=20 --capture-html=true`.
+  - Diagnóstico de ficha: `pnpm run catalog:probe --site=yaguaron --product-url=https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251 --capture-html=true`.
+  - Ambos modos escriben `tmp/catalog-probe/yaguaron.json`; `--capture-har=true` guarda un HAR cuando se utiliza el fallback de Playwright.
+  - Falta una corrida live exitosa desde un entorno con acceso al origen; no debe considerarse cerrado hasta comparar el total declarado, URLs únicas, guardados y rechazados.
+
+- `Italur` y `Mirvic`
+  - Permanecen sin adaptador específico y pendientes de implementación/validación live.
+
 ## Pendientes
 
 - `Autopartes Gil`

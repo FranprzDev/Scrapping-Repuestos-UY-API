@@ -253,6 +253,56 @@ export const DOMAIN_RULES: DomainRule[] = [
     positiveAvailabilityTexts: ['comprar', 'agregar al carrito'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
   },
+  {
+    id: 'yaguaron',
+    hostnames: ['yaguaron.com.uy', 'www.yaguaron.com.uy'],
+    seedUrls: ['https://www.yaguaron.com.uy/'],
+    preferredMethod: 'http',
+    preserveOutOfStock: true,
+    productUrlPatterns: [/\/catalogo\/[^/?#]+_\d+_\d+\/?$/i],
+    categoryUrlPatterns: [/^https?:\/\/(?:www\.)?yaguaron\.com\.uy\/(?!catalogo\/[^/?#]+_\d+_\d+\/?$)[a-z0-9-]+(?:\/[a-z0-9-]+){0,2}\/?(?:\?.*)?$/i],
+    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i],
+    positiveAvailabilityTexts: ['comprar', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+  },
+  {
+    id: 'italur',
+    hostnames: ['italur.com', 'www.italur.com'],
+    seedUrls: ['https://www.italur.com/'],
+    preferredMethod: 'playwright-fallback',
+    preserveOutOfStock: true,
+    productUrlPatterns: [/\/producto\//i, /\/product\//i, /\/articulo\//i],
+    categoryUrlPatterns: [/\/productos?(?:\/|\?|$)/i, /\/product-category\//i, /\/categoria\//i, /\/page\/\d+/i, /[?&](?:page|paged)=\d+/i],
+    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i],
+    positiveAvailabilityTexts: ['comprar', 'agregar al carrito', 'añadir al carrito', 'en stock', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+    detailSelectors: {
+      title: ['h1.product_title', 'h1', '[class*="product-title"]'],
+      price: ['.price', '.woocommerce-Price-amount', '[class*="precio"]'],
+      description: ['.woocommerce-product-details__short-description', '#tab-description', '[class*="description"]'],
+      sku: ['.sku', '[class*="sku"]', '[class*="codigo"]'],
+      image: ['.woocommerce-product-gallery img', 'figure img', 'main img', 'meta[property="og:image"]'],
+    },
+  },
+  {
+    id: 'mirvic',
+    hostnames: ['mirvic.com.uy', 'www.mirvic.com.uy'],
+    seedUrls: ['https://mirvic.com.uy/'],
+    preferredMethod: 'playwright-fallback',
+    preserveOutOfStock: true,
+    productUrlPatterns: [/\/producto\//i, /\/product\//i, /\/articulo\//i],
+    categoryUrlPatterns: [/\/productos?(?:\/|\?|$)/i, /\/product-category\//i, /\/categoria\//i, /\/page\/\d+/i, /[?&](?:page|paged)=\d+/i],
+    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i],
+    positiveAvailabilityTexts: ['comprar', 'agregar al carrito', 'añadir al carrito', 'en stock', 'disponible'],
+    negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+    detailSelectors: {
+      title: ['h1.product_title', 'h1', '[class*="product-title"]'],
+      price: ['.price', '.woocommerce-Price-amount', '[class*="precio"]'],
+      description: ['.woocommerce-product-details__short-description', '#tab-description', '[class*="description"]'],
+      sku: ['.sku', '[class*="sku"]', '[class*="codigo"]'],
+      image: ['.woocommerce-product-gallery img', 'figure img', 'main img', 'meta[property="og:image"]'],
+    },
+  },
 ];
 
 export function findDomainRule(url: string): DomainRule | undefined {
@@ -304,6 +354,9 @@ function formatHouseLabel(id: string): string {
     cymaco: 'Cymaco',
     familcar: 'Familcar',
     larrique: 'Larrique',
+    yaguaron: 'Yaguarón',
+    italur: 'Italur',
+    mirvic: 'Mirvic',
   };
 
   const explicit = explicitLabels[id];

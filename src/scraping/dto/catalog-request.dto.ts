@@ -67,6 +67,9 @@ export const NEW_CATALOG_SITES = [
   'https://cymaco.com.uy/catalogo',
   'https://www.familcar.com/',
   'https://larrique.com.uy/repuestos-autopartes/1',
+  'https://www.yaguaron.com.uy/',
+  'https://www.italur.com/',
+  'https://mirvic.com.uy/',
 ] as const;
 
 export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES, ...EUROPARTS_CATALOG_SITES, ...NEW_CATALOG_SITES] as const;

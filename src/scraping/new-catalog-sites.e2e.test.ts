@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fetchHtml } from './domain/http-client';
+import { extractYaguaronDetail, isYaguaronProductUrl } from './domain/yaguaron';
 
 const runLive = process.env.RUN_NEW_CATALOG_E2E === '1';
 
@@ -53,6 +54,18 @@ test('las nuevas casas exponen sus catálogos completos mediante los contratos v
       assert.equal(await page.locator('a.productViewContainer').count(), 450);
       assert.match(await page.locator('body').innerText(), /450 productos/i);
       await page.close();
+    });
+
+    await t.test('Yaguarón entrega una ficha Fenicio real por HTTP', async () => {
+      const url = 'https://www.yaguaron.com.uy/catalogo/kit-de-distribucion-tensor-y-correa-varios-modelos_123251_123251';
+      assert.equal(isYaguaronProductUrl(url), true);
+      const response = await fetchHtml(url);
+      assert.equal(response.statusCode, 200);
+      const product = extractYaguaronDetail(response.body, response.finalUrl, 'domain');
+      assert.ok(product);
+      assert.equal(product.sku, '123251');
+      assert.ok(product.productName);
+      assert.ok(product.imageUrl);
     });
   } finally {
     await browser.close();

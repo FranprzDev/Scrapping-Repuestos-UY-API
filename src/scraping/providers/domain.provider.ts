@@ -16,6 +16,7 @@ import { DomainRule, findDomainRule, getSeedUrls } from '../domain/domain-rules'
 import { type HttpRequestInit, type HttpResponseData, fetchHtml } from '../domain/http-client';
 import {
   buildFenicioPageUrl,
+  buildCatalogSitemapUrls,
   buildLarriqueBrandUrl,
   buildLarriqueFinalPageUrl,
   buildShopifyProductsUrl,
@@ -24,6 +25,7 @@ import {
   extractFamilcarBrandSeeds,
   extractFenicioPageSummary,
   extractFenicioProducts,
+  extractSitemapLocations,
   extractLarriqueContextBrand,
   extractLarriqueProducts,
   extractLarriqueTotalResults,
@@ -32,6 +34,16 @@ import {
 } from '../domain/new-catalog-sites';
 import { cleanText, dedupeProducts, inferCurrency, mergeCompatibleBrands, normalizePriceValue, qualityGate } from '../domain/product-quality';
 import { PlaywrightProvider } from './playwright.provider';
+import {
+  canonicalizeYaguaronProductUrl,
+  dedupeYaguaronProducts,
+  extractYaguaronCategoryUrls,
+  extractYaguaronDetail,
+  extractYaguaronListingSummary,
+  extractYaguaronProductUrls,
+  isYaguaronProductUrl,
+} from '../domain/yaguaron';
+import { addYaguaronListingProducts } from '../domain/yaguaron-pagination';
 
 @Injectable()
 export class DomainProvider implements ScrapingProvider {
@@ -150,6 +162,17 @@ export class DomainProvider implements ScrapingProvider {
 
     if (rule.id === 'larrique') {
       return await this.crawlLarrique(sourceUrl);
+    }
+
+    if (rule.id === 'yaguaron') {
+      return await this.crawlYaguaron(sourceUrl);
+    }
+
+    if (isSitemapCatalog(rule)) {
+      const sitemap = await this.crawlSitemapCatalog(sourceUrl, rule, limit);
+      if (sitemap.discoveredUrls.length > 0) {
+        return sitemap;
+      }
     }
 
     if (rule.preferredMethod === 'api') {
@@ -290,6 +313,10 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
+    if (rule.id === 'yaguaron') {
+      return await this.extractYaguaronCatalog(urls, sourceUrl, maxItems, rule);
+    }
+
     const processed = await mapWithConcurrency(urls, this.extractConcurrency, async (url) => {
       let usableProducts: ProductRecord[] = [];
       let method = 'http';
@@ -383,6 +410,106 @@ export class DomainProvider implements ScrapingProvider {
       discoveredUrls: brands.map((brand) => buildLarriqueBrandUrl(response.finalUrl, brand)),
       discoveryMethod: 'larrique-http',
     };
+  }
+
+  private async crawlSitemapCatalog(sourceUrl: string, rule: DomainRule, limit: number) {
+    const queue = buildCatalogSitemapUrls(sourceUrl);
+    const visited = new Set<string>();
+    const productUrls = new Set<string>();
+    const pages: Array<{ url: string; depth: number; productCount: number }> = [];
+
+    while (queue.length > 0 && visited.size < limit) {
+      const sitemapUrl = queue.shift();
+      if (!sitemapUrl || visited.has(sitemapUrl)) continue;
+      visited.add(sitemapUrl);
+
+      try {
+        const response = await fetchHtml(sitemapUrl);
+        if (response.statusCode < 200 || response.statusCode >= 300 || !/<(?:urlset|sitemapindex)\b/i.test(response.body)) {
+          continue;
+        }
+
+        const locations = extractSitemapLocations(response.body, response.finalUrl);
+        for (const location of locations) {
+          if (!isSameCatalogHost(location, sourceUrl) || rule.excludeUrlPatterns.some((pattern) => pattern.test(location))) continue;
+          if (rule.productUrlPatterns.some((pattern) => pattern.test(location))) {
+            productUrls.add(location);
+          } else if (/\.xml(?:\?|$)/i.test(location) && !visited.has(location)) {
+            queue.push(location);
+          }
+        }
+        pages.push({ url: response.finalUrl, depth: 0, productCount: productUrls.size });
+      } catch (error) {
+        this.logger.warn(`No se pudo leer sitemap ${sitemapUrl}: ${formatError(error)}`);
+      }
+    }
+
+    return {
+      seedUrl: sourceUrl,
+      pages,
+      discoveredUrls: Array.from(productUrls),
+      discoveryMethod: 'sitemap-http',
+    };
+  }
+
+  private async crawlYaguaron(sourceUrl: string) {
+    const response = await fetchHtmlWithRetry(sourceUrl);
+    const categories = extractYaguaronCategoryUrls(response.body, response.finalUrl);
+    const products = extractYaguaronProductUrls(response.body, response.finalUrl);
+    return {
+      seedUrl: sourceUrl,
+      pages: [{ url: response.finalUrl, depth: 0, productCount: products.length }],
+      discoveredUrls: uniqueStrings([...categories, ...products]),
+      discoveryMethod: 'yaguaron-fenicio-http',
+    };
+  }
+
+  private async extractYaguaronCatalog(urls: string[], sourceUrl: string, maxItems: number, rule: DomainRule) {
+    const directProducts = new Set(urls.filter(isYaguaronProductUrl).map(canonicalizeYaguaronProductUrl).filter((value): value is string => Boolean(value)));
+    let listings = uniqueStrings(urls.filter((url) => !isYaguaronProductUrl(url)));
+    if (listings.length === 0) {
+      const discovered = await this.crawlYaguaron(sourceUrl);
+      listings = discovered.discoveredUrls.filter((url) => !isYaguaronProductUrl(url));
+      discovered.discoveredUrls.filter(isYaguaronProductUrl).forEach((url) => directProducts.add(url));
+    }
+    if (listings.length === 0) listings = [sourceUrl];
+
+    const pages: Array<{ url: string; method: string; productCount: number; listingUrl?: string; page?: number; newInListing?: number; uniqueInListing?: number; declaredTotal?: number }> = [];
+    for (const listing of listings) {
+      const listingProducts = new Set<string>();
+      for (let page = 1; directProducts.size < maxItems; page += 1) {
+        const pageUrl = page === 1 ? listing : buildFenicioPageUrl(listing, page);
+        const response = await fetchHtmlWithRetry(pageUrl, page === 1 ? {} : { headers: { 'x-requested-with': 'XMLHttpRequest', referer: listing } });
+        const summary = extractYaguaronListingSummary(response.body);
+        const found = extractYaguaronProductUrls(response.body, response.finalUrl);
+        const progress = addYaguaronListingProducts(found, listingProducts, directProducts, summary.declaredTotal);
+        pages.push({
+          url: response.finalUrl,
+          method: page === 1 ? 'yaguaron-fenicio-http' : 'yaguaron-fenicio-ajax',
+          productCount: found.length,
+          listingUrl: listing,
+          page,
+          newInListing: progress.newInListing,
+          uniqueInListing: progress.uniqueInListing,
+          declaredTotal: summary.declaredTotal,
+        });
+        if (progress.reachedDeclaredTotal || progress.noNewInThisListing || found.length === 0) break;
+      }
+      if (directProducts.size >= maxItems) break;
+    }
+
+    const productUrls = Array.from(directProducts).slice(0, maxItems);
+    const details = await mapWithConcurrency(productUrls, this.extractConcurrency, async (url) => {
+      try {
+        const response = await fetchHtmlWithRetry(url);
+        return extractYaguaronDetail(response.body, response.finalUrl, this.name);
+      } catch (error) {
+        this.logger.warn(`No se pudo extraer ficha Yaguarón ${url}: ${formatError(error)}`);
+        return undefined;
+      }
+    });
+    const products = dedupeYaguaronProducts(qualityGate(details.filter((product): product is ProductRecord => Boolean(product)), rule)).products;
+    return { urls: productUrls, pages, products };
   }
 
   private async extractMultishopProducts(sourceUrl: string, maxItems: number) {
@@ -1532,6 +1659,19 @@ function inferFenicioBrandSeed(value: string, site: 'cymaco' | 'familcar'): Cata
     return { brandLabel, sourceUrl: url.toString() };
   } catch {
     return undefined;
+  }
+}
+
+function isSitemapCatalog(rule: DomainRule): boolean {
+  return ['italur', 'mirvic'].includes(rule.id);
+}
+
+function isSameCatalogHost(value: string, baseUrl: string): boolean {
+  try {
+    const normalize = (hostname: string) => hostname.toLowerCase().replace(/^www\./, '');
+    return normalize(new URL(value).hostname) === normalize(new URL(baseUrl).hostname);
+  } catch {
+    return false;
   }
 }
 

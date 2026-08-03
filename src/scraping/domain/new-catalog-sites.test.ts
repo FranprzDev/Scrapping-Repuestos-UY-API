@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
   buildFenicioPageUrl,
+  buildCatalogSitemapUrls,
   buildLarriqueFinalPageUrl,
   buildShopifyProductsUrl,
   extractCymacoBrandSeeds,
@@ -11,8 +12,11 @@ import {
   extractLarriqueProducts,
   extractLarriqueTotalResults,
   extractShopifyProducts,
+  extractSitemapLocations,
   parseLarriqueBrandResponse,
 } from './new-catalog-sites';
+import { extractCandidateLinks, extractProductsFromHtml } from './domain-html';
+import { findDomainRule, isAdmittedHouseUrl } from './domain-rules';
 
 test('Multishop pagina y normaliza el JSON público de Shopify', () => {
   assert.equal(
@@ -113,4 +117,55 @@ test('Larrique interpreta la respuesta de marcas sin duplicados', () => {
     parseLarriqueBrandResponse('{"status":"ok","results":[{"name":"BMW"},{"name":"FIAT"},{"name":"BMW"}]}'),
     ['BMW', 'FIAT'],
   );
+});
+
+test('Italur y Mirvic conservan la admisión previa', () => {
+  for (const baseUrl of [
+    'https://www.italur.com/',
+    'https://mirvic.com.uy/',
+  ]) {
+    assert.equal(isAdmittedHouseUrl(baseUrl), true);
+    const rule = findDomainRule(baseUrl);
+    assert.ok(rule);
+
+    const links = extractCandidateLinks(`
+      <a href="/producto/filtro-aceite">Filtro de aceite - $ 450 - Comprar</a>
+      <a href="/product-category/filtros/page/2/">Siguiente</a>
+      <a href="/carrito/">Carrito</a>
+    `, baseUrl, rule);
+    assert.deepEqual(links.productLinks, [new URL('/producto/filtro-aceite', baseUrl).toString()]);
+    assert.deepEqual(links.categoryLinks, [new URL('/product-category/filtros/page/2/', baseUrl).toString()]);
+
+    const products = extractProductsFromHtml(`
+      <main class="product">
+        <h1 class="product_title">Filtro de aceite</h1>
+        <span class="sku">SKU: FO-123</span>
+        <p class="price">$ 450</p>
+        <button>Agregar al carrito</button>
+        <figure><img src="/images/filtro.jpg"></figure>
+      </main>
+    `, new URL('/producto/filtro-aceite', baseUrl).toString(), 'domain', rule);
+    assert.equal(products[0]?.productName, 'Filtro de aceite');
+    assert.equal(products[0]?.price, '450');
+    assert.equal(products[0]?.sku, 'FO-123');
+  }
+});
+
+test('interpreta índices sitemap para los adaptadores previos', () => {
+  assert.deepEqual(buildCatalogSitemapUrls('https://www.italur.com/tienda/'), [
+    'https://www.italur.com/wp-sitemap.xml',
+    'https://www.italur.com/sitemap_index.xml',
+    'https://www.italur.com/sitemap.xml',
+  ]);
+
+  assert.deepEqual(extractSitemapLocations(`
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.italur.com/producto/filtro-aceite?motor=1&amp;marca=2</loc></url>
+      <url><loc>https://www.italur.com/producto/pastillas-freno</loc></url>
+      <url><loc>https://www.italur.com/producto/pastillas-freno</loc></url>
+    </urlset>
+  `, 'https://www.italur.com/'), [
+    'https://www.italur.com/producto/filtro-aceite?motor=1&marca=2',
+    'https://www.italur.com/producto/pastillas-freno',
+  ]);
 });
