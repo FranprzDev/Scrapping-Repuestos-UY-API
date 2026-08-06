@@ -1,8 +1,12 @@
 import 'dotenv/config';
 import { chromium, type Page, type Request, type Response } from 'playwright';
 import {
+  closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
+  hasReachedYokomitsuPortal,
+  hasVisibleYokomitsuCaptchaChallenge,
+  hasYokomitsuManualLoginTimedOut,
   inferApproximateProductCount,
   inferPaginationFromCalls,
   inferYokomitsuFieldsAvailable,
@@ -13,14 +17,19 @@ import {
   YOKOMITSU_BASE_URL,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
+  type YokomitsuCaptchaSignal,
   type YokomitsuDiagnosticReport,
   type YokomitsuNetworkCall,
 } from '../src/scraping/domain/yokomitsu';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
 
+const args = parseArgs(process.argv.slice(2));
+const manualLogin = args.has('manual-login');
+const headed = args.has('headed') || manualLogin;
 const USERNAME = process.env.YOKOMITSU_USERNAME;
 const PASSWORD = process.env.YOKOMITSU_PASSWORD;
 const TIMEOUT_MS = positiveInt(process.env.YOKOMITSU_DIAGNOSTIC_TIMEOUT_MS, 60_000);
+const MANUAL_LOGIN_TIMEOUT_MS = positiveInt(args.get('manual-timeout-ms') ?? process.env.YOKOMITSU_MANUAL_LOGIN_TIMEOUT_MS, 300_000);
 const MAX_CATALOG_REQUESTS = 30;
 
 const report: YokomitsuDiagnosticReport = {
@@ -55,14 +64,14 @@ const report: YokomitsuDiagnosticReport = {
 };
 
 async function main() {
-  if (!USERNAME || !PASSWORD) {
+  if (!manualLogin && (!USERNAME || !PASSWORD)) {
     report.status = 'missing-env';
-    report.notes.push('set YOKOMITSU_USERNAME and YOKOMITSU_PASSWORD to run the authenticated diagnostic');
+    report.notes.push('set YOKOMITSU_USERNAME and YOKOMITSU_PASSWORD or use --manual-login to run the authenticated diagnostic');
     printReport();
     return;
   }
 
-  const browser = await chromium.launch({ headless: process.env.YOKOMITSU_HEADLESS !== 'false' });
+  const browser = await chromium.launch({ headless: headed ? false : process.env.YOKOMITSU_HEADLESS !== 'false' });
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     locale: 'es-UY',
@@ -75,26 +84,34 @@ async function main() {
   const requests = new Map<Request, YokomitsuNetworkCall>();
   const productSamples = new Map<string, ProductRecord>();
   let sawAuthorizationHeader = false;
+  let authenticatedCatalogResponses = 0;
 
   page.on('request', (request) => {
     if (!isYokomitsuUrl(request.url())) return;
     const headers = request.headers();
     sawAuthorizationHeader ||= typeof headers.authorization === 'string' && headers.authorization.trim().length > 0;
+    const likelyLoginRequest = isLikelyLoginRequest(request);
     const call: YokomitsuNetworkCall = {
       method: request.method(),
       url: sanitizeUrl(request.url()),
       resourceType: request.resourceType(),
-      requestBody: sanitizeRequestBody(request.postData()),
+      requestBody: likelyLoginRequest && manualLogin ? '[MANUAL_LOGIN_BODY_NOT_READ]' : sanitizeRequestBody(request.postData()),
     };
     requests.set(request, call);
-    if (isLikelyLoginRequest(request)) {
+    if (likelyLoginRequest && !manualLogin) {
       report.login.fieldNames = extractFieldNamesFromBody(request.postData());
+      report.login.method = request.method();
+      report.login.endpoint = sanitizeUrl(request.url());
+    } else if (likelyLoginRequest) {
       report.login.method = request.method();
       report.login.endpoint = sanitizeUrl(request.url());
     }
   });
 
   page.on('response', (response) => {
+    if (isLikelyYokomitsuCatalogUrl(response.url()) && response.status() >= 200 && response.status() < 400) {
+      authenticatedCatalogResponses += 1;
+    }
     void inspectResponse(response, requests, productSamples);
   });
 
@@ -103,26 +120,36 @@ async function main() {
     await page.waitForLoadState('networkidle').catch(() => undefined);
 
     report.captchaDetected = await detectCaptcha(page);
-    if (report.captchaDetected) {
+    if (report.captchaDetected && !manualLogin) {
       report.status = 'blocked';
       report.restrictions.push('CAPTCHA detected on login page; diagnostic stopped before submitting credentials');
       return;
     }
 
-    const filled = await fillLoginForm(page, USERNAME, PASSWORD);
-    if (!filled) {
-      report.status = 'blocked';
-      report.restrictions.push('Could not identify username/password fields safely');
-      return;
-    }
+    if (manualLogin) {
+      printManualLoginInstructions();
+      const loggedIn = await waitForManualLogin(page, () => authenticatedCatalogResponses, MANUAL_LOGIN_TIMEOUT_MS);
+      if (!loggedIn) {
+        report.status = 'blocked';
+        report.restrictions.push(`Manual login timeout after ${MANUAL_LOGIN_TIMEOUT_MS}ms`);
+        return;
+      }
+    } else {
+      const filled = await fillLoginForm(page, USERNAME as string, PASSWORD as string);
+      if (!filled) {
+        report.status = 'blocked';
+        report.restrictions.push('Could not identify username/password fields safely');
+        return;
+      }
 
-    await submitLogin(page);
-    await page.waitForLoadState('networkidle').catch(() => undefined);
-    await page.waitForTimeout(1500);
+      await submitLogin(page);
+      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await page.waitForTimeout(1500);
+    }
 
     report.captchaDetected = report.captchaDetected || await detectCaptcha(page);
     report.twoFactorDetected = await detectTwoFactor(page);
-    report.reachedPortal = await hasReachedPortal(page);
+    report.reachedPortal = await hasReachedPortal(page, authenticatedCatalogResponses);
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
     const cookies = await context.cookies();
@@ -159,9 +186,7 @@ async function main() {
     report.status = 'error';
     report.restrictions.push(redactError(error));
   } finally {
-    await context.clearCookies().catch(() => undefined);
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    await closeYokomitsuSessionResources({ context, browser }).catch(() => undefined);
     printReport();
   }
 }
@@ -283,17 +308,53 @@ async function extractProductsFromDom(page: Page): Promise<ProductRecord[]> {
 }
 
 async function detectCaptcha(page: Page): Promise<boolean> {
-  return page.evaluate(() => /captcha|recaptcha|hcaptcha/i.test(document.body.innerHTML));
+  const signals = await page.evaluate(() => {
+    const isVisible = (element: Element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.visibility !== 'hidden'
+        && style.display !== 'none'
+        && Number(style.opacity || '1') > 0
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    return Array.from(document.querySelectorAll('iframe, textarea, input, button, div, [class*="captcha" i], [id*="captcha" i], [src*="captcha" i]'))
+      .map((element): YokomitsuCaptchaSignal => ({
+        tagName: element.tagName.toLowerCase(),
+        id: element.id || undefined,
+        className: typeof element.className === 'string' ? element.className : undefined,
+        title: element.getAttribute('title') ?? undefined,
+        src: element.getAttribute('src') ?? undefined,
+        text: element.textContent?.trim().slice(0, 120) || undefined,
+        visible: isVisible(element),
+      }));
+  });
+  return hasVisibleYokomitsuCaptchaChallenge(signals);
 }
 
 async function detectTwoFactor(page: Page): Promise<boolean> {
-  return page.evaluate(() => /2fa|c[oó]digo de verificaci[oó]n|verificaci[oó]n|otp|token/i.test(document.body.textContent ?? ''));
+  return page.evaluate(() => /2fa|c[oÃ³]digo de verificaci[oÃ³]n|verificaci[oÃ³]n|otp|token/i.test(document.body.textContent ?? ''));
 }
 
-async function hasReachedPortal(page: Page): Promise<boolean> {
+async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
   const url = page.url();
   const hasPassword = await page.locator('input[type="password"]').count().catch(() => 1);
-  return !/\/login(?:[/?#]|$)/i.test(url) && hasPassword === 0;
+  const portalElementCount = await page.locator([
+    'a[href*="logout" i]',
+    'a[href*="salir" i]',
+    '[class*="catalog" i]',
+    '[class*="catalogo" i]',
+    '[class*="producto" i]',
+    '[class*="stock" i]',
+    '[class*="precio" i]',
+    'table',
+  ].join(', ')).count().catch(() => 0);
+  return hasReachedYokomitsuPortal({
+    currentUrl: url,
+    hasPasswordInput: hasPassword > 0,
+    portalElementCount,
+    authenticatedCatalogResponses,
+  });
 }
 
 async function inspectStorage(page: Page): Promise<{ localStorageKeys: number; hasJwt: boolean; hasBearer: boolean; hasRefreshToken: boolean }> {
@@ -332,6 +393,32 @@ function addProduct(products: Map<string, ProductRecord>, product: ProductRecord
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function waitForManualLogin(page: Page, catalogResponses: () => number, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  while (!hasYokomitsuManualLoginTimedOut(started, Date.now(), timeoutMs)) {
+    if (await hasReachedPortal(page, catalogResponses())) return true;
+    await page.waitForTimeout(1000);
+  }
+  return false;
+}
+
+function printManualLoginInstructions(): void {
+  console.log([
+    'Yokomitsu manual diagnostic mode.',
+    'A visible Chromium window is open at the login page.',
+    'Please sign in manually, solve any CAPTCHA manually, and wait until the authenticated portal is loaded.',
+    'The diagnostic will not type, read, print, or store your username, password, cookies, tokens, storage state, screenshots, HAR, or private HTML.',
+    `Waiting up to ${MANUAL_LOGIN_TIMEOUT_MS}ms for the authenticated portal...`,
+  ].join('\n'));
+}
+
+function parseArgs(values: string[]): Map<string, string> {
+  return new Map(values.map((arg) => {
+    const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2);
+    return [key, value];
+  }));
 }
 
 function redactError(error: unknown): string {
