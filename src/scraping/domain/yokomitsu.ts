@@ -73,6 +73,33 @@ export interface YokomitsuDiagnosticReport {
   extractedAt: string;
 }
 
+export interface YokomitsuCaptchaSignal {
+  tagName: string;
+  id?: string;
+  className?: string;
+  title?: string;
+  src?: string;
+  text?: string;
+  visible: boolean;
+}
+
+export interface YokomitsuPortalSignals {
+  currentUrl: string;
+  hasPasswordInput: boolean;
+  portalElementCount: number;
+  authenticatedCatalogResponses: number;
+}
+
+export interface YokomitsuSessionResources {
+  context?: {
+    clearCookies?: () => Promise<unknown>;
+    close?: () => Promise<unknown>;
+  };
+  browser?: {
+    close?: () => Promise<unknown>;
+  };
+}
+
 export function normalizeYokomitsuPrice(value?: string): string | undefined {
   const cleaned = cleanText(value);
   if (!cleaned) return undefined;
@@ -93,6 +120,37 @@ export function normalizeYokomitsuPrice(value?: string): string | undefined {
   }
 
   return numeric.replace(',', '.');
+}
+
+export function hasVisibleYokomitsuCaptchaChallenge(signals: YokomitsuCaptchaSignal[]): boolean {
+  return signals.some((signal) => {
+    const evidence = [signal.id, signal.className, signal.title, signal.src, signal.text].filter(Boolean).join(' ');
+    const captchaLike = /captcha|recaptcha|hcaptcha|g-recaptcha|cf-turnstile|challenge/i.test(evidence);
+    const interactiveTag = /^(iframe|textarea|input|button|div)$/i.test(signal.tagName);
+    return signal.visible && captchaLike && interactiveTag;
+  });
+}
+
+export function hasReachedYokomitsuPortal(signals: YokomitsuPortalSignals): boolean {
+  return !/\/login(?:[/?#]|$)/i.test(signals.currentUrl)
+    && !signals.hasPasswordInput
+    && (signals.portalElementCount > 0 || signals.authenticatedCatalogResponses > 0);
+}
+
+export function hasYokomitsuManualLoginTimedOut(startedAtMs: number, nowMs: number, timeoutMs: number): boolean {
+  return nowMs - startedAtMs >= timeoutMs;
+}
+
+export async function closeYokomitsuSessionResources(resources: YokomitsuSessionResources): Promise<void> {
+  try {
+    await resources.context?.clearCookies?.();
+  } finally {
+    try {
+      await resources.context?.close?.();
+    } finally {
+      await resources.browser?.close?.();
+    }
+  }
 }
 
 export function inferYokomitsuCurrency(value?: string, explicit?: unknown): string | undefined {
