@@ -79,6 +79,32 @@ export function canonicalizeYaguaronProductUrl(value: string): string | undefine
   }
 }
 
+export function normalizeYaguaronPrice(value?: string): string | undefined {
+  const cleaned = cleanText(value);
+  if (!cleaned) return undefined;
+
+  const numeric = cleaned
+    .replace(/(?:\$U|\$|UYU)/gi, '')
+    .replace(/\s+/g, '')
+    .match(/\d[\d.,]*/)?.[0];
+  if (!numeric) return undefined;
+
+  const decimalMatch = numeric.match(/^(.*),(\d{1,2})$/);
+  const integerPart = decimalMatch?.[1] ?? numeric;
+  const decimalPart = decimalMatch?.[2];
+
+  if (!integerPart.includes('.')) {
+    return decimalPart ? `${integerPart}.${decimalPart}` : integerPart;
+  }
+
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(integerPart)) {
+    const normalizedInteger = integerPart.replace(/\./g, '');
+    return decimalPart ? `${normalizedInteger}.${decimalPart}` : normalizedInteger;
+  }
+
+  return normalizePriceValue(cleaned);
+}
+
 export function extractYaguaronListingSummary(html: string): YaguaronListingSummary {
   const root = parse(html);
   const list = root.querySelector('.aListProductos');
@@ -160,7 +186,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
 
   return {
     productName,
-    price: normalizePriceValue(rawPrice),
+    price: normalizeYaguaronPrice(rawPrice),
     currency: textValue(embedded?.moneda, ['cod']) ?? 'UYU',
     sku: cleanText(sku),
     description,
