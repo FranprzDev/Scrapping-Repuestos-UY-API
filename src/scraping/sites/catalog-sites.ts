@@ -1,0 +1,138 @@
+import type { CatalogSiteConfig } from './types';
+import { GENERATED_CATALOG_SITES } from './generated-sites';
+
+const noAuth = { type: 'none' } as const;
+const defaultPagination = { type: 'next-link' } as const;
+
+export const CATALOG_SITES: CatalogSiteConfig[] = [
+  existingSite({
+    id: 'grfrenos',
+    label: 'GR Frenos',
+    hostname: 'grfrenos.uy',
+    seedUrls: ['https://www.grfrenos.uy/home/'],
+    productUrlPatterns: [/\/art-\d+\/?$/i],
+    categoryUrlPatterns: [/\/buscardor\.php\?marcas=\d+---/i, /\/marcas-\d+---/i],
+  }),
+  existingSite({
+    id: 'multishop',
+    label: 'Multishop',
+    hostname: 'multishop.com.uy',
+    seedUrls: ['https://www.multishop.com.uy/'],
+    platform: 'shopify',
+    productUrlPatterns: [/\/products\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [/\/collections\//i],
+  }),
+  existingSite({
+    id: 'cymaco',
+    label: 'Cymaco',
+    hostname: 'cymaco.com.uy',
+    seedUrls: ['https://cymaco.com.uy/catalogo'],
+    platform: 'fenicio',
+    productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
+    categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i],
+  }),
+  existingSite({
+    id: 'familcar',
+    label: 'Familcar',
+    hostname: 'familcar.com',
+    seedUrls: ['https://www.familcar.com/'],
+    platform: 'fenicio',
+    productUrlPatterns: [/\/catalogo\/[^/?#]+_[^/?#]+$/i],
+    categoryUrlPatterns: [/\/catalogo(?:\/|\?|$)/i, /^https?:\/\/(?:www\.)?familcar\.com\/[a-z0-9-]+\/?(?:\?.*)?$/i],
+  }),
+  existingSite({
+    id: 'europarts',
+    label: 'Europarts',
+    hostname: 'europarts.com.uy',
+    seedUrls: ['https://www.europarts.com.uy/es/search?recordsize=100'],
+    productUrlPatterns: [/\/es\/[^/?#]+\/product\/\d+\/?$/i],
+    categoryUrlPatterns: [/\/es\/search(?:\?|$)/i],
+  }),
+  plannedSite('container', 'Container', 'container.com.uy', ['https://container.com.uy/'], 'generic-html'),
+  plannedSite('lestido', 'Tienda Lestido', 'tienda.lestido.com.uy', ['https://tienda.lestido.com.uy/'], 'generic-html'),
+  plannedSite('warnes', 'Warnes', 'warnes.com.uy', ['https://warnes.com.uy/'], 'generic-html'),
+  plannedSite('repuestosavenida', 'Repuestos Avenida', 'repuestosavenida.com.uy', ['https://repuestosavenida.com.uy/'], 'generic-html'),
+  plannedSite('autopartesgil', 'Autopartes Gil', 'autopartesgil.com', ['https://autopartesgil.com/'], 'generic-html'),
+  plannedSite('salvadorlivio', 'Salvador Livio', 'salvadorlivio.com.uy', ['https://salvadorlivio.com.uy/'], 'generic-html'),
+  plannedSite('tnrepuestos', 'TN Repuestos', 'tnrepuestos.com.uy', ['https://tnrepuestos.com.uy/'], 'generic-html'),
+  plannedSite('penasrepuestos', 'Penas Repuestos', 'penasrepuestos.com', ['https://penasrepuestos.com/'], 'generic-html'),
+  plannedSite('euromotors', 'Euromotors', 'euromotors.com.uy', ['https://euromotors.com.uy/'], 'generic-html'),
+  plannedSite('autopartesmagallanes', 'Autopartes Magallanes', 'autopartesmagallanes.uy', ['https://autopartesmagallanes.uy/'], 'generic-html'),
+  {
+    ...plannedSite('mercado-libre-uy', 'Mercado Libre Uruguay', 'api.mercadolibre.com', ['https://api.mercadolibre.com/sites/MLU/search'], 'mercado-libre-api'),
+    authentication: {
+      type: 'oauth',
+      clientIdEnv: 'MERCADO_LIBRE_CLIENT_ID',
+      clientSecretEnv: 'MERCADO_LIBRE_CLIENT_SECRET',
+      refreshTokenEnv: 'MERCADO_LIBRE_REFRESH_TOKEN',
+      scopes: ['read'],
+    },
+  },
+  ...GENERATED_CATALOG_SITES,
+];
+
+export function getCatalogSite(id: string): CatalogSiteConfig | undefined {
+  return CATALOG_SITES.find((site) => site.id === id);
+}
+
+export function listEnabledCatalogSites(): CatalogSiteConfig[] {
+  return CATALOG_SITES.filter((site) => site.enabled);
+}
+
+export function normalizeCatalogUrl(value: string, baseUrl?: string): string | undefined {
+  try {
+    const url = new URL(value, baseUrl);
+    url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_|fbclid$|gclid$|mc_)/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.hostname = url.hostname.toLowerCase();
+    if ((url.protocol === 'https:' && url.port === '443') || (url.protocol === 'http:' && url.port === '80')) {
+      url.port = '';
+    }
+    return /^https?:$/i.test(url.protocol) ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function existingSite(config: Partial<CatalogSiteConfig> & Pick<CatalogSiteConfig, 'id' | 'label' | 'hostname' | 'seedUrls' | 'productUrlPatterns' | 'categoryUrlPatterns'>): CatalogSiteConfig {
+  return {
+    platform: 'generic-html',
+    authentication: noAuth,
+    paginationStrategy: defaultPagination,
+    priceLocale: 'es-UY',
+    preserveOutOfStock: true,
+    concurrency: 2,
+    requestDelay: 250,
+    enabled: true,
+    ...config,
+  };
+}
+
+function plannedSite(
+  id: string,
+  label: string,
+  hostname: string,
+  seedUrls: string[],
+  platform: CatalogSiteConfig['platform'],
+): CatalogSiteConfig {
+  return {
+    id,
+    label,
+    hostname,
+    seedUrls,
+    platform,
+    authentication: noAuth,
+    productUrlPatterns: [/\/(?:producto|product|articulo|catalogo|repuesto)[^?#]+/i],
+    categoryUrlPatterns: [/\/(?:productos|products|categoria|category|catalogo|shop|tienda)(?:\/|\?|$)/i],
+    paginationStrategy: defaultPagination,
+    priceLocale: 'es-UY',
+    preserveOutOfStock: true,
+    concurrency: 2,
+    requestDelay: 500,
+    enabled: false,
+  };
+}
