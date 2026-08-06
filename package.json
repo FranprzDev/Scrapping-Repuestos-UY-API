@@ -20,6 +20,7 @@
     "scrape:daily": "node scripts/run-daily-scrape.mjs",
     "catalog:probe": "tsx scripts/catalog-probe.ts",
     "catalog:audit": "node --import ./scripts/tsx-userinfo-shim.mjs --import tsx ./scripts/catalog-audit.ts"
+    "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts"
   },
   "engines": {
     "node": ">=20.11"

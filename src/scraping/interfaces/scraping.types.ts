@@ -1,6 +1,6 @@
 export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run' | 'refresh-existing-links';
 
-export type ProviderName = 'domain' | 'playwright' | 'custom';
+export type ProviderName = 'domain' | 'playwright' | 'custom' | 'Yokomitsu';
 
 export type ScrapingOperationPayload = Record<string, unknown>;
 
