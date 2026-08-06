@@ -12,6 +12,7 @@ import {
   extractYaguaronProductUrls,
   isYaguaronProductUrl,
   LOGO_IMAGE_PATTERN,
+  normalizeYaguaronPrice,
   NON_PRODUCT_IMAGE_PATTERN,
 } from './yaguaron';
 import { addYaguaronListingProducts } from './yaguaron-pagination';
@@ -332,4 +333,44 @@ test('Yaguarón deduplica primero por URL canónica y también por Art./SKU', ()
   ]);
   assert.equal(result.products.length, 1);
   assert.equal(result.duplicates, 2);
+});
+
+test('Yaguaron normalizes Uruguayan price formatting', () => {
+  assert.equal(normalizeYaguaronPrice('1.701'), '1701');
+  assert.equal(normalizeYaguaronPrice('3.321'), '3321');
+  assert.equal(normalizeYaguaronPrice('5.114'), '5114');
+  assert.equal(normalizeYaguaronPrice('968'), '968');
+  assert.equal(normalizeYaguaronPrice('1.701,50'), '1701.50');
+  assert.equal(normalizeYaguaronPrice('12.345,67'), '12345.67');
+  assert.equal(normalizeYaguaronPrice('$U 1.701'), '1701');
+  assert.equal(normalizeYaguaronPrice('UYU 1.701,50'), '1701.50');
+});
+
+test('Yaguaron keeps SKU 168662 detail fields while storing 1.701 as 1701', () => {
+  const url = 'https://www.yaguaron.com.uy/catalogo/juego-4-tazas-rueda-15-8-rayos-agile-montana_168662_168662';
+  const imageUrl = 'https://www.yaguaron.com.uy/imagenes/productos/168662.jpg';
+  const product = extractYaguaronDetail(`
+    <main class="aFichaProducto">
+      <h1>JUEGO 4 TAZAS RUEDA 15 8 RAYOS - AGILE / MONTANA</h1>
+      <div class="precio venta">$U 1.701</div><button>COMPRAR</button>
+      <section class="blkCaracteristicas">
+        <div class="it"><span class="tit">Art.</span><span class="val">168662</span></div>
+        <div class="it"><span class="tit">Modelo</span><span class="val">Agile, Montana</span></div>
+      </section>
+      <div class="imagenes"><img src="/imagenes/productos/168662.jpg"></div>
+      <script type="application/json">{"producto":{"codigo":"168662","nombre":"JUEGO 4 TAZAS RUEDA 15 8 RAYOS - AGILE / MONTANA"},"precioMonto":"1.701","moneda":{"cod":"UYU"},"tieneStock":true}</script>
+    </main>
+  `, url, 'domain');
+
+  assert.ok(product);
+  assert.equal(product.price, '1701');
+  assert.notEqual(product.price, '1.701');
+  assert.notEqual(Math.round(Number(product.price)), 2);
+  assert.equal(product.sku, '168662');
+  assert.equal(product.productName, 'JUEGO 4 TAZAS RUEDA 15 8 RAYOS - AGILE / MONTANA');
+  assert.equal(product.imageUrl, imageUrl);
+  assert.deepEqual(product.imageUrls, [imageUrl]);
+  assert.deepEqual(product.compatibleModels, ['Agile', 'Montana']);
+  assert.equal(product.availability, 'in_stock');
+  assert.equal(product.sourceUrl, url);
 });
