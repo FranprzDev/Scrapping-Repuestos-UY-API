@@ -18,7 +18,8 @@
     "lint": "tsc --noEmit",
     "test": "pnpm run build && node --test \"dist/**/*.test.js\"",
     "scrape:daily": "node scripts/run-daily-scrape.mjs",
-    "catalog:probe": "tsx scripts/catalog-probe.ts"
+    "catalog:probe": "tsx scripts/catalog-probe.ts",
+    "catalog:audit": "node --import ./scripts/tsx-userinfo-shim.mjs --import tsx ./scripts/catalog-audit.ts"
   },
   "engines": {
     "node": ">=20.11"
