@@ -135,6 +135,7 @@ export class InventoryStoreService implements OnModuleInit {
         DO UPDATE SET
           site = EXCLUDED.site,
           product = EXCLUDED.product,
+          search_text = EXCLUDED.search_text,
           updated_at = EXCLUDED.updated_at,
           last_seen_at = EXCLUDED.last_seen_at
         RETURNING id, source_url AS "sourceUrl", (xmax = 0) AS created
@@ -824,6 +825,7 @@ function normalizeSearchTokens(search: string): string[] {
 function buildProductSearchText(product: ProductRecord): string {
   return [
     product.productName,
+    product.sku,
     product.brand,
     product.category,
     product.description,
