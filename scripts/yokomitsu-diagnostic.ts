@@ -5,7 +5,6 @@ import {
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
   hasReachedYokomitsuPortal,
-  hasVisibleYokomitsuCaptchaChallenge,
   hasYokomitsuManualLoginTimedOut,
   inferApproximateProductCount,
   inferPaginationFromCalls,
@@ -17,10 +16,16 @@ import {
   YOKOMITSU_BASE_URL,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
-  type YokomitsuCaptchaSignal,
   type YokomitsuDiagnosticReport,
   type YokomitsuNetworkCall,
 } from '../src/scraping/domain/yokomitsu';
+import {
+  collectYokomitsuCatalogLinks,
+  detectYokomitsuCaptcha,
+  detectYokomitsuTwoFactor,
+  extractYokomitsuProductsFromDom,
+  inspectYokomitsuStorage,
+} from '../src/scraping/domain/yokomitsu-playwright';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
 
 const args = parseArgs(process.argv.slice(2));
@@ -119,7 +124,7 @@ async function main() {
     await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => undefined);
 
-    report.captchaDetected = await detectCaptcha(page);
+    report.captchaDetected = await detectYokomitsuCaptcha(page);
     if (report.captchaDetected && !manualLogin) {
       report.status = 'blocked';
       report.restrictions.push('CAPTCHA detected on login page; diagnostic stopped before submitting credentials');
@@ -147,14 +152,14 @@ async function main() {
       await page.waitForTimeout(1500);
     }
 
-    report.captchaDetected = report.captchaDetected || await detectCaptcha(page);
-    report.twoFactorDetected = await detectTwoFactor(page);
+    report.captchaDetected = report.captchaDetected || await detectYokomitsuCaptcha(page);
+    report.twoFactorDetected = await detectYokomitsuTwoFactor(page);
     report.reachedPortal = await hasReachedPortal(page, authenticatedCatalogResponses);
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
     const cookies = await context.cookies();
     report.login.usesSessionCookie = cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name)) || cookies.length > 0;
-    const storageSignals = await inspectStorage(page);
+    const storageSignals = await inspectYokomitsuStorage(page);
     report.login.usesLocalStorage = storageSignals.localStorageKeys > 0;
     report.login.usesJwt = storageSignals.hasJwt;
     report.login.usesRefreshToken = storageSignals.hasRefreshToken;
@@ -170,7 +175,7 @@ async function main() {
     await exploreCatalog(page);
     await page.waitForTimeout(1500);
 
-    const domProducts = await extractProductsFromDom(page);
+    const domProducts = await extractYokomitsuProductsFromDom(page);
     for (const product of domProducts) addProduct(productSamples, product);
 
     report.samples = Array.from(productSamples.values()).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
@@ -257,11 +262,7 @@ async function submitLogin(page: Page): Promise<void> {
 }
 
 async function exploreCatalog(page: Page): Promise<void> {
-  const candidateUrls = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
-    .map((anchor) => ({ href: anchor.href, text: anchor.textContent?.trim() ?? '' }))
-    .filter((item) => /catalog|catalogo|producto|productos|repuesto|repuestos|stock|precio|marca|modelo|buscar|busqueda/i.test(`${item.href} ${item.text}`))
-    .map((item) => item.href)
-    .slice(0, 5));
+  const candidateUrls = await collectYokomitsuCatalogLinks(page);
 
   for (const href of candidateUrls) {
     try {
@@ -271,69 +272,6 @@ async function exploreCatalog(page: Page): Promise<void> {
       // Continue probing other safe catalog-looking links.
     }
   }
-}
-
-async function extractProductsFromDom(page: Page): Promise<ProductRecord[]> {
-  return page.evaluate((baseUrl) => {
-    const cards = Array.from(document.querySelectorAll('[data-product], [data-codprod], .product, .producto, .card, tr'))
-      .slice(0, 20);
-    const cleaned = (value: string | null | undefined) => value?.replace(/\s+/g, ' ').trim() || undefined;
-    const toUrl = (value: string | null | undefined) => {
-      if (!value) return undefined;
-      try { return new URL(value, baseUrl).toString(); } catch { return undefined; }
-    };
-
-    return cards.flatMap((card) => {
-      const anchor = card.querySelector<HTMLAnchorElement>('a[href]');
-      const image = card.querySelector<HTMLImageElement>('img[src], img[data-src]');
-      const text = cleaned(card.textContent);
-      const name = cleaned(card.querySelector('h1,h2,h3,h4,[class*="name"],[class*="nombre"],[class*="descripcion"],[class*="producto"]')?.textContent)
-        ?? cleaned(anchor?.textContent);
-      const price = text?.match(/(?:US\$|\$U|\$|UYU|USD)?\s*\d[\d.,]*/i)?.[0];
-      const sku = cleaned(card.getAttribute('data-codprod'))
-        ?? cleaned(card.querySelector('[class*="sku"],[class*="codigo"],[class*="code"]')?.textContent);
-      if (!name && !sku) return [];
-      return [{
-        productName: name,
-        sourceUrl: toUrl(anchor?.getAttribute('href')) ?? location.href,
-        sku,
-        price,
-        imageUrl: toUrl(image?.getAttribute('src') ?? image?.getAttribute('data-src')),
-        description: text && text.length <= 500 ? text : undefined,
-        provider: 'Yokomitsu' as const,
-        extractedAt: new Date().toISOString(),
-      }];
-    }).slice(0, 5);
-  }, YOKOMITSU_BASE_URL);
-}
-
-async function detectCaptcha(page: Page): Promise<boolean> {
-  const signals = await page.evaluate(() => {
-    const isVisible = (element: Element) => {
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return style.visibility !== 'hidden'
-        && style.display !== 'none'
-        && Number(style.opacity || '1') > 0
-        && rect.width > 0
-        && rect.height > 0;
-    };
-    return Array.from(document.querySelectorAll('iframe, textarea, input, button, div, [class*="captcha" i], [id*="captcha" i], [src*="captcha" i]'))
-      .map((element): YokomitsuCaptchaSignal => ({
-        tagName: element.tagName.toLowerCase(),
-        id: element.id || undefined,
-        className: typeof element.className === 'string' ? element.className : undefined,
-        title: element.getAttribute('title') ?? undefined,
-        src: element.getAttribute('src') ?? undefined,
-        text: element.textContent?.trim().slice(0, 120) || undefined,
-        visible: isVisible(element),
-      }));
-  });
-  return hasVisibleYokomitsuCaptchaChallenge(signals);
-}
-
-async function detectTwoFactor(page: Page): Promise<boolean> {
-  return page.evaluate(() => /2fa|c[oÃ³]digo de verificaci[oÃ³]n|verificaci[oÃ³]n|otp|token/i.test(document.body.textContent ?? ''));
 }
 
 async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
@@ -354,19 +292,6 @@ async function hasReachedPortal(page: Page, authenticatedCatalogResponses: numbe
     hasPasswordInput: hasPassword > 0,
     portalElementCount,
     authenticatedCatalogResponses,
-  });
-}
-
-async function inspectStorage(page: Page): Promise<{ localStorageKeys: number; hasJwt: boolean; hasBearer: boolean; hasRefreshToken: boolean }> {
-  return page.evaluate(() => {
-    const entries = Object.keys(localStorage).map((key) => ({ key, value: localStorage.getItem(key) ?? '' }));
-    const text = entries.map((entry) => `${entry.key} ${entry.value}`).join(' ');
-    return {
-      localStorageKeys: entries.length,
-      hasJwt: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(text),
-      hasBearer: /bearer/i.test(text),
-      hasRefreshToken: /refresh/i.test(text),
-    };
   });
 }
 
