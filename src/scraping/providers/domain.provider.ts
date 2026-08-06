@@ -44,6 +44,16 @@ import {
   isYaguaronProductUrl,
 } from '../domain/yaguaron';
 import { addYaguaronListingProducts } from '../domain/yaguaron-pagination';
+import {
+  canonicalizeItalurUrl,
+  dedupeItalurProducts,
+  extractItalurCategoryUrls,
+  extractItalurDetail,
+  extractItalurListingSummary,
+  extractItalurProductUrls,
+  isItalurListingUrl,
+  isItalurProductUrl,
+} from '../domain/italur';
 
 @Injectable()
 export class DomainProvider implements ScrapingProvider {
@@ -166,6 +176,10 @@ export class DomainProvider implements ScrapingProvider {
 
     if (rule.id === 'yaguaron') {
       return await this.crawlYaguaron(sourceUrl);
+    }
+
+    if (rule.id === 'italur') {
+      return await this.crawlItalur(sourceUrl);
     }
 
     if (isSitemapCatalog(rule)) {
@@ -317,6 +331,10 @@ export class DomainProvider implements ScrapingProvider {
       return await this.extractYaguaronCatalog(urls, sourceUrl, maxItems, rule);
     }
 
+    if (rule.id === 'italur') {
+      return await this.extractItalurCatalog(urls, sourceUrl, maxItems, rule);
+    }
+
     const processed = await mapWithConcurrency(urls, this.extractConcurrency, async (url) => {
       let usableProducts: ProductRecord[] = [];
       let method = 'http';
@@ -462,6 +480,73 @@ export class DomainProvider implements ScrapingProvider {
       discoveredUrls: uniqueStrings([...categories, ...products]),
       discoveryMethod: 'yaguaron-fenicio-http',
     };
+  }
+
+  private async crawlItalur(sourceUrl: string) {
+    const seedUrl = canonicalizeItalurUrl(sourceUrl) ?? 'https://www.italur.com/tienda/';
+    const startUrl = isItalurListingUrl(seedUrl) ? seedUrl : 'https://www.italur.com/tienda/';
+    const response = await fetchHtmlWithRetry(startUrl);
+    const categories = uniqueStrings([startUrl, ...extractItalurCategoryUrls(response.body, response.finalUrl)]);
+    const products = extractItalurProductUrls(response.body, response.finalUrl);
+    return {
+      seedUrl: sourceUrl,
+      pages: [{ url: response.finalUrl, depth: 0, productCount: products.length }],
+      discoveredUrls: uniqueStrings([...categories, ...products]),
+      discoveryMethod: 'italur-woocommerce-http',
+    };
+  }
+
+  private async extractItalurCatalog(urls: string[], sourceUrl: string, maxItems: number, rule: DomainRule) {
+    const directProducts = new Set(urls.filter(isItalurProductUrl).map(canonicalizeItalurUrl).filter((value): value is string => Boolean(value)));
+    let listings = uniqueStrings(urls.filter(isItalurListingUrl).map(canonicalizeItalurUrl).filter((value): value is string => Boolean(value)));
+    if (listings.length === 0) {
+      const discovered = await this.crawlItalur(sourceUrl);
+      listings = discovered.discoveredUrls.filter(isItalurListingUrl);
+      discovered.discoveredUrls.filter(isItalurProductUrl).forEach((url) => directProducts.add(url));
+    }
+    if (listings.length === 0 && directProducts.size === 0) listings = ['https://www.italur.com/tienda/'];
+
+    const pages: Array<{ url: string; method: string; productCount: number; listingUrl?: string; page?: number; newInListing?: number; uniqueInListing?: number; lastPage?: number }> = [];
+    for (const listing of listings) {
+      const listingProducts = new Set<string>();
+      let nextUrl: string | undefined = listing;
+      for (let page = 1; nextUrl && directProducts.size < maxItems; page += 1) {
+        const response = await fetchHtmlWithRetry(nextUrl);
+        const found = extractItalurProductUrls(response.body, response.finalUrl);
+        const beforeListing = listingProducts.size;
+        found.forEach((url) => listingProducts.add(url));
+        found.forEach((url) => directProducts.add(url));
+        const summary = extractItalurListingSummary(response.body, response.finalUrl);
+        pages.push({
+          url: response.finalUrl,
+          method: 'italur-woocommerce-http',
+          productCount: found.length,
+          listingUrl: listing,
+          page: summary.currentPage ?? page,
+          newInListing: listingProducts.size - beforeListing,
+          uniqueInListing: listingProducts.size,
+          lastPage: summary.lastPage,
+        });
+        if (found.length === 0 || listingProducts.size === beforeListing || !summary.nextPageUrl || (summary.lastPage && (summary.currentPage ?? page) >= summary.lastPage)) {
+          break;
+        }
+        nextUrl = summary.nextPageUrl;
+      }
+      if (directProducts.size >= maxItems) break;
+    }
+
+    const productUrls = Array.from(directProducts).slice(0, maxItems);
+    const details = await mapWithConcurrency(productUrls, this.extractConcurrency, async (url) => {
+      try {
+        const response = await fetchHtmlWithRetry(url);
+        return extractItalurDetail(response.body, response.finalUrl, this.name);
+      } catch (error) {
+        this.logger.warn(`No se pudo extraer ficha Italur ${url}: ${formatError(error)}`);
+        return undefined;
+      }
+    });
+    const products = dedupeItalurProducts(qualityGate(details.filter((product): product is ProductRecord => Boolean(product)), rule)).products;
+    return { urls: productUrls, pages, products };
   }
 
   private async extractYaguaronCatalog(urls: string[], sourceUrl: string, maxItems: number, rule: DomainRule) {
