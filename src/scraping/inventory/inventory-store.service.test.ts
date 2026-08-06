@@ -210,6 +210,100 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   assert.deepEqual(relationInsert.params[1], ['citroen', 'peugeot']);
 });
 
+test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado sin duplicar', async () => {
+  const rows = new Map<string, {
+    id: string;
+    site: string;
+    sourceUrl: string;
+    product: ProductRecord;
+    searchText: string;
+  }>();
+  let inventoryUpsertSql = '';
+
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      if (/INSERT INTO scraping_inventory\s*\(/i.test(sql)) {
+        inventoryUpsertSql = sql;
+        const ids = params[1] as string[];
+        const sites = params[2] as string[];
+        const sourceUrls = params[3] as string[];
+        const products = params[4] as string[];
+        const searchTexts = params[5] as string[];
+
+        return {
+          rows: sourceUrls.map((sourceUrl, index) => {
+            const existing = rows.get(sourceUrl);
+            const id = existing?.id ?? ids[index];
+            rows.set(sourceUrl, {
+              id,
+              site: sites[index],
+              sourceUrl,
+              product: JSON.parse(products[index]) as ProductRecord,
+              searchText: /search_text\s*=\s*EXCLUDED\.search_text/i.test(sql)
+                ? searchTexts[index]
+                : existing?.searchText ?? searchTexts[index],
+            });
+            return { id, sourceUrl, created: !existing };
+          }),
+        } as never;
+      }
+
+      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory WHERE site = \$1/i.test(sql)) {
+        const site = params[0];
+        return {
+          rows: [{
+            total: String(Array.from(rows.values()).filter((row) => row.site === site).length),
+          }],
+        } as never;
+      }
+
+      if (/SELECT id, site, product, created_at, updated_at, last_seen_at\s+FROM scraping_inventory/i.test(sql)) {
+        const searchToken = (params.find((param) => typeof param === 'string' && param.includes('168662')) as string | undefined)
+          ?.replaceAll('%', '');
+        const matches = Array.from(rows.values())
+          .filter((row) => !searchToken || row.searchText.includes(searchToken))
+          .map((row) => ({
+            id: row.id,
+            site: row.site,
+            product: row.product,
+            created_at: '2026-08-06T00:00:00.000Z',
+            updated_at: '2026-08-06T00:00:00.000Z',
+            last_seen_at: '2026-08-06T00:00:00.000Z',
+          }));
+        return { rows: matches } as never;
+      }
+
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  const sourceUrl = 'https://www.yaguaron.com.uy/catalogo/juego-4-tazas-rueda-15-8-rayos-agile-montana_168662_168662';
+  const extractedAt = '2026-08-06T00:00:00.000Z';
+
+  await service.upsertSiteProducts('https://www.yaguaron.com.uy/', [{
+    productName: 'JUEGO 4 TAZAS RUEDA 15 8 RAYOS AGILE MONTANA',
+    sourceUrl,
+    extractedAt,
+    provider: 'domain',
+  }], extractedAt);
+
+  const result = await service.upsertSiteProducts('https://www.yaguaron.com.uy/', [{
+    productName: 'JUEGO 4 TAZAS RUEDA 15 8 RAYOS AGILE MONTANA',
+    sku: '168662',
+    sourceUrl,
+    extractedAt,
+    provider: 'domain',
+  }], extractedAt);
+
+  const found = await service.getFilteredPage({ search: '168662' }, { limit: 20 });
+
+  assert.match(inventoryUpsertSql, /search_text\s*=\s*EXCLUDED\.search_text/i);
+  assert.deepEqual(result, { created: 0, updated: 1, totalForSite: 1 });
+  assert.equal(rows.size, 1);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].sku, '168662');
+});
+
 test('upsertSiteProducts registra marcas explícitas nuevas antes de relacionarlas', async () => {
   const queries: Array<{ sql: string; params: unknown[] }> = [];
   const service = new InventoryStoreService({
