@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
+  closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
+  hasReachedYokomitsuPortal,
+  hasVisibleYokomitsuCaptchaChallenge,
+  hasYokomitsuManualLoginTimedOut,
   inferApproximateProductCount,
   inferPaginationFromCalls,
   inferYokomitsuFieldsAvailable,
@@ -29,10 +33,12 @@ test('Yokomitsu redacta credenciales, cookies y tokens en requests', () => {
   assert.deepEqual(sanitizeHeaders({
     authorization: 'Bearer secret',
     cookie: 'session=secret',
+    'set-cookie': 'session=secret',
     accept: 'application/json',
   }), {
     authorization: '[REDACTED]',
     cookie: '[REDACTED]',
+    'set-cookie': '[REDACTED]',
     accept: 'application/json',
   });
   assert.deepEqual(sanitizeRequestBody('usuario=demo&password=secret&empresa=abc'), {
@@ -98,4 +104,81 @@ test('Yokomitsu resume shape, campos y paginacion sin guardar datos privados', (
   assert.equal(fields.stock, true);
   assert.equal(isLikelyYokomitsuCatalogUrl('https://www.yokomitsuparts.com.uy/v2/api/catalogo?page=1'), true);
   assert.equal(isLikelyYokomitsuCatalogUrl('https://example.com/v2/api/catalogo?page=1'), false);
+});
+
+test('Yokomitsu distingue CAPTCHA visible de scripts no visibles', () => {
+  assert.equal(hasVisibleYokomitsuCaptchaChallenge([{
+    tagName: 'iframe',
+    title: 'reCAPTCHA',
+    src: 'https://www.google.com/recaptcha/api2/anchor',
+    visible: true,
+  }]), true);
+
+  assert.equal(hasVisibleYokomitsuCaptchaChallenge([{
+    tagName: 'script',
+    src: 'https://www.google.com/recaptcha/api.js',
+    visible: false,
+  }, {
+    tagName: 'iframe',
+    title: 'reCAPTCHA',
+    src: 'https://www.google.com/recaptcha/api2/anchor',
+    visible: false,
+  }]), false);
+});
+
+test('Yokomitsu detecta ingreso manual exitoso sin leer credenciales', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/catalogo',
+    hasPasswordInput: false,
+    portalElementCount: 1,
+    authenticatedCatalogResponses: 0,
+  }), true);
+
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/login',
+    hasPasswordInput: true,
+    portalElementCount: 0,
+    authenticatedCatalogResponses: 0,
+  }), false);
+});
+
+test('Yokomitsu detecta timeout esperando login manual', () => {
+  assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 300_999, 300_000), false);
+  assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 301_000, 300_000), true);
+});
+
+test('Yokomitsu limita la muestra a cinco productos', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: Array.from({ length: 8 }, (_, index) => ({
+      codigo: `YK-${index + 1}`,
+      nombre: `Filtro ${index + 1}`,
+      precio: '1.234',
+    })),
+  });
+
+  assert.equal(products.length, 5);
+  assert.equal(products[0].sku, 'YK-1');
+  assert.equal(products[4].sku, 'YK-5');
+});
+
+test('Yokomitsu cierra el contexto incluso si clearCookies falla', async () => {
+  const calls: string[] = [];
+  await assert.rejects(() => closeYokomitsuSessionResources({
+    context: {
+      clearCookies: async () => {
+        calls.push('clearCookies');
+        throw new Error('clear failed');
+      },
+      close: async () => {
+        calls.push('context.close');
+      },
+    },
+    browser: {
+      close: async () => {
+        calls.push('browser.close');
+      },
+    },
+  }), /clear failed/);
+
+  assert.deepEqual(calls, ['clearCookies', 'context.close', 'browser.close']);
 });
