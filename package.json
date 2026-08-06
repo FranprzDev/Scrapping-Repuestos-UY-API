@@ -18,8 +18,11 @@
     "lint": "tsc --noEmit",
     "test": "pnpm run build && node --test \"dist/**/*.test.js\"",
     "scrape:daily": "node scripts/run-daily-scrape.mjs",
-    "catalog:probe": "tsx scripts/catalog-probe.ts",
-    "catalog:audit": "node --import ./scripts/tsx-userinfo-shim.mjs --import tsx ./scripts/catalog-audit.ts"
+    "catalog:discover": "tsx scripts/catalog-command.ts --mode=discover",
+    "catalog:probe": "tsx scripts/catalog-command.ts --mode=probe",
+    "catalog:audit": "tsx scripts/catalog-command.ts --mode=audit",
+    "catalog:run": "tsx scripts/catalog-command.ts --mode=run",
+    "site:create": "tsx scripts/site-create.ts",
     "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts"
   },
   "engines": {
