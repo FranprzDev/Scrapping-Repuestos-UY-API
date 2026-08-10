@@ -3,11 +3,12 @@ import { ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
-import { mergeCompatibleBrands } from '../domain/product-quality';
+import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 
-export interface StoredProduct extends ProductRecord {
+export interface StoredProduct extends Omit<ProductRecord, 'price'> {
+  price?: number;
   id: string;
   site: string;
   createdAt: string;
@@ -566,8 +567,11 @@ export class InventoryStoreService implements OnModuleInit {
 }
 
 function mapInventoryRow(row: InventoryRow): StoredProduct {
+  const { price, ...product } = row.product;
+
   return {
-    ...row.product,
+    ...product,
+    price: parsePriceNumber(price),
     id: row.id,
     site: row.site,
     createdAt: row.created_at,
@@ -627,7 +631,7 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
           created_at,
           updated_at,
           last_seen_at,
-          NULLIF(regexp_replace(COALESCE(product->>'price', ''), '[^0-9.]', '', 'g'), '')::numeric AS price_sort
+          ${normalizedPriceSqlExpression()} AS price_sort
         FROM scraping_inventory
         ${whereClause}
       )
@@ -647,6 +651,29 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
     `,
     params,
   };
+}
+
+function normalizedPriceSqlExpression(): string {
+  const value = "BTRIM(product->>'price')";
+
+  return `NULLIF(
+    CASE
+      WHEN ${value} ~ '^[0-9.,]+,[0-9]{1,2}$' AND ${value} ~ '\\.'
+        THEN REPLACE(REPLACE(${value}, '.', ''), ',', '.')
+      WHEN ${value} ~ '^[0-9.,]+\\.[0-9]{1,2}$' AND ${value} ~ ','
+        THEN REPLACE(${value}, ',', '')
+      WHEN ${value} ~ '^[0-9]+,[0-9]{1,2}$'
+        THEN REPLACE(${value}, ',', '.')
+      WHEN ${value} ~ '^[0-9]+\\.[0-9]{1,2}$'
+        THEN ${value}
+      WHEN ${value} ~ '^[0-9]{1,3}(\\.[0-9]{3})+$'
+        THEN REPLACE(${value}, '.', '')
+      WHEN ${value} ~ '^[0-9]{1,3}(,[0-9]{3})+$'
+        THEN REPLACE(${value}, ',', '')
+      ELSE NULLIF(REGEXP_REPLACE(${value}, '[^0-9]', '', 'g'), '')
+    END,
+    ''
+  )::numeric`;
 }
 
 function buildInventoryCountQuery(filters: InventoryQueryFilters) {

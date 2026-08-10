@@ -68,6 +68,51 @@ test('getFilteredPage busca sobre el texto materializado', async () => {
   assert.ok(!capturedSql.includes('regexp_replace('));
 });
 
+test('getFilteredPage devuelve el precio como numero normalizado', async () => {
+  const service = new InventoryStoreService({
+    async query() {
+      return {
+        rows: [{
+          id: 'url|https://familcar.com/producto/1017',
+          site: 'https://www.familcar.com/',
+          product: {
+            productName: 'ENGRANAJE',
+            price: '1.290',
+            currency: 'UYU',
+            sourceUrl: 'https://www.familcar.com/producto/1017',
+            extractedAt: new Date().toISOString(),
+            provider: 'domain',
+          },
+          created_at: '2026-08-10T00:00:00.000Z',
+          updated_at: '2026-08-10T00:00:00.000Z',
+          last_seen_at: '2026-08-10T00:00:00.000Z',
+        }],
+      } as never;
+    },
+  } as never);
+
+  const products = await service.getFilteredPage({}, { limit: 1 });
+
+  assert.equal(products[0]?.price, 1290);
+  assert.equal(typeof products[0]?.price, 'number');
+});
+
+test('getFilteredPage ordena usando la misma normalizacion de precios', async () => {
+  let capturedSql = '';
+  const service = new InventoryStoreService({
+    async query(sql: string) {
+      capturedSql = sql;
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({ priceOrder: 'asc' }, { limit: 20 });
+
+  assert.ok(capturedSql.includes('AS price_sort'));
+  assert.ok(capturedSql.includes("REPLACE(REPLACE(BTRIM(product->>'price'), '.', ''), ',', '.')"));
+  assert.ok(capturedSql.includes('price_sort ASC NULLS LAST'));
+});
+
 test('getFilteredPage normaliza el filtro por sitio sin depender de www', async () => {
   let capturedSql = '';
   let capturedParams: unknown[] = [];
