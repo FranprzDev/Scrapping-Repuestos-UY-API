@@ -12,7 +12,7 @@ import {
   extractProductsFromHtml,
   isGrFrenosChallengeHtml,
 } from './domain-html';
-import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, mergeCompatibleBrands, qualityGate } from './product-quality';
+import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, mergeCompatibleBrands, parsePriceNumber, qualityGate } from './product-quality';
 import {
   applyChapareiContextBrand,
   applyGrFrenosContextBrand,
@@ -35,6 +35,23 @@ test('arma la ficha de Acesur usando el SKU del producto', () => {
     'https://acesur.uy/detalle-producto/?articulo=14.1015',
   );
   assert.equal(buildAcesurProductUrl(''), undefined);
+});
+
+test('normaliza formatos monetarios de todas las casas a un numero canonico', () => {
+  const cases: Array<[string, number]> = [
+    ['122', 122],
+    ['1.290', 1290],
+    ['2.427,92', 2427.92],
+    ['1,465.01', 1465.01],
+    ['2606,00', 2606],
+    ['2716.00', 2716],
+    ['2,291', 2291],
+    ['$U 341.319', 341319],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.equal(parsePriceNumber(input), expected, input);
+  }
 });
 
 test('interpreta las variantes de no_comprable de la API de Acesur', () => {

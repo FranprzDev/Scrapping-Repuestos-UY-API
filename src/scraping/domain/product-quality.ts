@@ -88,6 +88,42 @@ export function normalizePriceValue(value?: string): string | undefined {
   return match[1];
 }
 
+/**
+ * Converts the normalized price text used by providers into a canonical amount.
+ *
+ * Prices in the scraped catalogs use both locale conventions:
+ * 1.290, 2.427,92, 1,465.01 and 2606,00 are all valid representations.
+ */
+export function parsePriceNumber(value?: string): number | undefined {
+  const normalized = normalizePriceValue(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const lastComma = normalized.lastIndexOf(',');
+  const lastDot = normalized.lastIndexOf('.');
+  let canonical = normalized;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      canonical = normalized.replaceAll('.', '').replace(',', '.');
+    } else {
+      canonical = normalized.replaceAll(',', '');
+    }
+  } else if (lastComma >= 0) {
+    canonical = /,\d{1,2}$/.test(normalized)
+      ? normalized.replace(',', '.')
+      : normalized.replaceAll(',', '');
+  } else if (lastDot >= 0) {
+    canonical = /\.\d{1,2}$/.test(normalized)
+      ? normalized
+      : normalized.replaceAll('.', '');
+  }
+
+  const parsed = Number(canonical);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function inferCurrency(value?: string, explicit?: string): string | undefined {
   if (explicit) {
     return explicit.toUpperCase();
@@ -495,14 +531,7 @@ function fixMojibake(value: string): string {
 }
 
 function parseNormalizedPrice(value: string): number | undefined {
-  const normalized = value.includes(',') && value.includes('.')
-    ? value.replace(/\./g, '').replace(',', '.')
-    : value.includes(',')
-      ? value.replace(',', '.')
-      : value;
-
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return parsePriceNumber(value);
 }
 
 function normalizeHostname(value: string): string {
