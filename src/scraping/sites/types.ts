@@ -54,6 +54,7 @@ export interface CatalogHttpResponse {
 
 export interface CatalogRequestContext {
   site: CatalogSiteConfig;
+  maxPages?: number;
   signal?: AbortSignal;
   fetch(url: string, init?: { headers?: Record<string, string> }): Promise<CatalogHttpResponse>;
 }

@@ -27,6 +27,10 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
     const errors: DiscoveryResult['errors'] = [];
     const categories = new Set(context.site.seedUrls);
     const discoveredUrls: string[] = [];
+    const configuredMaxPages = context.site.paginationStrategy.type === 'none'
+      ? Number.POSITIVE_INFINITY
+      : context.site.paginationStrategy.maxPages ?? 100;
+    const maxPages = Math.min(context.maxPages ?? Number.POSITIVE_INFINITY, configuredMaxPages);
 
     for (const listingUrl of context.site.seedUrls) {
       const seenInListing = new Set<string>();
@@ -37,7 +41,7 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
         if (context.signal?.aborted) {
           throw new Error('Catalog discovery cancelled');
         }
-        if (context.site.paginationStrategy.type !== 'none' && pages.length >= (context.site.paginationStrategy.maxPages ?? 100)) {
+        if (pages.length >= maxPages) {
           break;
         }
 

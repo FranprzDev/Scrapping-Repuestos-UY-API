@@ -10,6 +10,7 @@ export async function runCatalogPipeline(options: CatalogPipelineOptions): Promi
   const discoveryOutputRoot = options.outputRoot ?? (options.mode === 'discover' ? 'tmp/catalog-discovery' : 'tmp/catalog-audit');
   const context = {
     site: options.site,
+    maxPages: options.maxPages,
     signal: options.signal,
     fetch: async (url: string, init?: { headers?: Record<string, string> }) => {
       const response = await fetchHtml(url, 5, { headers: init?.headers, signal: options.signal });

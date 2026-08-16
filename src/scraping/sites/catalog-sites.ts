@@ -92,7 +92,7 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
     hostname: 'autopartesmagallanes.uy',
     seedUrls: ['https://autopartesmagallanes.uy/products/'],
     platform: 'woocommerce',
-    productUrlPatterns: [/\/(?:para-desarmar|restos)\/[^?#]*repuestos-de-[^/?#]*ref-?ch\d+\/?$/i],
+    productUrlPatterns: [/\/(?:[^/?#]+\/)+[^/?#]*ref-?[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i],
     categoryUrlPatterns: [/\/(?:products|product-category|para-desarmar\/repuestos-de)(?:\/|\?|$)/i],
     paginationStrategy: { type: 'next-link', selector: 'a.next.page-numbers[href], a[rel="next"]', maxPages: 500 },
     requestDelay: 750,
