@@ -12,6 +12,40 @@ export const YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS = 5;
 const SENSITIVE_HEADER_PATTERN = /^(authorization|cookie|set-cookie|x-csrf-token|x-xsrf-token)$/i;
 const SENSITIVE_KEY_PATTERN = /(pass|password|passwd|pwd|token|jwt|bearer|authorization|cookie|session|csrf|xsrf|secret)/i;
 const CATALOG_URL_HINT = /(catalog|catalogo|producto|productos|repuesto|repuestos|articulo|articulos|stock|precio|precios|marca|marcas|modelo|modelos|search|buscar|busqueda|familia|categoria)/i;
+const KNOWN_LABELS = [
+  'Cod. Yokomitsu',
+  'Cód. Yokomitsu',
+  'Codigo Yokomitsu',
+  'Código Yokomitsu',
+  'SKU',
+  'Codigo',
+  'Código',
+  'Marca Vehiculo',
+  'Marca Vehículo',
+  'Vehiculo Marca',
+  'Vehículo Marca',
+  'Marca',
+  'Modelo Vehiculo',
+  'Modelo Vehículo',
+  'Modelo',
+  'OEM',
+  'Referencia',
+  'Ref',
+  'Procedencia',
+  'Precio',
+  'Proxima llegada',
+  'Próxima llegada',
+  'Categoria',
+  'Categoría',
+  'Rubro',
+  'Producto',
+  'Descripcion',
+  'Descripción',
+  'Stock',
+  'Estado',
+  'Disponibilidad',
+];
+const KNOWN_STATUS_PATTERN = /(?:stock\s+cr[ií]tico|sin\s+stock|agotado|no\s+disponible)/i;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -485,7 +519,7 @@ function collectProductCards(root: HTMLElement): HTMLElement[] {
 function looksLikeYokomitsuProductElement(element: HTMLElement): boolean {
   const text = elementText(element) ?? '';
   const hrefs = element.querySelectorAll('a[href]').map((link) => link.getAttribute('href') ?? '').join(' ');
-  return /producto-detalle|cod\.?\s*yokomitsu|c[o\u00f3]digo|sku|oem|precio|\$\s*\d/i.test(`${text} ${hrefs}`);
+  return /producto-detalle|cod\.?\s*yokomitsu|c[oó]digo|sku|oem|precio|\$\s*\d/i.test(`${text} ${hrefs}`);
 }
 
 function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): ProductRecord[] {
@@ -507,9 +541,9 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
     'h4',
     'a[href*="producto-detalle"]',
     'a[href*="producto"]',
-  ]) ?? labelValue(text, ['Producto', 'Descripcion', 'Descripci\u00f3n']);
+  ]) ?? labelValue(text, ['Producto', 'Descripcion', 'Descripción']);
   const sku = cleanText(card.getAttribute('data-codprod'))
-    ?? labelValue(text, ['Cod. Yokomitsu', 'C\u00f3d. Yokomitsu', 'Codigo Yokomitsu', 'C\u00f3digo Yokomitsu', 'SKU', 'Codigo', 'C\u00f3digo']);
+    ?? labelValue(text, ['Cod. Yokomitsu', 'Cód. Yokomitsu', 'Codigo Yokomitsu', 'Código Yokomitsu', 'SKU', 'Codigo', 'Código']);
   const rawPrice = firstElementText(card, ['.price', '.precio', '[class*="price"]', '[class*="precio"]'])
     ?? text.match(/(?:US\$|\$U|\$|UYU|USD)\s*\d[\d.,]*(?:\s*\+?\s*IVA)?/i)?.[0];
   const imageUrls = uniqueStrings(card.querySelectorAll('img')
@@ -520,11 +554,12 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
     ])
     .flatMap((value) => normalizeUrl(value ? cleanText(value) : undefined, baseUrl)));
   const referencia = labelValue(text, ['OEM', 'Referencia', 'Ref']);
-  const vehicleBrand = labelValue(text, ['Marca Vehiculo', 'Marca Veh\u00edculo', 'Vehiculo Marca', 'Veh\u00edculo Marca']);
-  const vehicleModel = labelValue(text, ['Modelo', 'Modelo Vehiculo', 'Modelo Veh\u00edculo']);
-  const proximaLlegada = labelValue(text, ['Proxima llegada', 'Pr\u00f3xima llegada']);
+  const vehicleBrand = labelValue(text, ['Marca Vehiculo', 'Marca Vehículo', 'Vehiculo Marca', 'Vehículo Marca']);
+  const vehicleModel = labelValue(text, ['Modelo', 'Modelo Vehiculo', 'Modelo Vehículo']);
+  const proximaLlegada = labelValue(text, ['Proxima llegada', 'Próxima llegada']);
   const procedencia = labelValue(text, ['Procedencia']);
   const availability = inferVisibleAvailability(text);
+  const stockStatus = availability;
 
   if (!productName && !sku) return [];
 
@@ -539,21 +574,59 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
     description: text || undefined,
     imageUrl: imageUrls[0],
     imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-    category: labelValue(text, ['Categoria', 'Categor\u00eda', 'Rubro']),
-    attributes: compactAttributes({ referencia, vehicleBrand, vehicleModel, proximaLlegada, procedencia }),
+    category: labelValue(text, ['Categoria', 'Categoría', 'Rubro']),
+    attributes: compactAttributes({ referencia, vehicleBrand, vehicleModel, proximaLlegada, procedencia, stockStatus }),
     provider: 'Yokomitsu',
     extractedAt: new Date().toISOString(),
   }];
 }
 
 function labelValue(text: string, labels: string[]): string | undefined {
+  const prepared = text.replace(/\s+/g, ' ').trim();
+  if (!prepared) return undefined;
+
   for (const label of labels) {
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = text.match(new RegExp(`${escaped}\\s*:?\\s*([^|\\n\\r]+?)(?=\\s*(?:C[o\\u00f3]d\\.?|Codigo|C\\u00f3digo|SKU|Marca|Modelo|OEM|Referencia|Procedencia|Precio|Pr[o\\u00f3]xima llegada|Categoria|Categor\\u00eda|Stock|Estado|Disponibilidad)\\s*:?|\\s*(?:US\\$|\\$U|\\$|UYU|USD)\\s*\\d|\\s*Comprar\\b|$)`, 'i'));
-    const value = cleanText(match?.[1]);
+    const value = readBoundedLabelValue(prepared, label);
     if (value) return value;
   }
   return undefined;
+}
+
+function readBoundedLabelValue(text: string, label: string): string | undefined {
+  const labelMatch = new RegExp(`${escapeRegex(label)}\s*:`, 'i').exec(text);
+  if (!labelMatch) return undefined;
+
+  const valueStart = labelMatch.index + labelMatch[0].length;
+  const rest = text.slice(valueStart);
+  const boundaryIndex = firstKnownBoundaryIndex(rest);
+  const rawValue = boundaryIndex === undefined ? rest : rest.slice(0, boundaryIndex);
+  const value = cleanText(rawValue);
+  return isValidLabeledValue(value) ? value : undefined;
+}
+
+function firstKnownBoundaryIndex(value: string): number | undefined {
+  const boundaries = [
+    ...KNOWN_LABELS.map((label) => new RegExp(`\s*${escapeRegex(label)}\s*:`, 'i')),
+    /\s*(?:US\$|\$U|\$|UYU|USD)\s*\d/i,
+    /\s*Comprar\b/i,
+    new RegExp(`\s*${KNOWN_STATUS_PATTERN.source}`, 'i'),
+  ]
+    .map((pattern) => pattern.exec(value))
+    .filter((match): match is RegExpExecArray => Boolean(match))
+    .map((match) => match.index)
+    .filter((index) => index >= 0);
+
+  return boundaries.length > 0 ? Math.min(...boundaries) : undefined;
+}
+
+function isValidLabeledValue(value: string | undefined): value is string {
+  if (!value) return false;
+  if (KNOWN_STATUS_PATTERN.test(value)) return false;
+  return !KNOWN_LABELS.some((label) => new RegExp(`^${escapeRegex(label)}:?$`, 'i').test(value));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function firstElementText(root: HTMLElement, selectors: string[]): string | undefined {
@@ -603,17 +676,10 @@ function inferAvailability(record: JsonRecord, stock?: string): string | undefin
 }
 
 function inferVisibleAvailability(text: string): string | undefined {
-  const status = cleanText(text.match(/stock\s+cr[i\u00ed]tico/i)?.[0]);
-  if (status) return normalizeStatusText(status);
+  const status = cleanText(text.match(/stock\s+cr[ií]tico/i)?.[0]);
+  if (status) return 'Stock Crítico';
   if (/(?:sin stock|agotado|no disponible)/i.test(text)) return 'out_of_stock';
   return undefined;
-}
-
-function normalizeStatusText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/(^|\s)([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1])/g, (match) => match.toUpperCase())
-    .replace(/\bCritico\b/, 'Critico');
 }
 
 function sanitizeJson(value: unknown): unknown {
