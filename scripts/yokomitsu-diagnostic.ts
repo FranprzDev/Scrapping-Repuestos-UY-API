@@ -16,6 +16,7 @@ import {
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
+  summarizeYokomitsuSearchAuth,
   YOKOMITSU_BASE_URL,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
@@ -53,6 +54,7 @@ const report: YokomitsuDiagnosticReport = {
     usesBearerToken: false,
     usesLocalStorage: false,
     usesRefreshToken: false,
+    sessionCookieNames: [],
   },
   catalogApiCandidates: [],
   pagination: {
@@ -91,6 +93,10 @@ async function main() {
 
   const requests = new Map<Request, YokomitsuNetworkCall>();
   const productSamples = new Map<string, ProductRecord>();
+  const observedSessionCookieNames = new Set<string>();
+  let observedSearchUsesSessionCookie = false;
+  let observedSearchAuthorizationHeader = false;
+  let observedSearchUsesBearerToken = false;
   let sawAuthorizationHeader = false;
   let authenticatedCatalogResponses = 0;
 
@@ -98,6 +104,13 @@ async function main() {
     if (!isYokomitsuUrl(request.url())) return;
     const headers = request.headers();
     sawAuthorizationHeader ||= typeof headers.authorization === 'string' && headers.authorization.trim().length > 0;
+    if (isYokomitsuSearchEndpoint(request.url())) {
+      const authSummary = summarizeYokomitsuSearchAuth(headers);
+      observedSearchUsesSessionCookie ||= authSummary.usesSessionCookie;
+      observedSearchAuthorizationHeader ||= authSummary.authorizationHeaderObserved;
+      observedSearchUsesBearerToken ||= authSummary.usesBearerToken;
+      for (const name of authSummary.cookieNames) observedSessionCookieNames.add(name);
+    }
     const likelyLoginRequest = isLikelyLoginRequest(request);
     const call: YokomitsuNetworkCall = {
       method: request.method(),
@@ -161,7 +174,19 @@ async function main() {
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
     const cookies = await context.cookies();
-    report.login.usesSessionCookie = cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name)) || cookies.length > 0;
+    report.login.usesSessionCookie = observedSearchUsesSessionCookie
+      || cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name))
+      || cookies.length > 0;
+    for (const cookie of cookies) {
+      if (cookie.name === 'YOKOMITSU_FRONT') observedSessionCookieNames.add(cookie.name);
+    }
+    report.login.sessionCookieNames = Array.from(observedSessionCookieNames).sort();
+    report.login.observedCatalogSearchAuth = {
+      usesSessionCookie: observedSearchUsesSessionCookie,
+      cookieNames: report.login.sessionCookieNames,
+      usesBearerToken: observedSearchUsesBearerToken,
+      authorizationHeaderObserved: observedSearchAuthorizationHeader,
+    };
     const storageSignals = await inspectYokomitsuStorage(page);
     report.login.usesLocalStorage = storageSignals.localStorageKeys > 0;
     report.login.usesJwt = storageSignals.hasJwt;
