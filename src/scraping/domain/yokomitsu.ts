@@ -2,7 +2,8 @@ import type { ProductRecord } from '../interfaces/scraping.types';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { cleanText } from './product-quality';
 
-export const YOKOMITSU_LOGIN_URL = 'https://yokomitsuparts.com.uy/v2/login';
+export const YOKOMITSU_LOGIN_URL = 'https://www.yokomitsuparts.com.uy/v2/home';
+export const YOKOMITSU_LEGACY_LOGIN_URL = 'https://yokomitsuparts.com.uy/v2/login';
 export const YOKOMITSU_BASE_URL = 'https://www.yokomitsuparts.com.uy/v2/';
 export const YOKOMITSU_SEARCH_ENDPOINT = 'https://www.yokomitsuparts.com.uy/v2/ajax/load-data-search.php';
 export const YOKOMITSU_FRONT_COOKIE_NAME = 'YOKOMITSU_FRONT';
@@ -98,6 +99,7 @@ export interface YokomitsuPortalSignals {
   hasPasswordInput: boolean;
   portalElementCount: number;
   authenticatedCatalogResponses: number;
+  hasYokomitsuFrontCookie?: boolean;
 }
 
 export interface YokomitsuSessionResources {
@@ -164,9 +166,10 @@ export function hasVisibleYokomitsuCaptchaChallenge(signals: YokomitsuCaptchaSig
 }
 
 export function hasReachedYokomitsuPortal(signals: YokomitsuPortalSignals): boolean {
-  return !/\/login(?:[/?#]|$)/i.test(signals.currentUrl)
-    && !signals.hasPasswordInput
-    && (signals.portalElementCount > 0 || signals.authenticatedCatalogResponses > 0);
+  if (signals.hasPasswordInput) return false;
+  return signals.portalElementCount > 0
+    || signals.authenticatedCatalogResponses > 0
+    || signals.hasYokomitsuFrontCookie === true;
 }
 
 export function hasYokomitsuManualLoginTimedOut(startedAtMs: number, nowMs: number, timeoutMs: number): boolean {
