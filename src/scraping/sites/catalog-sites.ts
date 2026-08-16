@@ -76,7 +76,17 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
   plannedSite('tnrepuestos', 'TN Repuestos', 'tnrepuestos.com.uy', ['https://tnrepuestos.com.uy/'], 'generic-html'),
   plannedSite('penasrepuestos', 'Penas Repuestos', 'penasrepuestos.com', ['https://penasrepuestos.com/'], 'generic-html'),
   plannedSite('euromotors', 'Euromotors', 'euromotors.com.uy', ['https://euromotors.com.uy/'], 'generic-html'),
-  plannedSite('autopartesmagallanes', 'Autopartes Magallanes', 'autopartesmagallanes.uy', ['https://autopartesmagallanes.uy/'], 'generic-html'),
+  existingSite({
+    id: 'autopartesmagallanes',
+    label: 'Autopartes Magallanes',
+    hostname: 'autopartesmagallanes.uy',
+    seedUrls: ['https://autopartesmagallanes.uy/products/'],
+    platform: 'woocommerce',
+    productUrlPatterns: [/\/(?:para-desarmar|restos)\/[^?#]*repuestos-de-[^/?#]*ref-?ch\d+\/?$/i],
+    categoryUrlPatterns: [/\/(?:products|product-category|para-desarmar\/repuestos-de)(?:\/|\?|$)/i],
+    paginationStrategy: { type: 'next-link', selector: 'a.next.page-numbers[href], a[rel="next"]', maxPages: 500 },
+    requestDelay: 750,
+  }),
   {
     ...plannedSite('mercado-libre-uy', 'Mercado Libre Uruguay', 'api.mercadolibre.com', ['https://api.mercadolibre.com/sites/MLU/search'], 'mercado-libre-api'),
     authentication: {
