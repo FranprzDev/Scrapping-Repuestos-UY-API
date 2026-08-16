@@ -5,6 +5,7 @@ import { cleanText } from './product-quality';
 export const YOKOMITSU_LOGIN_URL = 'https://yokomitsuparts.com.uy/v2/login';
 export const YOKOMITSU_BASE_URL = 'https://www.yokomitsuparts.com.uy/v2/';
 export const YOKOMITSU_SEARCH_ENDPOINT = 'https://www.yokomitsuparts.com.uy/v2/ajax/load-data-search.php';
+export const YOKOMITSU_FRONT_COOKIE_NAME = 'YOKOMITSU_FRONT';
 export const YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS = 5;
 
 const SENSITIVE_HEADER_PATTERN = /^(authorization|cookie|set-cookie|x-csrf-token|x-xsrf-token)$/i;
@@ -58,6 +59,13 @@ export interface YokomitsuDiagnosticReport {
     usesBearerToken: boolean;
     usesLocalStorage: boolean;
     usesRefreshToken: boolean;
+    sessionCookieNames: string[];
+    observedCatalogSearchAuth?: {
+      usesSessionCookie: boolean;
+      cookieNames: string[];
+      usesBearerToken: boolean;
+      authorizationHeaderObserved: boolean;
+    };
   };
   catalogApiCandidates: YokomitsuNetworkCall[];
   pagination: {
@@ -227,6 +235,30 @@ export function sanitizeHeaders(headers: Record<string, string | string[] | unde
       SENSITIVE_HEADER_PATTERN.test(key) ? '[REDACTED]' : value,
     ]),
   );
+}
+
+export function extractCookieNames(cookieHeader: string | undefined): string[] {
+  if (!cookieHeader) return [];
+  return uniqueStrings(cookieHeader
+    .split(';')
+    .map((part) => cleanText(part.split('=')[0]))
+    .filter((name): name is string => Boolean(name)));
+}
+
+export function summarizeYokomitsuSearchAuth(headers: Record<string, string | undefined>): {
+  usesSessionCookie: boolean;
+  cookieNames: string[];
+  usesBearerToken: boolean;
+  authorizationHeaderObserved: boolean;
+} {
+  const cookieNames = extractCookieNames(headers.cookie);
+  const authorization = cleanText(headers.authorization);
+  return {
+    usesSessionCookie: cookieNames.includes(YOKOMITSU_FRONT_COOKIE_NAME),
+    cookieNames: cookieNames.filter((name) => name === YOKOMITSU_FRONT_COOKIE_NAME),
+    usesBearerToken: Boolean(authorization && /^bearer\s+/i.test(authorization)),
+    authorizationHeaderObserved: Boolean(authorization),
+  };
 }
 
 export function sanitizeRequestBody(body: string | null | undefined): unknown {
@@ -489,6 +521,7 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
   const vehicleModel = labelValue(text, ['Modelo', 'Modelo Vehiculo', 'Modelo Veh\u00edculo']);
   const proximaLlegada = labelValue(text, ['Proxima llegada', 'Pr\u00f3xima llegada']);
   const procedencia = labelValue(text, ['Procedencia']);
+  const availability = inferVisibleAvailability(text);
 
   if (!productName && !sku) return [];
 
@@ -499,6 +532,7 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
     brand: labelValue(text, ['Marca']),
     price: normalizeYokomitsuPrice(rawPrice),
     currency: inferYokomitsuCurrency(rawPrice),
+    availability,
     description: text || undefined,
     imageUrl: imageUrls[0],
     imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
@@ -563,6 +597,20 @@ function inferAvailability(record: JsonRecord, stock?: string): string | undefin
   const numericStock = Number(stock.replace(',', '.'));
   if (Number.isFinite(numericStock)) return numericStock > 0 ? 'in_stock' : 'out_of_stock';
   return /sin stock|agotado|no disponible/i.test(stock) ? 'out_of_stock' : 'in_stock';
+}
+
+function inferVisibleAvailability(text: string): string | undefined {
+  const status = cleanText(text.match(/stock\s+cr[i\u00ed]tico/i)?.[0]);
+  if (status) return normalizeStatusText(status);
+  if (/(?:sin stock|agotado|no disponible)/i.test(text)) return 'out_of_stock';
+  return undefined;
+}
+
+function normalizeStatusText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/(^|\s)([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1])/g, (match) => match.toUpperCase())
+    .replace(/\bCritico\b/, 'Critico');
 }
 
 function sanitizeJson(value: unknown): unknown {
