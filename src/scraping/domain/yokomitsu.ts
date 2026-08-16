@@ -606,10 +606,10 @@ function readBoundedLabelValue(text: string, label: string): string | undefined 
 
 function firstKnownBoundaryIndex(value: string): number | undefined {
   const boundaries = [
-    ...KNOWN_LABELS.map((label) => new RegExp(`\s*${escapeRegex(label)}\s*:`, 'i')),
-    /\s*(?:US\$|\$U|\$|UYU|USD)\s*\d/i,
-    /\s*Comprar\b/i,
-    new RegExp(`\s*${KNOWN_STATUS_PATTERN.source}`, 'i'),
+    ...KNOWN_LABELS.map((label) => new RegExp(`${escapeRegex(label)}\s*:`, 'i')),
+    /(?:US\$|\$U|\$|UYU|USD)\s*\d/i,
+    /Comprar\b/i,
+    new RegExp(KNOWN_STATUS_PATTERN.source, 'i'),
   ]
     .map((pattern) => pattern.exec(value))
     .filter((match): match is RegExpExecArray => Boolean(match))
