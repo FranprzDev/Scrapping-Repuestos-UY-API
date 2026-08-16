@@ -44,6 +44,27 @@ test('pagina cada listado de forma independiente aunque existan URLs repetidas',
   ]);
 });
 
+test('aplica max-pages durante discovery y no despues de recorrer el catalogo', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  let requests = 0;
+  const context = mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a1">A1</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/a2">A2</a><a rel="next" href="/list-a?page=3">next</a>'],
+    ['https://fixture.test/list-a?page=3', '<a href="/product/a3">A3</a>'],
+    ['https://fixture.test/list-b', '<a href="/product/b1">B1</a>'],
+  ]));
+  const originalFetch = context.fetch;
+  context.maxPages = 2;
+  context.fetch = async (...args) => {
+    requests += 1;
+    return originalFetch(...args);
+  };
+
+  const discovery = await adapter.discover(context);
+  assert.equal(discovery.pages.length, 2);
+  assert.equal(requests, 2);
+});
+
 test('deduplica globalmente al final de la normalizacion', () => {
   const adapter = new GenericHtmlPaginationAdapter();
   const normalized = adapter.normalize(site, [
