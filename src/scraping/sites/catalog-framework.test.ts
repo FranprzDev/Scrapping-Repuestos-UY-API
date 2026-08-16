@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { GenericHtmlPaginationAdapter } from './adapters';
+import { auditCounts } from './adapters/base.adapter';
 import { CatalogRequestQueue } from './catalog-queue';
 import { normalizeCatalogUrl } from './catalog-sites';
 import { createSiteScaffold } from './site-generator';
@@ -63,6 +64,79 @@ test('aplica max-pages durante discovery y no despues de recorrer el catalogo', 
   const discovery = await adapter.discover(context);
   assert.equal(discovery.pages.length, 2);
   assert.equal(requests, 2);
+  assert.equal(discovery.pagesAudited, 2);
+  assert.equal(discovery.terminationReason, 'max_pages');
+  assert.equal(discovery.limited, true);
+});
+
+test('corta discovery por max-products antes de seguir paginando', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  let requests = 0;
+  const context = mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a1">A1</a><a href="/product/a2">A2</a><a href="/product/a3">A3</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/a4">A4</a>'],
+  ]), { maxProducts: 2 });
+  const originalFetch = context.fetch;
+  context.fetch = async (...args) => {
+    requests += 1;
+    return originalFetch(...args);
+  };
+
+  const discovery = await adapter.discover(context);
+  assert.equal(requests, 1);
+  assert.equal(discovery.productsAudited, 2);
+  assert.deepEqual(discovery.uniqueUrls, [
+    'https://fixture.test/product/a1',
+    'https://fixture.test/product/a2',
+  ]);
+  assert.equal(discovery.terminationReason, 'max_products');
+  assert.equal(discovery.limited, true);
+});
+
+test('detecta pagina repetida durante discovery', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a rel="next" href="/list-a">next</a>'],
+  ])));
+
+  assert.equal(discovery.pagesAudited, 1);
+  assert.equal(discovery.terminationReason, 'repeated_page');
+  assert.equal(discovery.limited, true);
+});
+
+test('detecta falta de productos nuevos durante discovery', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/a">A repeated</a><a rel="next" href="/list-a?page=3">next</a>'],
+  ])));
+
+  assert.equal(discovery.pagesAudited, 2);
+  assert.equal(discovery.terminationReason, 'no_progress');
+  assert.equal(discovery.limited, true);
+});
+
+test('marca reportes limitados como parciales y sin cobertura global', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a href="/product/b">B</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/c">C</a>'],
+  ]), { maxProducts: 1 }));
+  const report = auditCounts(
+    site,
+    'audit',
+    discovery,
+    { siteId: site.id, products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], rejected: [], errors: [] },
+    { products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], duplicates: [] },
+    { products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], rejected: [] },
+  );
+
+  assert.equal(report.limited, true);
+  assert.equal(report.terminationReason, 'max_products');
+  assert.deepEqual(report.requestedLimits, { maxProducts: 1 });
+  assert.equal(report.productsAudited, 1);
+  assert.equal(report.pagesAudited, 1);
+  assert.equal(report.estimatedCoverage, null);
 });
 
 test('deduplica globalmente al final de la normalizacion', () => {
@@ -170,9 +244,10 @@ test('site:create genera definicion, prueba, fixtures y entrada de registro', as
   }
 });
 
-function mockContext(htmlByUrl: Map<string, string>): CatalogRequestContext {
+function mockContext(htmlByUrl: Map<string, string>, limits: Pick<CatalogRequestContext, 'maxPages' | 'maxProducts'> = {}): CatalogRequestContext {
   return {
     site,
+    ...limits,
     fetch: async (url: string) => ({
       url,
       finalUrl: url,
