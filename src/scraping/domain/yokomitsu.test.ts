@@ -24,6 +24,8 @@ import {
   summarizeJsonShape,
   summarizeYokomitsuSearchAuth,
   YOKOMITSU_FRONT_COOKIE_NAME,
+  YOKOMITSU_LEGACY_LOGIN_URL,
+  YOKOMITSU_LOGIN_URL,
 } from './yokomitsu';
 
 test('Yokomitsu normaliza precios uruguayos sin afectar otros proveedores', () => {
@@ -239,6 +241,39 @@ test('Yokomitsu detecta ingreso manual exitoso sin leer credenciales', () => {
     portalElementCount: 0,
     authenticatedCatalogResponses: 0,
   }), false);
+});
+
+test('Yokomitsu usa /v2/home canonico como entrada principal', () => {
+  assert.equal(YOKOMITSU_LOGIN_URL, 'https://www.yokomitsuparts.com.uy/v2/home');
+  assert.equal(YOKOMITSU_LEGACY_LOGIN_URL, 'https://yokomitsuparts.com.uy/v2/login');
+  assert.notEqual(YOKOMITSU_LOGIN_URL, YOKOMITSU_LEGACY_LOGIN_URL);
+});
+
+test('Yokomitsu no asume autenticacion por estar en /v2/home si hay password', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: true,
+    portalElementCount: 4,
+    authenticatedCatalogResponses: 1,
+    hasYokomitsuFrontCookie: true,
+  }), false);
+});
+
+test('Yokomitsu acepta /v2/home autenticado por senales de portal o cookie', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 1,
+    authenticatedCatalogResponses: 0,
+  }), true);
+
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 0,
+    authenticatedCatalogResponses: 0,
+    hasYokomitsuFrontCookie: true,
+  }), true);
 });
 
 test('Yokomitsu detecta timeout esperando login manual', () => {
