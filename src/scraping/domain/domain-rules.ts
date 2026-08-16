@@ -268,12 +268,12 @@ export const DOMAIN_RULES: DomainRule[] = [
   {
     id: 'italur',
     hostnames: ['italur.com', 'www.italur.com'],
-    seedUrls: ['https://www.italur.com/'],
-    preferredMethod: 'playwright-fallback',
+    seedUrls: ['https://www.italur.com/tienda/'],
+    preferredMethod: 'http',
     preserveOutOfStock: true,
-    productUrlPatterns: [/\/producto\//i, /\/product\//i, /\/articulo\//i],
-    categoryUrlPatterns: [/\/productos?(?:\/|\?|$)/i, /\/product-category\//i, /\/categoria\//i, /\/page\/\d+/i, /[?&](?:page|paged)=\d+/i],
-    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i],
+    productUrlPatterns: [/\/producto\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [/\/tienda(?:\/page\/\d+)?\/?$/i, /\/categoria-producto(?:\/[^/?#]+)*\/?$/i, /\/product-category(?:\/[^/?#]+)*(?:\/page\/\d+)?\/?$/i],
+    excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/finalizar-compra/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i, /[?&]add-to-cart=/i, /[?&]s=/i],
     positiveAvailabilityTexts: ['comprar', 'agregar al carrito', 'añadir al carrito', 'en stock', 'disponible'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
     detailSelectors: {

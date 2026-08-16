@@ -2,10 +2,18 @@
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
 import { cleanText, inferCurrency, isAllowedCatalogUrl, normalizePriceValue, resolveAvailability } from './product-quality';
+import { extractItalurCategoryUrls, extractItalurDetail, extractItalurListProducts, extractItalurProductUrls } from './italur';
 
 const GENERIC_PRICE_SELECTORS = ['.price', '[class*="price"]', '[class*="precio"]', '.woocommerce-Price-amount'];
 
 export function extractCandidateLinks(html: string, baseUrl: string, rule: DomainRule): { productLinks: string[]; categoryLinks: string[] } {
+  if (rule.id === 'italur') {
+    return {
+      productLinks: extractItalurProductUrls(html, baseUrl),
+      categoryLinks: extractItalurCategoryUrls(html, baseUrl),
+    };
+  }
+
   const root = parse(html);
   const productLinks = new Set<string>();
   const categoryLinks = new Set<string>();
@@ -186,6 +194,16 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   const candidates: ProductRecord[] = [];
 
   candidates.push(...extractJsonLdProducts(root, pageUrl, provider));
+
+  if (rule.id === 'italur') {
+    const detailProduct = extractItalurDetail(html, pageUrl, provider);
+    if (detailProduct) {
+      candidates.push(detailProduct);
+    } else {
+      candidates.push(...extractItalurListProducts(html, pageUrl, provider));
+    }
+    return candidates;
+  }
 
   if (rule.id === 'chaparei') {
     const detailProduct = extractChapareiDetailProduct(root, pageUrl, provider, rule);
