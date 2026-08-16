@@ -9,6 +9,8 @@ import { normalizeCatalogUrl } from '../catalog-sites';
 import { CatalogRequestQueue } from '../catalog-queue';
 import type {
   CatalogAdapter,
+  CatalogAuditLimits,
+  CatalogTerminationReason,
   CatalogPlatform,
   CatalogRequestContext,
   CatalogSiteConfig,
@@ -27,9 +29,11 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
     const errors: DiscoveryResult['errors'] = [];
     const categories = new Set(context.site.seedUrls);
     const discoveredUrls: string[] = [];
+    let terminationReason: CatalogTerminationReason = 'catalog_end';
 
     for (const listingUrl of context.site.seedUrls) {
       const seenInListing = new Set<string>();
+      const seenPagesInListing = new Set<string>();
       let nextUrl: string | undefined = listingUrl;
       let pageNumber = 1;
 
@@ -37,9 +41,20 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
         if (context.signal?.aborted) {
           throw new Error('Catalog discovery cancelled');
         }
-        if (context.site.paginationStrategy.type !== 'none' && pages.length >= (context.site.paginationStrategy.maxPages ?? 100)) {
+        if (reachedPageLimit(context, pages.length)) {
+          terminationReason = 'max_pages';
           break;
         }
+        if (context.limits?.maxProducts !== undefined && new Set(discoveredUrls).size >= context.limits.maxProducts) {
+          terminationReason = 'max_products';
+          break;
+        }
+        const normalizedPageUrl = normalizeCatalogUrl(nextUrl) ?? nextUrl;
+        if (seenPagesInListing.has(normalizedPageUrl)) {
+          terminationReason = 'repeated_page';
+          break;
+        }
+        seenPagesInListing.add(normalizedPageUrl);
 
         try {
           const response = await context.fetch(nextUrl);
@@ -50,7 +65,16 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
           discoveredUrls.push(...newInListing);
           pages.push(page);
 
-          if (page.isLastPage || newInListing.length === 0) {
+          if (context.limits?.maxProducts !== undefined && new Set(discoveredUrls).size >= context.limits.maxProducts) {
+            terminationReason = 'max_products';
+            break;
+          }
+          if (page.isLastPage) {
+            terminationReason = 'catalog_end';
+            break;
+          }
+          if (newInListing.length === 0) {
+            terminationReason = 'no_progress';
             break;
           }
           nextUrl = page.nextPageUrl;
@@ -60,17 +84,26 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
           break;
         }
       }
+      if (terminationReason !== 'catalog_end') {
+        break;
+      }
     }
 
-    const uniqueUrls = Array.from(new Set(discoveredUrls));
+    const uniqueUrls = Array.from(new Set(discoveredUrls)).slice(0, context.limits?.maxProducts ?? discoveredUrls.length);
+    const limited = terminationReason !== 'catalog_end';
     return {
       siteId: context.site.id,
       categories: Array.from(categories),
       pages,
-      discoveredUrls,
+      discoveredUrls: context.limits?.maxProducts === undefined ? discoveredUrls : discoveredUrls.filter((url) => uniqueUrls.includes(url)),
       uniqueUrls,
-      duplicates: discoveredUrls.length - uniqueUrls.length,
+      duplicates: discoveredUrls.length - Array.from(new Set(discoveredUrls)).length,
       errors,
+      limited,
+      terminationReason,
+      requestedLimits: requestedLimits(context.limits),
+      pagesAudited: pages.length,
+      productsAudited: uniqueUrls.length,
     };
   }
 
@@ -227,6 +260,11 @@ export function auditCounts(site: CatalogSiteConfig, mode: 'discover' | 'probe' 
     siteId: site.id,
     siteLabel: site.label,
     mode,
+    limited: discovery.limited,
+    terminationReason: discovery.terminationReason,
+    requestedLimits: discovery.requestedLimits,
+    pagesAudited: discovery.pagesAudited,
+    productsAudited: discovery.productsAudited,
     categories: discovery.categories.length,
     pages: discovery.pages.length,
     urlsDiscovered: discovery.discoveredUrls.length,
@@ -239,7 +277,23 @@ export function auditCounts(site: CatalogSiteConfig, mode: 'discover' | 'probe' 
     duplicates: discovery.duplicates + normalization.duplicates.length,
     rejected: extraction.rejected.length + validation.rejected.length,
     errors: discovery.errors.length + extraction.errors.length,
-    estimatedCoverage: discovery.uniqueUrls.length > 0 ? validation.products.length / discovery.uniqueUrls.length : 0,
+    estimatedCoverage: discovery.limited ? null : (discovery.uniqueUrls.length > 0 ? validation.products.length / discovery.uniqueUrls.length : 0),
+  };
+}
+
+function reachedPageLimit(context: CatalogRequestContext, pagesVisited: number): boolean {
+  const requestedLimit = context.limits?.maxPages;
+  const siteLimit = context.site.paginationStrategy.type !== 'none'
+    ? (context.site.paginationStrategy.maxPages ?? 100)
+    : undefined;
+  const effectiveLimit = Math.min(requestedLimit ?? Number.POSITIVE_INFINITY, siteLimit ?? Number.POSITIVE_INFINITY);
+  return Number.isFinite(effectiveLimit) && pagesVisited >= effectiveLimit;
+}
+
+function requestedLimits(limits: CatalogAuditLimits | undefined): CatalogAuditLimits {
+  return {
+    ...(limits?.maxPages !== undefined ? { maxPages: limits.maxPages } : {}),
+    ...(limits?.maxProducts !== undefined ? { maxProducts: limits.maxProducts } : {}),
   };
 }
 

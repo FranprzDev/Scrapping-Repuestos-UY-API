@@ -19,7 +19,7 @@ export interface MercadoLibreSearchParams {
 export class MercadoLibreApiAdapter extends JsonApiAdapter {
   override readonly platform = 'mercado-libre-api' as const;
 
-  override async discover(_context: CatalogRequestContext): Promise<DiscoveryResult> {
+  override async discover(context: CatalogRequestContext): Promise<DiscoveryResult> {
     return {
       siteId: 'mercado-libre-uy',
       categories: [],
@@ -31,6 +31,11 @@ export class MercadoLibreApiAdapter extends JsonApiAdapter {
         phase: 'discovery',
         message: 'Mercado Libre debe integrarse mediante API oficial y OAuth; HTML scraping deshabilitado.',
       }],
+      limited: false,
+      terminationReason: 'catalog_end',
+      requestedLimits: context.limits ?? {},
+      pagesAudited: 0,
+      productsAudited: 0,
     };
   }
 

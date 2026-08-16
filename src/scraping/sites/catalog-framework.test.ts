@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { GenericHtmlPaginationAdapter } from './adapters';
+import { auditCounts } from './adapters/base.adapter';
+import { parseCatalogCommandArgs } from './catalog-command-args';
 import { CatalogRequestQueue } from './catalog-queue';
 import { normalizeCatalogUrl } from './catalog-sites';
 import { createSiteScaffold } from './site-generator';
@@ -25,6 +27,18 @@ const site: CatalogSiteConfig = {
   requestDelay: 0,
   enabled: true,
 };
+
+test('parsea --max-pages para catalog-command', () => {
+  const parsed = parseCatalogCommandArgs(['--mode=audit', '--site=fixture', '--max-pages=20'], {});
+
+  assert.equal(parsed.maxPages, 20);
+});
+
+test('parsea --max-products para catalog-command', () => {
+  const parsed = parseCatalogCommandArgs(['--mode=audit', '--site=fixture', '--max-products=600'], {});
+
+  assert.equal(parsed.maxProducts, 600);
+});
 
 test('pagina cada listado de forma independiente aunque existan URLs repetidas', async () => {
   const adapter = new GenericHtmlPaginationAdapter();
@@ -65,6 +79,77 @@ test('detecta ultima pagina cuando no hay enlace next', async () => {
 
   assert.equal(discovery.pages.every((page) => page.isLastPage), true);
   assert.equal(discovery.pages.length, 2);
+});
+
+test('corta discovery por maximo de paginas', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-b', '<a href="/product/b">B</a>'],
+  ]), { maxPages: 1 }));
+
+  assert.equal(discovery.pagesAudited, 1);
+  assert.equal(discovery.terminationReason, 'max_pages');
+  assert.equal(discovery.limited, true);
+});
+
+test('corta discovery por maximo de productos', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a href="/product/b">B</a><a href="/product/c">C</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/d">D</a>'],
+  ]), { maxProducts: 2 }));
+
+  assert.equal(discovery.productsAudited, 2);
+  assert.equal(discovery.uniqueUrls.length, 2);
+  assert.equal(discovery.terminationReason, 'max_products');
+  assert.equal(discovery.limited, true);
+});
+
+test('detecta pagina repetida durante discovery', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a rel="next" href="/list-a">next</a>'],
+  ])));
+
+  assert.equal(discovery.pagesAudited, 1);
+  assert.equal(discovery.terminationReason, 'repeated_page');
+  assert.equal(discovery.limited, true);
+});
+
+test('detecta falta de productos nuevos durante discovery', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/a">A repeated</a><a rel="next" href="/list-a?page=3">next</a>'],
+  ])));
+
+  assert.equal(discovery.pagesAudited, 2);
+  assert.equal(discovery.terminationReason, 'no_progress');
+  assert.equal(discovery.limited, true);
+});
+
+test('marca reportes limitados como parciales y sin cobertura global', async () => {
+  const adapter = new GenericHtmlPaginationAdapter();
+  const discovery = await adapter.discover(mockContext(new Map([
+    ['https://fixture.test/list-a', '<a href="/product/a">A</a><a href="/product/b">B</a><a rel="next" href="/list-a?page=2">next</a>'],
+    ['https://fixture.test/list-a?page=2', '<a href="/product/c">C</a>'],
+  ]), { maxProducts: 1 }));
+  const report = auditCounts(
+    site,
+    'audit',
+    discovery,
+    { siteId: site.id, products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], rejected: [], errors: [] },
+    { products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], duplicates: [] },
+    { products: [{ productName: 'A', sourceUrl: discovery.uniqueUrls[0], extractedAt: 'now', provider: 'domain' }], rejected: [] },
+  );
+
+  assert.equal(report.limited, true);
+  assert.equal(report.terminationReason, 'max_products');
+  assert.deepEqual(report.requestedLimits, { maxProducts: 1 });
+  assert.equal(report.productsAudited, 1);
+  assert.equal(report.pagesAudited, 1);
+  assert.equal(report.estimatedCoverage, null);
 });
 
 test('respeta concurrencia por dominio', async () => {
@@ -149,9 +234,10 @@ test('site:create genera definicion, prueba, fixtures y entrada de registro', as
   }
 });
 
-function mockContext(htmlByUrl: Map<string, string>): CatalogRequestContext {
+function mockContext(htmlByUrl: Map<string, string>, limits: CatalogRequestContext['limits'] = undefined): CatalogRequestContext {
   return {
     site,
+    limits,
     fetch: async (url: string) => ({
       url,
       finalUrl: url,

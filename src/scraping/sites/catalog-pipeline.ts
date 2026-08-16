@@ -8,9 +8,13 @@ import type { CatalogAuditReport, CatalogPipelineOptions } from './types';
 export async function runCatalogPipeline(options: CatalogPipelineOptions): Promise<CatalogAuditReport> {
   const adapter = createCatalogAdapter(options.site.platform);
   const discoveryOutputRoot = options.outputRoot ?? (options.mode === 'discover' ? 'tmp/catalog-discovery' : 'tmp/catalog-audit');
-  const context = {
+  context = {
     site: options.site,
     signal: options.signal,
+    limits: {
+      ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
+      ...(options.maxProducts !== undefined ? { maxProducts: options.maxProducts } : {}),
+    },
     fetch: async (url: string, init?: { headers?: Record<string, string> }) => {
       const response = await fetchHtml(url, 5, { headers: init?.headers, signal: options.signal });
       if (response.statusCode === 429 || response.statusCode >= 500) {
@@ -21,11 +25,6 @@ export async function runCatalogPipeline(options: CatalogPipelineOptions): Promi
   };
 
   const discovery = await adapter.discover(context);
-  if (options.maxPages !== undefined) {
-    discovery.pages = discovery.pages.slice(0, options.maxPages);
-    discovery.discoveredUrls = discovery.pages.flatMap((page) => page.productUrls);
-    discovery.uniqueUrls = Array.from(new Set(discovery.discoveredUrls));
-  }
 
   await mkdir(discoveryOutputRoot, { recursive: true });
   const discoveryPath = path.join(discoveryOutputRoot, `${options.site.id}.json`);
@@ -71,6 +70,14 @@ function emptyAudit(options: CatalogPipelineOptions): CatalogAuditReport {
     duplicates: 0,
     rejected: 0,
     errors: 0,
+    limited: false,
+    terminationReason: 'catalog_end',
+    requestedLimits: {
+      ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
+      ...(options.maxProducts !== undefined ? { maxProducts: options.maxProducts } : {}),
+    },
+    pagesAudited: 0,
+    productsAudited: 0,
     estimatedCoverage: 0,
   };
 }

@@ -24,7 +24,20 @@ export class ShopifyAdapter extends BaseCatalogAdapter {
     }
 
     const uniqueUrls = Array.from(new Set(discoveredUrls));
-    return { siteId: context.site.id, categories: context.site.seedUrls, pages, discoveredUrls, uniqueUrls, duplicates: discoveredUrls.length - uniqueUrls.length, errors: [] };
+    return {
+      siteId: context.site.id,
+      categories: context.site.seedUrls,
+      pages,
+      discoveredUrls,
+      uniqueUrls,
+      duplicates: discoveredUrls.length - uniqueUrls.length,
+      errors: [],
+      limited: false,
+      terminationReason: 'catalog_end',
+      requestedLimits: context.limits ?? {},
+      pagesAudited: pages.length,
+      productsAudited: uniqueUrls.length,
+    };
   }
 
   protected override extractProductsFromBody(site: CatalogSiteConfig, html: string, pageUrl: string) {
