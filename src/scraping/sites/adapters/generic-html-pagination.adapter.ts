@@ -15,7 +15,7 @@ export class GenericHtmlPaginationAdapter extends BaseCatalogAdapter {
 
     const root = parse(html);
     const text = cleanText(root.structuredText || root.text) ?? '';
-    const sku = cleanText(text.match(/N[º°o]?\s*Pieza\s*:\s*([^\n\r]+)/i)?.[1]);
+    const sku = cleanText(text.match(/N[º°o]?\s*Pieza\s*:\s*([^\s<]+)/i)?.[1]);
     const price = cleanText(text.match(/Precio\s*:\s*\$?\s*([\d.,]+)/i)?.[1]);
     const headings = root.querySelectorAll('h1,h2,h3')
       .map((heading) => cleanText(heading.structuredText || heading.text))
