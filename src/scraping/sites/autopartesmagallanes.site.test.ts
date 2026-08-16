@@ -11,4 +11,7 @@ test('Autopartes Magallanes enables its WooCommerce vehicle archive', () => {
   assert.ok(site.productUrlPatterns.some((rule) => rule.test(
     'https://autopartesmagallanes.uy/para-desarmar/repuestos-de/repuestos-de-fiat-uno-2014-ref-ch562/',
   )));
+  assert.ok(site.productUrlPatterns.some((rule) => rule.test(
+    'https://autopartesmagallanes.uy/interiores-molduras-e-iluminacion-exterior/plasticos-y-molduras/plasticos-y-molduras-suzuki-swift-1-2-gl-2018-ref-11367-q3a8/',
+  )));
 });
