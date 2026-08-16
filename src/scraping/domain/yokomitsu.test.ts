@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   closeYokomitsuSessionResources,
+  extractCookieNames,
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
   hasReachedYokomitsuPortal,
@@ -21,6 +22,8 @@ import {
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
+  summarizeYokomitsuSearchAuth,
+  YOKOMITSU_FRONT_COOKIE_NAME,
 } from './yokomitsu';
 
 test('Yokomitsu normaliza precios uruguayos sin afectar otros proveedores', () => {
@@ -54,6 +57,23 @@ test('Yokomitsu redacta credenciales, cookies y tokens en requests', () => {
     empresa: '[VALUE]',
   });
   assert.deepEqual(extractFieldNamesFromBody('usuario=demo&password=secret'), ['usuario', 'password']);
+});
+
+test('Yokomitsu resume autenticacion observada del buscador sin valores sensibles', () => {
+  const auth = summarizeYokomitsuSearchAuth({
+    cookie: `${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; other_cookie=redacted`,
+    'x-requested-with': 'XMLHttpRequest',
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+  });
+
+  assert.equal(auth.usesSessionCookie, true);
+  assert.deepEqual(auth.cookieNames, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.equal(auth.authorizationHeaderObserved, false);
+  assert.equal(auth.usesBearerToken, false);
+  assert.deepEqual(extractCookieNames(`${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; analytics=redacted`), [
+    YOKOMITSU_FRONT_COOKIE_NAME,
+    'analytics',
+  ]);
 });
 
 test('Yokomitsu extrae muestra desde JSON sanitizado de catalogo', () => {
@@ -155,9 +175,11 @@ test('Yokomitsu extrae productos desde data HTML sin asumir stock por Comprar', 
   assert.equal(products[0].price, '3406');
   assert.equal(products[0].currency, 'UYU');
   assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-001.jpg');
-  assert.equal(products[0].availability, undefined);
+  assert.equal(products[0].availability, 'Stock Cr\u00edtico');
   assert.equal(products[0].stock, undefined);
   assert.equal(products[1].price, '9221');
+  assert.equal(products[1].availability, 'out_of_stock');
+  assert.equal(products[1].stock, undefined);
 });
 
 test('Yokomitsu resume shape, campos y paginacion sin guardar datos privados', () => {
