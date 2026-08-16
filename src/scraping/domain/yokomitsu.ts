@@ -546,7 +546,7 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): Prod
 function labelValue(text: string, labels: string[]): string | undefined {
   for (const label of labels) {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = text.match(new RegExp(`${escaped}\\s*:?\\s*([^|\\n\\r]+?)(?=\\s*(?:C[o\\u00f3]d\\.?|Codigo|C\\u00f3digo|SKU|Marca|Modelo|OEM|Referencia|Procedencia|Precio|Pr[o\\u00f3]xima llegada|Categoria|Categor\\u00eda)\\s*:?|\\s*(?:US\\$|\\$U|\\$|UYU|USD)\\s*\\d|\\s*Comprar\\b|$)`, 'i'));
+    const match = text.match(new RegExp(`${escaped}\\s*:?\\s*([^|\\n\\r]+?)(?=\\s*(?:C[o\\u00f3]d\\.?|Codigo|C\\u00f3digo|SKU|Marca|Modelo|OEM|Referencia|Procedencia|Precio|Pr[o\\u00f3]xima llegada|Categoria|Categor\\u00eda|Stock|Estado|Disponibilidad)\\s*:?|\\s*(?:US\\$|\\$U|\\$|UYU|USD)\\s*\\d|\\s*Comprar\\b|$)`, 'i'));
     const value = cleanText(match?.[1]);
     if (value) return value;
   }
