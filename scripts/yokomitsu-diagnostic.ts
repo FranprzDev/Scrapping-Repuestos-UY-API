@@ -18,6 +18,7 @@ import {
   summarizeJsonShape,
   summarizeYokomitsuSearchAuth,
   YOKOMITSU_BASE_URL,
+  YOKOMITSU_FRONT_COOKIE_NAME,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
   type YokomitsuDiagnosticReport,
@@ -139,6 +140,7 @@ async function main() {
   try {
     await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => undefined);
+    report.login.fieldNames = await collectLoginFieldNames(page);
 
     report.captchaDetected = await detectYokomitsuCaptcha(page);
     if (report.captchaDetected && !manualLogin) {
@@ -178,7 +180,7 @@ async function main() {
       || cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name))
       || cookies.length > 0;
     for (const cookie of cookies) {
-      if (cookie.name === 'YOKOMITSU_FRONT') observedSessionCookieNames.add(cookie.name);
+      if (cookie.name === YOKOMITSU_FRONT_COOKIE_NAME) observedSessionCookieNames.add(cookie.name);
     }
     report.login.sessionCookieNames = Array.from(observedSessionCookieNames).sort();
     report.login.observedCatalogSearchAuth = {
@@ -329,6 +331,9 @@ async function exploreCatalog(page: Page): Promise<void> {
 async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
   const url = page.url();
   const hasPassword = await page.locator('input[type="password"]').count().catch(() => 1);
+  const hasYokomitsuFrontCookie = await page.context().cookies()
+    .then((cookies) => cookies.some((cookie) => cookie.name === YOKOMITSU_FRONT_COOKIE_NAME))
+    .catch(() => false);
   const portalElementCount = await page.locator([
     'a[href*="logout" i]',
     'a[href*="salir" i]',
@@ -344,7 +349,19 @@ async function hasReachedPortal(page: Page, authenticatedCatalogResponses: numbe
     hasPasswordInput: hasPassword > 0,
     portalElementCount,
     authenticatedCatalogResponses,
+    hasYokomitsuFrontCookie,
   });
+}
+
+async function collectLoginFieldNames(page: Page): Promise<string[]> {
+  const inputs = page.locator('form input[name], input[type="password"][name], input[type="email"][name], input[type="text"][name]');
+  const count = await inputs.count().catch(() => 0);
+  const names = new Set<string>();
+  for (let index = 0; index < count; index += 1) {
+    const name = await inputs.nth(index).getAttribute('name').catch(() => null);
+    if (name) names.add(name);
+  }
+  return Array.from(names);
 }
 
 function isLikelyLoginRequest(request: Request): boolean {
@@ -384,7 +401,7 @@ async function waitForManualLogin(page: Page, catalogResponses: () => number, ti
 function printManualLoginInstructions(): void {
   console.log([
     'Yokomitsu manual diagnostic mode.',
-    'A visible Chromium window is open at the login page.',
+    'A visible Chromium window is open at the Yokomitsu home/login page.',
     'Please sign in manually, solve any CAPTCHA manually, and wait until the authenticated portal is loaded.',
     'The diagnostic will not type, read, print, or store your username, password, cookies, tokens, storage state, screenshots, HAR, or private HTML.',
     `Waiting up to ${MANUAL_LOGIN_TIMEOUT_MS}ms for the authenticated portal...`,
