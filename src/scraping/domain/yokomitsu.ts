@@ -1,8 +1,10 @@
 import type { ProductRecord } from '../interfaces/scraping.types';
+import { parse, type HTMLElement } from 'node-html-parser';
 import { cleanText } from './product-quality';
 
 export const YOKOMITSU_LOGIN_URL = 'https://yokomitsuparts.com.uy/v2/login';
 export const YOKOMITSU_BASE_URL = 'https://www.yokomitsuparts.com.uy/v2/';
+export const YOKOMITSU_SEARCH_ENDPOINT = 'https://www.yokomitsuparts.com.uy/v2/ajax/load-data-search.php';
 export const YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS = 5;
 
 const SENSITIVE_HEADER_PATTERN = /^(authorization|cookie|set-cookie|x-csrf-token|x-xsrf-token)$/i;
@@ -100,6 +102,28 @@ export interface YokomitsuSessionResources {
   };
 }
 
+export interface YokomitsuSearchRequest {
+  id_category?: string;
+  id_subcategory?: string;
+  id_subsubcategory?: string;
+  option_filter?: string;
+  search?: string;
+  order?: string;
+  register?: number;
+  page: number;
+  view?: string;
+}
+
+export interface YokomitsuSearchResponseSummary {
+  error?: unknown;
+  numberRegister?: number;
+  pageSize?: number;
+  currentPage: number;
+  totalPages?: number;
+  textPagination?: string;
+  products: ProductRecord[];
+}
+
 export function normalizeYokomitsuPrice(value?: string): string | undefined {
   const cleaned = cleanText(value);
   if (!cleaned) return undefined;
@@ -165,7 +189,18 @@ export function inferYokomitsuCurrency(value?: string, explicit?: unknown): stri
 export function isLikelyYokomitsuCatalogUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return normalizeHostname(url.hostname) === 'yokomitsuparts.com.uy' && CATALOG_URL_HINT.test(`${url.pathname}${url.search}`);
+    return normalizeHostname(url.hostname) === 'yokomitsuparts.com.uy'
+      && (isYokomitsuSearchEndpoint(value) || CATALOG_URL_HINT.test(`${url.pathname}${url.search}`));
+  } catch {
+    return false;
+  }
+}
+
+export function isYokomitsuSearchEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return normalizeHostname(url.hostname) === 'yokomitsuparts.com.uy'
+      && /\/v2\/ajax\/load-data-search\.php$/i.test(url.pathname);
   } catch {
     return false;
   }
@@ -243,9 +278,54 @@ export function summarizeJsonShape(value: unknown): unknown {
 }
 
 export function extractYokomitsuProductsFromJson(value: unknown, baseUrl = YOKOMITSU_BASE_URL): ProductRecord[] {
+  const searchProducts = extractYokomitsuSearchProducts(value, baseUrl);
+  if (searchProducts.length > 0) return searchProducts;
+
   return findProductArrays(value)
     .flatMap((record) => normalizeYokomitsuProduct(record, baseUrl))
     .slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
+}
+
+export function parseYokomitsuSearchRequestBody(body: string | null | undefined): YokomitsuSearchRequest {
+  const params = new URLSearchParams(body ?? '');
+  return {
+    id_category: cleanText(params.get('id_category') ?? undefined),
+    id_subcategory: cleanText(params.get('id_subcategory') ?? undefined),
+    id_subsubcategory: cleanText(params.get('id_subsubcategory') ?? undefined),
+    option_filter: cleanText(params.get('option_filter') ?? undefined),
+    search: cleanText(params.get('search') ?? undefined),
+    order: cleanText(params.get('order') ?? undefined),
+    register: positiveNumber(params.get('register') ?? undefined),
+    page: positiveNumber(params.get('page') ?? undefined) ?? 1,
+    view: cleanText(params.get('view') ?? undefined),
+  };
+}
+
+export function parseYokomitsuSearchResponse(
+  body: string,
+  request: YokomitsuSearchRequest = { page: 1 },
+  baseUrl = YOKOMITSU_BASE_URL,
+): YokomitsuSearchResponseSummary | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) return undefined;
+
+  const numberRegister = positiveNumber(parsed.number_register) ?? positiveNumber(parsed.numberRegister);
+  const pageSize = request.register;
+  const currentPage = request.page || 1;
+  return {
+    error: parsed.error,
+    numberRegister,
+    pageSize,
+    currentPage,
+    totalPages: numberRegister && pageSize ? Math.ceil(numberRegister / pageSize) : undefined,
+    textPagination: asText(parsed.text_pagination),
+    products: extractYokomitsuSearchProducts(parsed, baseUrl),
+  };
 }
 
 export function inferYokomitsuFieldsAvailable(products: ProductRecord[]): YokomitsuFieldAvailability {
@@ -331,6 +411,136 @@ function normalizeYokomitsuProduct(record: JsonRecord, baseUrl: string): Product
   }];
 }
 
+function extractYokomitsuSearchProducts(value: unknown, baseUrl: string): ProductRecord[] {
+  if (!isRecord(value) || typeof value.data !== 'string') return [];
+  return extractYokomitsuProductsFromHtml(value.data, baseUrl).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
+}
+
+function extractYokomitsuProductsFromHtml(html: string, baseUrl: string): ProductRecord[] {
+  const root = parse(html);
+  const cards = collectProductCards(root);
+  return cards.flatMap((card) => normalizeYokomitsuHtmlProduct(card, baseUrl)).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
+}
+
+function collectProductCards(root: HTMLElement): HTMLElement[] {
+  const selectors = [
+    '[data-codprod]',
+    '[data-product]',
+    '.product',
+    '.producto',
+    '.product-item',
+    '.item-product',
+    '.item',
+    'article',
+    'li',
+    'tr',
+  ];
+  const seen = new Set<HTMLElement>();
+  const cards: HTMLElement[] = [];
+  for (const selector of selectors) {
+    for (const element of root.querySelectorAll(selector)) {
+      if (seen.has(element) || !looksLikeYokomitsuProductElement(element)) continue;
+      seen.add(element);
+      cards.push(element);
+    }
+  }
+  return cards.length > 0 && cards.length <= 30 ? cards : [root].filter(looksLikeYokomitsuProductElement);
+}
+
+function looksLikeYokomitsuProductElement(element: HTMLElement): boolean {
+  const text = elementText(element) ?? '';
+  const hrefs = element.querySelectorAll('a[href]').map((link) => link.getAttribute('href') ?? '').join(' ');
+  return /producto-detalle|cod\.?\s*yokomitsu|c[o\u00f3]digo|sku|oem|precio|\$\s*\d/i.test(`${text} ${hrefs}`);
+}
+
+function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string): ProductRecord[] {
+  const text = elementText(card) ?? '';
+  const sourceUrl = firstNormalizedAttribute(card, [
+    'a[href*="producto-detalle"]',
+    'a[href*="producto"]',
+    'a[href]',
+  ], 'href', baseUrl);
+  const productName = firstElementText(card, [
+    '.product-title',
+    '.producto-titulo',
+    '.nombre',
+    '.name',
+    '.descripcion',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'a[href*="producto-detalle"]',
+    'a[href*="producto"]',
+  ]) ?? labelValue(text, ['Producto', 'Descripcion', 'Descripci\u00f3n']);
+  const sku = cleanText(card.getAttribute('data-codprod'))
+    ?? labelValue(text, ['Cod. Yokomitsu', 'C\u00f3d. Yokomitsu', 'Codigo Yokomitsu', 'C\u00f3digo Yokomitsu', 'SKU', 'Codigo', 'C\u00f3digo']);
+  const rawPrice = firstElementText(card, ['.price', '.precio', '[class*="price"]', '[class*="precio"]'])
+    ?? text.match(/(?:US\$|\$U|\$|UYU|USD)\s*\d[\d.,]*(?:\s*\+?\s*IVA)?/i)?.[0];
+  const imageUrls = uniqueStrings(card.querySelectorAll('img')
+    .flatMap((image) => [
+      image.getAttribute('src'),
+      image.getAttribute('data-src'),
+      image.getAttribute('data-original'),
+    ])
+    .flatMap((value) => normalizeUrl(value ? cleanText(value) : undefined, baseUrl)));
+  const referencia = labelValue(text, ['OEM', 'Referencia', 'Ref']);
+  const vehicleBrand = labelValue(text, ['Marca Vehiculo', 'Marca Veh\u00edculo', 'Vehiculo Marca', 'Veh\u00edculo Marca']);
+  const vehicleModel = labelValue(text, ['Modelo', 'Modelo Vehiculo', 'Modelo Veh\u00edculo']);
+  const proximaLlegada = labelValue(text, ['Proxima llegada', 'Pr\u00f3xima llegada']);
+  const procedencia = labelValue(text, ['Procedencia']);
+
+  if (!productName && !sku) return [];
+
+  return [{
+    productName,
+    sourceUrl: sourceUrl ?? baseUrl,
+    sku,
+    brand: labelValue(text, ['Marca']),
+    price: normalizeYokomitsuPrice(rawPrice),
+    currency: inferYokomitsuCurrency(rawPrice),
+    description: text || undefined,
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    category: labelValue(text, ['Categoria', 'Categor\u00eda', 'Rubro']),
+    attributes: compactAttributes({ referencia, vehicleBrand, vehicleModel, proximaLlegada, procedencia }),
+    provider: 'Yokomitsu',
+    extractedAt: new Date().toISOString(),
+  }];
+}
+
+function labelValue(text: string, labels: string[]): string | undefined {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = text.match(new RegExp(`${escaped}\\s*:?\\s*([^|\\n\\r]+?)(?=\\s*(?:C[o\\u00f3]d\\.?|Codigo|C\\u00f3digo|SKU|Marca|Modelo|OEM|Referencia|Procedencia|Precio|Pr[o\\u00f3]xima llegada|Categoria|Categor\\u00eda)\\s*:?|\\s*(?:US\\$|\\$U|\\$|UYU|USD)\\s*\\d|\\s*Comprar\\b|$)`, 'i'));
+    const value = cleanText(match?.[1]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function firstElementText(root: HTMLElement, selectors: string[]): string | undefined {
+  for (const selector of selectors) {
+    const element = root.querySelector(selector);
+    const text = element ? elementText(element) : undefined;
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function elementText(element: HTMLElement): string | undefined {
+  return cleanText(element.structuredText || element.text);
+}
+
+function firstNormalizedAttribute(root: HTMLElement, selectors: string[], attribute: string, baseUrl: string): string | undefined {
+  for (const selector of selectors) {
+    const raw = cleanText(root.querySelector(selector)?.getAttribute(attribute) ?? undefined);
+    const url = normalizeUrl(raw, baseUrl)[0];
+    if (url) return url;
+  }
+  return undefined;
+}
+
 function findProductArrays(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) {
     const records = value.filter(isRecord);
@@ -405,6 +615,11 @@ function collectCountCandidates(value: unknown): number[] {
     }
     return nested;
   });
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const parsed = Number(String(value ?? '').replace(/[^\d]/g, ''));
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function firstText(record: JsonRecord, keys: string[]): string | undefined {

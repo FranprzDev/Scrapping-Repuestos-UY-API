@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
@@ -11,7 +13,10 @@ import {
   inferPaginationFromCalls,
   inferYokomitsuFieldsAvailable,
   isLikelyYokomitsuCatalogUrl,
+  isYokomitsuSearchEndpoint,
   normalizeYokomitsuPrice,
+  parseYokomitsuSearchRequestBody,
+  parseYokomitsuSearchResponse,
   sanitizeHeaders,
   sanitizeRequestBody,
   sanitizeUrl,
@@ -23,6 +28,8 @@ test('Yokomitsu normaliza precios uruguayos sin afectar otros proveedores', () =
   assert.equal(normalizeYokomitsuPrice('UYU 12.345'), '12345');
   assert.equal(normalizeYokomitsuPrice('$U 1.234,50'), '1234.50');
   assert.equal(normalizeYokomitsuPrice('123,45'), '123.45');
+  assert.equal(normalizeYokomitsuPrice('$3.406 +IVA'), '3406');
+  assert.equal(normalizeYokomitsuPrice('$9.221 +IVA'), '9221');
 });
 
 test('Yokomitsu redacta credenciales, cookies y tokens en requests', () => {
@@ -81,6 +88,76 @@ test('Yokomitsu extrae muestra desde JSON sanitizado de catalogo', () => {
   assert.equal(products[0].attributes?.vehicleModel, 'Corolla');
   assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/img/filtro.jpg');
   assert.equal(inferApproximateProductCount(body), 1234);
+});
+
+test('Yokomitsu clasifica load-data-search.php como endpoint de catalogo y busqueda', () => {
+  assert.equal(isYokomitsuSearchEndpoint('https://www.yokomitsuparts.com.uy/v2/ajax/load-data-search.php'), true);
+  assert.equal(isLikelyYokomitsuCatalogUrl('https://www.yokomitsuparts.com.uy/v2/ajax/load-data-search.php'), true);
+});
+
+test('Yokomitsu interpreta requests de busqueda con pagina base uno y grilla', () => {
+  const initial = parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12');
+  const page2 = parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12&page=2&view=grid');
+  const page3 = parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12&page=3&view=grid');
+
+  assert.equal(initial.page, 1);
+  assert.equal(initial.register, 12);
+  assert.equal(page2.page, 2);
+  assert.equal(page2.register, 12);
+  assert.equal(page2.view, 'grid');
+  assert.equal(page3.page, 3);
+  assert.equal(page3.register, 12);
+  assert.equal(page3.view, 'grid');
+});
+
+test('Yokomitsu parsea JSON servido como text/html y calcula paginacion confirmada', () => {
+  const request = parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12&view=grid');
+  const summary = parseYokomitsuSearchResponse(readYokomitsuFixture('search-page-1.json'), request);
+
+  assert.ok(summary);
+  assert.equal(summary.numberRegister, 170);
+  assert.equal(summary.pageSize, 12);
+  assert.equal(summary.currentPage, 1);
+  assert.equal(summary.totalPages, 15);
+  assert.equal(summary.textPagination, 'Visualizaci\u00f3n de 1 a 12 registros');
+});
+
+test('Yokomitsu respeta page=2 y page=3 en respuestas sanitizadas', () => {
+  const page2 = parseYokomitsuSearchResponse(
+    readYokomitsuFixture('search-page-2.json'),
+    parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12&page=2&view=grid'),
+  );
+  const page3 = parseYokomitsuSearchResponse(
+    readYokomitsuFixture('search-page-3.json'),
+    parseYokomitsuSearchRequestBody('search=CREMALLERA&register=12&page=3&view=grid'),
+  );
+
+  assert.equal(page2?.currentPage, 2);
+  assert.equal(page2?.pageSize, 12);
+  assert.equal(page2?.totalPages, 15);
+  assert.equal(page3?.currentPage, 3);
+  assert.equal(page3?.pageSize, 12);
+  assert.equal(page3?.totalPages, 15);
+});
+
+test('Yokomitsu extrae productos desde data HTML sin asumir stock por Comprar', () => {
+  const products = extractYokomitsuProductsFromJson(JSON.parse(readYokomitsuFixture('search-page-1.json')));
+
+  assert.equal(products.length, 2);
+  assert.equal(products[0].productName, 'Cremallera direccion Toyota Corolla');
+  assert.equal(products[0].sourceUrl, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/toyota-corolla/1001/cremallera-direccion');
+  assert.equal(products[0].sku, 'YK-001');
+  assert.equal(products[0].brand, 'DemoBrand');
+  assert.equal(products[0].attributes?.referencia, 'OEM-001');
+  assert.equal(products[0].attributes?.vehicleModel, 'Corolla');
+  assert.equal(products[0].attributes?.proximaLlegada, '20 dias');
+  assert.equal(products[0].attributes?.procedencia, 'JP');
+  assert.equal(products[0].price, '3406');
+  assert.equal(products[0].currency, 'UYU');
+  assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-001.jpg');
+  assert.equal(products[0].availability, undefined);
+  assert.equal(products[0].stock, undefined);
+  assert.equal(products[1].price, '9221');
 });
 
 test('Yokomitsu resume shape, campos y paginacion sin guardar datos privados', () => {
@@ -161,6 +238,21 @@ test('Yokomitsu limita la muestra a cinco productos', () => {
   assert.equal(products[4].sku, 'YK-5');
 });
 
+test('Yokomitsu limita a cinco productos desde data HTML', () => {
+  const data = Array.from({ length: 7 }, (_, index) => `
+    <article class="producto" data-codprod="YK-${index + 1}">
+      <a href="/v2/producto-detalle/demo/${index + 1}/pieza-${index + 1}"><h3>Pieza ${index + 1}</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-${index + 1}</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `).join('');
+  const products = extractYokomitsuProductsFromJson({ number_register: 7, data });
+
+  assert.equal(products.length, 5);
+  assert.equal(products[0].sku, 'YK-1');
+  assert.equal(products[4].sku, 'YK-5');
+});
+
 test('Yokomitsu cierra el contexto incluso si clearCookies falla', async () => {
   const calls: string[] = [];
   await assert.rejects(() => closeYokomitsuSessionResources({
@@ -182,3 +274,7 @@ test('Yokomitsu cierra el contexto incluso si clearCookies falla', async () => {
 
   assert.deepEqual(calls, ['clearCookies', 'context.close', 'browser.close']);
 });
+
+function readYokomitsuFixture(name: string): string {
+  return readFileSync(join(process.cwd(), 'src', 'scraping', 'domain', 'fixtures', 'yokomitsu', name), 'utf8');
+}

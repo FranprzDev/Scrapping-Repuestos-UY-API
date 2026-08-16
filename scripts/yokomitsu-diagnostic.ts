@@ -10,6 +10,9 @@ import {
   inferPaginationFromCalls,
   inferYokomitsuFieldsAvailable,
   isLikelyYokomitsuCatalogUrl,
+  isYokomitsuSearchEndpoint,
+  parseYokomitsuSearchRequestBody,
+  parseYokomitsuSearchResponse,
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
@@ -207,11 +210,35 @@ async function inspectResponse(
   call.status = response.status();
   call.contentType = response.headers()['content-type'];
 
+  const searchEndpoint = isYokomitsuSearchEndpoint(response.url());
   if (!/application\/json|text\/json/i.test(call.contentType ?? '') && !isLikelyYokomitsuCatalogUrl(response.url())) {
     return;
   }
 
   try {
+    if (searchEndpoint) {
+      const body = await response.text();
+      const requestInfo = parseYokomitsuSearchRequestBody(request.postData());
+      const summary = parseYokomitsuSearchResponse(body, requestInfo, YOKOMITSU_BASE_URL);
+      if (!summary) return;
+
+      call.responseShape = {
+        type: 'object',
+        endpoint: 'load-data-search.php',
+        keys: ['error', 'number_register', 'data', 'pagination', 'text_pagination'],
+        bodyFormat: 'json-served-as-html',
+        requestFields: extractFieldNamesFromBody(request.postData()),
+        pageSize: summary.pageSize,
+        currentPage: summary.currentPage,
+        totalResults: summary.numberRegister,
+        totalPages: summary.totalPages,
+        hasHtmlData: true,
+        productsExtracted: summary.products.length,
+      };
+      for (const product of summary.products) addProduct(productSamples, product);
+      return;
+    }
+
     const body = await response.json();
     call.responseShape = summarizeJsonShape(body);
     const products = extractYokomitsuProductsFromJson(body, YOKOMITSU_BASE_URL);
