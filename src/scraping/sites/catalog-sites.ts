@@ -6,6 +6,14 @@ const defaultPagination = { type: 'next-link' } as const;
 
 export const CATALOG_SITES: CatalogSiteConfig[] = [
   existingSite({
+    id: 'taxitor',
+    label: 'Taxitor',
+    hostname: 'taxitor.uy',
+    seedUrls: ['https://taxitor.uy/articulos/filtro/1/-/-/'],
+    productUrlPatterns: [/\/articulos\/mostrar\//i],
+    categoryUrlPatterns: [/\/articulos\/filtro\//i, /\/kits/i],
+  }),
+  existingSite({
     id: 'grfrenos',
     label: 'GR Frenos',
     hostname: 'grfrenos.uy',
