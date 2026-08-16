@@ -1,0 +1,7 @@
+{
+  "error": false,
+  "number_register": 170,
+  "data": "<div class=\"product-grid\"><article class=\"producto\" data-codprod=\"YK-001\"><a href=\"/v2/producto-detalle/toyota-corolla/1001/cremallera-direccion\"><h3>Cremallera direccion Toyota Corolla</h3></a><img src=\"/v2/img/yokomitsu/yok-001.jpg\"><span>C\u00f3d. Yokomitsu: YK-001</span><span>Marca: DemoBrand</span><span>Modelo: Corolla</span><span>OEM: OEM-001</span><span>Procedencia: JP</span><span>Pr\u00f3xima llegada: 20 dias</span><strong class=\"precio\">$3.406 +IVA</strong><button>Comprar</button></article><article class=\"producto\" data-codprod=\"YK-002\"><a href=\"/v2/producto-detalle/nissan-sentra/1002/cremallera-direccion\"><h3>Cremallera direccion Nissan Sentra</h3></a><img src=\"/v2/img/yokomitsu/yok-002.jpg\"><span>C\u00f3d. Yokomitsu: YK-002</span><span>Marca: DemoBrand</span><span>Modelo: Sentra</span><span>OEM: OEM-002</span><strong class=\"precio\">$9.221 +IVA</strong><button>Comprar</button></article></div>",
+  "pagination": "<ul><li class=\"active\"><a>1</a></li><li><a data-page=\"2\">2</a></li><li><a data-page=\"3\">3</a></li><li><a data-page=\"15\">15</a></li></ul>",
+  "text_pagination": "Visualizaci\u00f3n de 1 a 12 registros"
+}

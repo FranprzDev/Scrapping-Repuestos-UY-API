@@ -1,12 +1,18 @@
 import 'dotenv/config';
 import { chromium, type Page, type Request, type Response } from 'playwright';
 import {
+  closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
+  hasReachedYokomitsuPortal,
+  hasYokomitsuManualLoginTimedOut,
   inferApproximateProductCount,
   inferPaginationFromCalls,
   inferYokomitsuFieldsAvailable,
   isLikelyYokomitsuCatalogUrl,
+  isYokomitsuSearchEndpoint,
+  parseYokomitsuSearchRequestBody,
+  parseYokomitsuSearchResponse,
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
@@ -16,11 +22,22 @@ import {
   type YokomitsuDiagnosticReport,
   type YokomitsuNetworkCall,
 } from '../src/scraping/domain/yokomitsu';
+import {
+  collectYokomitsuCatalogLinks,
+  detectYokomitsuCaptcha,
+  detectYokomitsuTwoFactor,
+  extractYokomitsuProductsFromDom,
+  inspectYokomitsuStorage,
+} from '../src/scraping/domain/yokomitsu-playwright';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
 
+const args = parseArgs(process.argv.slice(2));
+const manualLogin = args.has('manual-login');
+const headed = args.has('headed') || manualLogin;
 const USERNAME = process.env.YOKOMITSU_USERNAME;
 const PASSWORD = process.env.YOKOMITSU_PASSWORD;
 const TIMEOUT_MS = positiveInt(process.env.YOKOMITSU_DIAGNOSTIC_TIMEOUT_MS, 60_000);
+const MANUAL_LOGIN_TIMEOUT_MS = positiveInt(args.get('manual-timeout-ms') ?? process.env.YOKOMITSU_MANUAL_LOGIN_TIMEOUT_MS, 300_000);
 const MAX_CATALOG_REQUESTS = 30;
 
 const report: YokomitsuDiagnosticReport = {
@@ -55,14 +72,14 @@ const report: YokomitsuDiagnosticReport = {
 };
 
 async function main() {
-  if (!USERNAME || !PASSWORD) {
+  if (!manualLogin && (!USERNAME || !PASSWORD)) {
     report.status = 'missing-env';
-    report.notes.push('set YOKOMITSU_USERNAME and YOKOMITSU_PASSWORD to run the authenticated diagnostic');
+    report.notes.push('set YOKOMITSU_USERNAME and YOKOMITSU_PASSWORD or use --manual-login to run the authenticated diagnostic');
     printReport();
     return;
   }
 
-  const browser = await chromium.launch({ headless: process.env.YOKOMITSU_HEADLESS !== 'false' });
+  const browser = await chromium.launch({ headless: headed ? false : process.env.YOKOMITSU_HEADLESS !== 'false' });
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     locale: 'es-UY',
@@ -75,26 +92,34 @@ async function main() {
   const requests = new Map<Request, YokomitsuNetworkCall>();
   const productSamples = new Map<string, ProductRecord>();
   let sawAuthorizationHeader = false;
+  let authenticatedCatalogResponses = 0;
 
   page.on('request', (request) => {
     if (!isYokomitsuUrl(request.url())) return;
     const headers = request.headers();
     sawAuthorizationHeader ||= typeof headers.authorization === 'string' && headers.authorization.trim().length > 0;
+    const likelyLoginRequest = isLikelyLoginRequest(request);
     const call: YokomitsuNetworkCall = {
       method: request.method(),
       url: sanitizeUrl(request.url()),
       resourceType: request.resourceType(),
-      requestBody: sanitizeRequestBody(request.postData()),
+      requestBody: likelyLoginRequest && manualLogin ? '[MANUAL_LOGIN_BODY_NOT_READ]' : sanitizeRequestBody(request.postData()),
     };
     requests.set(request, call);
-    if (isLikelyLoginRequest(request)) {
+    if (likelyLoginRequest && !manualLogin) {
       report.login.fieldNames = extractFieldNamesFromBody(request.postData());
+      report.login.method = request.method();
+      report.login.endpoint = sanitizeUrl(request.url());
+    } else if (likelyLoginRequest) {
       report.login.method = request.method();
       report.login.endpoint = sanitizeUrl(request.url());
     }
   });
 
   page.on('response', (response) => {
+    if (isLikelyYokomitsuCatalogUrl(response.url()) && response.status() >= 200 && response.status() < 400) {
+      authenticatedCatalogResponses += 1;
+    }
     void inspectResponse(response, requests, productSamples);
   });
 
@@ -102,32 +127,42 @@ async function main() {
     await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => undefined);
 
-    report.captchaDetected = await detectCaptcha(page);
-    if (report.captchaDetected) {
+    report.captchaDetected = await detectYokomitsuCaptcha(page);
+    if (report.captchaDetected && !manualLogin) {
       report.status = 'blocked';
       report.restrictions.push('CAPTCHA detected on login page; diagnostic stopped before submitting credentials');
       return;
     }
 
-    const filled = await fillLoginForm(page, USERNAME, PASSWORD);
-    if (!filled) {
-      report.status = 'blocked';
-      report.restrictions.push('Could not identify username/password fields safely');
-      return;
+    if (manualLogin) {
+      printManualLoginInstructions();
+      const loggedIn = await waitForManualLogin(page, () => authenticatedCatalogResponses, MANUAL_LOGIN_TIMEOUT_MS);
+      if (!loggedIn) {
+        report.status = 'blocked';
+        report.restrictions.push(`Manual login timeout after ${MANUAL_LOGIN_TIMEOUT_MS}ms`);
+        return;
+      }
+    } else {
+      const filled = await fillLoginForm(page, USERNAME as string, PASSWORD as string);
+      if (!filled) {
+        report.status = 'blocked';
+        report.restrictions.push('Could not identify username/password fields safely');
+        return;
+      }
+
+      await submitLogin(page);
+      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await page.waitForTimeout(1500);
     }
 
-    await submitLogin(page);
-    await page.waitForLoadState('networkidle').catch(() => undefined);
-    await page.waitForTimeout(1500);
-
-    report.captchaDetected = report.captchaDetected || await detectCaptcha(page);
-    report.twoFactorDetected = await detectTwoFactor(page);
-    report.reachedPortal = await hasReachedPortal(page);
+    report.captchaDetected = report.captchaDetected || await detectYokomitsuCaptcha(page);
+    report.twoFactorDetected = await detectYokomitsuTwoFactor(page);
+    report.reachedPortal = await hasReachedPortal(page, authenticatedCatalogResponses);
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
     const cookies = await context.cookies();
     report.login.usesSessionCookie = cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name)) || cookies.length > 0;
-    const storageSignals = await inspectStorage(page);
+    const storageSignals = await inspectYokomitsuStorage(page);
     report.login.usesLocalStorage = storageSignals.localStorageKeys > 0;
     report.login.usesJwt = storageSignals.hasJwt;
     report.login.usesRefreshToken = storageSignals.hasRefreshToken;
@@ -143,7 +178,7 @@ async function main() {
     await exploreCatalog(page);
     await page.waitForTimeout(1500);
 
-    const domProducts = await extractProductsFromDom(page);
+    const domProducts = await extractYokomitsuProductsFromDom(page);
     for (const product of domProducts) addProduct(productSamples, product);
 
     report.samples = Array.from(productSamples.values()).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
@@ -159,9 +194,7 @@ async function main() {
     report.status = 'error';
     report.restrictions.push(redactError(error));
   } finally {
-    await context.clearCookies().catch(() => undefined);
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    await closeYokomitsuSessionResources({ context, browser }).catch(() => undefined);
     printReport();
   }
 }
@@ -177,11 +210,35 @@ async function inspectResponse(
   call.status = response.status();
   call.contentType = response.headers()['content-type'];
 
+  const searchEndpoint = isYokomitsuSearchEndpoint(response.url());
   if (!/application\/json|text\/json/i.test(call.contentType ?? '') && !isLikelyYokomitsuCatalogUrl(response.url())) {
     return;
   }
 
   try {
+    if (searchEndpoint) {
+      const body = await response.text();
+      const requestInfo = parseYokomitsuSearchRequestBody(request.postData());
+      const summary = parseYokomitsuSearchResponse(body, requestInfo, YOKOMITSU_BASE_URL);
+      if (!summary) return;
+
+      call.responseShape = {
+        type: 'object',
+        endpoint: 'load-data-search.php',
+        keys: ['error', 'number_register', 'data', 'pagination', 'text_pagination'],
+        bodyFormat: 'json-served-as-html',
+        requestFields: extractFieldNamesFromBody(request.postData()),
+        pageSize: summary.pageSize,
+        currentPage: summary.currentPage,
+        totalResults: summary.numberRegister,
+        totalPages: summary.totalPages,
+        hasHtmlData: true,
+        productsExtracted: summary.products.length,
+      };
+      for (const product of summary.products) addProduct(productSamples, product);
+      return;
+    }
+
     const body = await response.json();
     call.responseShape = summarizeJsonShape(body);
     const products = extractYokomitsuProductsFromJson(body, YOKOMITSU_BASE_URL);
@@ -232,11 +289,7 @@ async function submitLogin(page: Page): Promise<void> {
 }
 
 async function exploreCatalog(page: Page): Promise<void> {
-  const candidateUrls = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
-    .map((anchor) => ({ href: anchor.href, text: anchor.textContent?.trim() ?? '' }))
-    .filter((item) => /catalog|catalogo|producto|productos|repuesto|repuestos|stock|precio|marca|modelo|buscar|busqueda/i.test(`${item.href} ${item.text}`))
-    .map((item) => item.href)
-    .slice(0, 5));
+  const candidateUrls = await collectYokomitsuCatalogLinks(page);
 
   for (const href of candidateUrls) {
     try {
@@ -248,64 +301,24 @@ async function exploreCatalog(page: Page): Promise<void> {
   }
 }
 
-async function extractProductsFromDom(page: Page): Promise<ProductRecord[]> {
-  return page.evaluate((baseUrl) => {
-    const cards = Array.from(document.querySelectorAll('[data-product], [data-codprod], .product, .producto, .card, tr'))
-      .slice(0, 20);
-    const cleaned = (value: string | null | undefined) => value?.replace(/\s+/g, ' ').trim() || undefined;
-    const toUrl = (value: string | null | undefined) => {
-      if (!value) return undefined;
-      try { return new URL(value, baseUrl).toString(); } catch { return undefined; }
-    };
-
-    return cards.flatMap((card) => {
-      const anchor = card.querySelector<HTMLAnchorElement>('a[href]');
-      const image = card.querySelector<HTMLImageElement>('img[src], img[data-src]');
-      const text = cleaned(card.textContent);
-      const name = cleaned(card.querySelector('h1,h2,h3,h4,[class*="name"],[class*="nombre"],[class*="descripcion"],[class*="producto"]')?.textContent)
-        ?? cleaned(anchor?.textContent);
-      const price = text?.match(/(?:US\$|\$U|\$|UYU|USD)?\s*\d[\d.,]*/i)?.[0];
-      const sku = cleaned(card.getAttribute('data-codprod'))
-        ?? cleaned(card.querySelector('[class*="sku"],[class*="codigo"],[class*="code"]')?.textContent);
-      if (!name && !sku) return [];
-      return [{
-        productName: name,
-        sourceUrl: toUrl(anchor?.getAttribute('href')) ?? location.href,
-        sku,
-        price,
-        imageUrl: toUrl(image?.getAttribute('src') ?? image?.getAttribute('data-src')),
-        description: text && text.length <= 500 ? text : undefined,
-        provider: 'Yokomitsu' as const,
-        extractedAt: new Date().toISOString(),
-      }];
-    }).slice(0, 5);
-  }, YOKOMITSU_BASE_URL);
-}
-
-async function detectCaptcha(page: Page): Promise<boolean> {
-  return page.evaluate(() => /captcha|recaptcha|hcaptcha/i.test(document.body.innerHTML));
-}
-
-async function detectTwoFactor(page: Page): Promise<boolean> {
-  return page.evaluate(() => /2fa|c[oó]digo de verificaci[oó]n|verificaci[oó]n|otp|token/i.test(document.body.textContent ?? ''));
-}
-
-async function hasReachedPortal(page: Page): Promise<boolean> {
+async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
   const url = page.url();
   const hasPassword = await page.locator('input[type="password"]').count().catch(() => 1);
-  return !/\/login(?:[/?#]|$)/i.test(url) && hasPassword === 0;
-}
-
-async function inspectStorage(page: Page): Promise<{ localStorageKeys: number; hasJwt: boolean; hasBearer: boolean; hasRefreshToken: boolean }> {
-  return page.evaluate(() => {
-    const entries = Object.keys(localStorage).map((key) => ({ key, value: localStorage.getItem(key) ?? '' }));
-    const text = entries.map((entry) => `${entry.key} ${entry.value}`).join(' ');
-    return {
-      localStorageKeys: entries.length,
-      hasJwt: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(text),
-      hasBearer: /bearer/i.test(text),
-      hasRefreshToken: /refresh/i.test(text),
-    };
+  const portalElementCount = await page.locator([
+    'a[href*="logout" i]',
+    'a[href*="salir" i]',
+    '[class*="catalog" i]',
+    '[class*="catalogo" i]',
+    '[class*="producto" i]',
+    '[class*="stock" i]',
+    '[class*="precio" i]',
+    'table',
+  ].join(', ')).count().catch(() => 0);
+  return hasReachedYokomitsuPortal({
+    currentUrl: url,
+    hasPasswordInput: hasPassword > 0,
+    portalElementCount,
+    authenticatedCatalogResponses,
   });
 }
 
@@ -332,6 +345,32 @@ function addProduct(products: Map<string, ProductRecord>, product: ProductRecord
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function waitForManualLogin(page: Page, catalogResponses: () => number, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  while (!hasYokomitsuManualLoginTimedOut(started, Date.now(), timeoutMs)) {
+    if (await hasReachedPortal(page, catalogResponses())) return true;
+    await page.waitForTimeout(1000);
+  }
+  return false;
+}
+
+function printManualLoginInstructions(): void {
+  console.log([
+    'Yokomitsu manual diagnostic mode.',
+    'A visible Chromium window is open at the login page.',
+    'Please sign in manually, solve any CAPTCHA manually, and wait until the authenticated portal is loaded.',
+    'The diagnostic will not type, read, print, or store your username, password, cookies, tokens, storage state, screenshots, HAR, or private HTML.',
+    `Waiting up to ${MANUAL_LOGIN_TIMEOUT_MS}ms for the authenticated portal...`,
+  ].join('\n'));
+}
+
+function parseArgs(values: string[]): Map<string, string> {
+  return new Map(values.map((arg) => {
+    const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2);
+    return [key, value];
+  }));
 }
 
 function redactError(error: unknown): string {
