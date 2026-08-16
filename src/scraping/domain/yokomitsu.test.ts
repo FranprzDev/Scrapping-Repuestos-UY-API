@@ -214,6 +214,73 @@ test('Yokomitsu corta campos etiquetados antes de otra etiqueta o estado', () =>
   assert.equal(emptyArrival?.attributes?.procedencia, 'JAPÓN');
 });
 
+test('Yokomitsu conserva completa proxima llegada antes de estado o etiqueta', () => {
+  const data = `
+    <article class="producto" data-codprod="YK-ARR-20-DIAS">
+      <a href="/v2/producto-detalle/demo/arr-20-dias/llegada-stock"><h3>Pieza llegada stock</h3></a>
+      <span>Cód. Yokomitsu: YK-ARR-20-DIAS</span>
+      <span>Próxima llegada: 20 dias</span>
+      <span>Stock Crítico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-20-DIAS-ACCENT">
+      <a href="/v2/producto-detalle/demo/arr-20-dias-accent/llegada-stock"><h3>Pieza llegada con acento</h3></a>
+      <span>Cód. Yokomitsu: YK-ARR-20-DIAS-ACCENT</span>
+      <span>Próxima llegada: 20 días</span>
+      <span>Stock Crítico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-LABEL">
+      <a href="/v2/producto-detalle/demo/arr-label/llegada-label"><h3>Pieza llegada etiqueta</h3></a>
+      <span>Cód. Yokomitsu: YK-ARR-LABEL</span>
+      <span>Próxima llegada: 45 dias</span>
+      <span>Procedencia: CHINA</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-EMPTY">
+      <a href="/v2/producto-detalle/demo/arr-empty/llegada-vacia"><h3>Pieza llegada vacia</h3></a>
+      <span>Cód. Yokomitsu: YK-ARR-EMPTY</span>
+      <span>Próxima llegada:</span>
+      <span>Procedencia: BRASIL</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `;
+  const products = extractYokomitsuProductsFromJson({ number_register: 4, data });
+
+  const beforeStatus = products.find((product) => product.sku === 'YK-ARR-20-DIAS');
+  assert.equal(beforeStatus?.attributes?.proximaLlegada, '20 dias');
+  assert.equal(beforeStatus?.availability, 'Stock Crítico');
+  assert.equal(beforeStatus?.attributes?.stockStatus, 'Stock Crítico');
+
+  const accented = products.find((product) => product.sku === 'YK-ARR-20-DIAS-ACCENT');
+  assert.equal(accented?.attributes?.proximaLlegada, '20 días');
+  assert.equal(accented?.availability, 'Stock Crítico');
+
+  const beforeLabel = products.find((product) => product.sku === 'YK-ARR-LABEL');
+  assert.equal(beforeLabel?.attributes?.proximaLlegada, '45 dias');
+  assert.equal(beforeLabel?.attributes?.procedencia, 'CHINA');
+
+  const empty = products.find((product) => product.sku === 'YK-ARR-EMPTY');
+  assert.equal(empty?.attributes?.proximaLlegada, undefined);
+  assert.equal(empty?.attributes?.procedencia, 'BRASIL');
+});
+
+test('Yokomitsu no elimina el ultimo caracter valido antes del boundary', () => {
+  const data = `
+    <article class="producto" data-codprod="YK-LAST-CHAR">
+      <a href="/v2/producto-detalle/demo/last-char/llegada"><h3>Pieza ultimo caracter</h3></a>
+      <span>Cód. Yokomitsu: YK-LAST-CHAR</span>
+      <span>Próxima llegada: ABC123s</span>
+      <span>Stock Crítico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `;
+  const products = extractYokomitsuProductsFromJson({ number_register: 1, data });
+
+  assert.equal(products[0].attributes?.proximaLlegada, 'ABC123s');
+  assert.equal(products[0].availability, 'Stock Crítico');
+});
+
 test('Yokomitsu separa estados negativos de disponibilidad sin capturarlos como labels', () => {
   const data = ['Sin stock', 'Agotado', 'No disponible'].map((status, index) => `
     <article class="producto" data-codprod="YK-NEG-${index + 1}">
