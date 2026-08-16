@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   closeYokomitsuSessionResources,
+  extractCookieNames,
   extractFieldNamesFromBody,
   extractYokomitsuProductsFromJson,
   hasReachedYokomitsuPortal,
@@ -21,6 +22,10 @@ import {
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
+  summarizeYokomitsuSearchAuth,
+  YOKOMITSU_FRONT_COOKIE_NAME,
+  YOKOMITSU_LEGACY_LOGIN_URL,
+  YOKOMITSU_LOGIN_URL,
 } from './yokomitsu';
 
 test('Yokomitsu normaliza precios uruguayos sin afectar otros proveedores', () => {
@@ -54,6 +59,23 @@ test('Yokomitsu redacta credenciales, cookies y tokens en requests', () => {
     empresa: '[VALUE]',
   });
   assert.deepEqual(extractFieldNamesFromBody('usuario=demo&password=secret'), ['usuario', 'password']);
+});
+
+test('Yokomitsu resume autenticacion observada del buscador sin valores sensibles', () => {
+  const auth = summarizeYokomitsuSearchAuth({
+    cookie: `${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; other_cookie=redacted`,
+    'x-requested-with': 'XMLHttpRequest',
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+  });
+
+  assert.equal(auth.usesSessionCookie, true);
+  assert.deepEqual(auth.cookieNames, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.equal(auth.authorizationHeaderObserved, false);
+  assert.equal(auth.usesBearerToken, false);
+  assert.deepEqual(extractCookieNames(`${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; analytics=redacted`), [
+    YOKOMITSU_FRONT_COOKIE_NAME,
+    'analytics',
+  ]);
 });
 
 test('Yokomitsu extrae muestra desde JSON sanitizado de catalogo', () => {
@@ -119,7 +141,7 @@ test('Yokomitsu parsea JSON servido como text/html y calcula paginacion confirma
   assert.equal(summary.pageSize, 12);
   assert.equal(summary.currentPage, 1);
   assert.equal(summary.totalPages, 15);
-  assert.equal(summary.textPagination, 'Visualizaci\u00f3n de 1 a 12 registros');
+  assert.equal(summary.textPagination, 'Visualización de 1 a 12 registros');
 });
 
 test('Yokomitsu respeta page=2 y page=3 en respuestas sanitizadas', () => {
@@ -155,9 +177,88 @@ test('Yokomitsu extrae productos desde data HTML sin asumir stock por Comprar', 
   assert.equal(products[0].price, '3406');
   assert.equal(products[0].currency, 'UYU');
   assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-001.jpg');
-  assert.equal(products[0].availability, undefined);
+  assert.equal(products[0].availability, 'Stock Crítico');
+  assert.equal(products[0].attributes?.stockStatus, 'Stock Crítico');
   assert.equal(products[0].stock, undefined);
   assert.equal(products[1].price, '9221');
+  assert.equal(products[1].availability, 'out_of_stock');
+  assert.equal(products[1].attributes?.stockStatus, 'out_of_stock');
+  assert.equal(products[1].stock, undefined);
+});
+
+test('Yokomitsu corta campos etiquetados antes de otra etiqueta o estado', () => {
+  const products = extractYokomitsuProductsFromJson(JSON.parse(readYokomitsuFixture('label-edge-cases.json')));
+
+  assert.equal(products.length, 5);
+
+  const withOem = products.find((product) => product.sku === 'YK-OEM-1');
+  assert.equal(withOem?.attributes?.referencia, 'OEM-123');
+  assert.equal(withOem?.attributes?.procedencia, 'CHINA');
+
+  const emptyOem = products.find((product) => product.sku === 'YK-OEM-2');
+  assert.equal(emptyOem?.attributes?.referencia, undefined);
+  assert.equal(emptyOem?.attributes?.procedencia, 'CHINA');
+
+  const critical = products.find((product) => product.sku === 'YK-STOCK-1');
+  assert.equal(critical?.attributes?.procedencia, 'CHINA');
+  assert.equal(critical?.availability, 'Stock Crítico');
+  assert.equal(critical?.attributes?.stockStatus, 'Stock Crítico');
+  assert.equal(critical?.stock, undefined);
+
+  const procedenciaOnly = products.find((product) => product.sku === 'YK-PROC-1');
+  assert.equal(procedenciaOnly?.attributes?.procedencia, 'BRASIL');
+  assert.equal(procedenciaOnly?.availability, undefined);
+
+  const emptyArrival = products.find((product) => product.sku === 'YK-ARR-1');
+  assert.equal(emptyArrival?.attributes?.proximaLlegada, undefined);
+  assert.equal(emptyArrival?.attributes?.procedencia, 'JAPÓN');
+});
+
+test('Yokomitsu separa estados negativos de disponibilidad sin capturarlos como labels', () => {
+  const data = ['Sin stock', 'Agotado', 'No disponible'].map((status, index) => `
+    <article class="producto" data-codprod="YK-NEG-${index + 1}">
+      <a href="/v2/producto-detalle/demo/neg-${index + 1}/estado-${index + 1}"><h3>Pieza ${status}</h3></a>
+      <span>Cód. Yokomitsu: YK-NEG-${index + 1}</span>
+      <span>Marca: DemoBrand</span>
+      <span>Modelo: Demo ${index + 1}</span>
+      <span>OEM:</span>
+      <span>Procedencia: CHINA</span>
+      <span>${status}</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `).join('');
+  const products = extractYokomitsuProductsFromJson({ number_register: 3, data });
+
+  assert.equal(products.length, 3);
+  for (const product of products) {
+    assert.equal(product.attributes?.referencia, undefined);
+    assert.equal(product.attributes?.procedencia, 'CHINA');
+    assert.equal(product.availability, 'out_of_stock');
+    assert.equal(product.attributes?.stockStatus, 'out_of_stock');
+  }
+});
+
+test('Yokomitsu no usa etiquetas conocidas como valores de otros campos', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto" data-codprod="YK-LABEL-1">
+        <a href="/v2/producto-detalle/demo/label/contaminacion"><h3>Pieza etiquetas</h3></a>
+        <span>Cód. Yokomitsu: YK-LABEL-1</span>
+        <span>Marca:</span>
+        <span>Modelo: Demo Label</span>
+        <span>OEM:</span>
+        <span>Procedencia:</span>
+        <span>Stock Crítico</span>
+        <strong class="precio">$1.234 +IVA</strong>
+      </article>
+    `,
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].brand, undefined);
+  assert.equal(products[0].attributes?.referencia, undefined);
+  assert.equal(products[0].attributes?.procedencia, undefined);
+  assert.equal(products[0].availability, 'Stock Crítico');
 });
 
 test('Yokomitsu resume shape, campos y paginacion sin guardar datos privados', () => {
@@ -219,6 +320,39 @@ test('Yokomitsu detecta ingreso manual exitoso sin leer credenciales', () => {
   }), false);
 });
 
+test('Yokomitsu usa /v2/home canonico como entrada principal', () => {
+  assert.equal(YOKOMITSU_LOGIN_URL, 'https://www.yokomitsuparts.com.uy/v2/home');
+  assert.equal(YOKOMITSU_LEGACY_LOGIN_URL, 'https://yokomitsuparts.com.uy/v2/login');
+  assert.notEqual(YOKOMITSU_LOGIN_URL, YOKOMITSU_LEGACY_LOGIN_URL);
+});
+
+test('Yokomitsu no asume autenticacion por estar en /v2/home si hay password', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: true,
+    portalElementCount: 4,
+    authenticatedCatalogResponses: 1,
+    hasYokomitsuFrontCookie: true,
+  }), false);
+});
+
+test('Yokomitsu acepta /v2/home autenticado por senales de portal o cookie', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 1,
+    authenticatedCatalogResponses: 0,
+  }), true);
+
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 0,
+    authenticatedCatalogResponses: 0,
+    hasYokomitsuFrontCookie: true,
+  }), true);
+});
+
 test('Yokomitsu detecta timeout esperando login manual', () => {
   assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 300_999, 300_000), false);
   assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 301_000, 300_000), true);
@@ -242,7 +376,7 @@ test('Yokomitsu limita a cinco productos desde data HTML', () => {
   const data = Array.from({ length: 7 }, (_, index) => `
     <article class="producto" data-codprod="YK-${index + 1}">
       <a href="/v2/producto-detalle/demo/${index + 1}/pieza-${index + 1}"><h3>Pieza ${index + 1}</h3></a>
-      <span>C\u00f3d. Yokomitsu: YK-${index + 1}</span>
+      <span>Cód. Yokomitsu: YK-${index + 1}</span>
       <strong class="precio">$1.234 +IVA</strong>
     </article>
   `).join('');
