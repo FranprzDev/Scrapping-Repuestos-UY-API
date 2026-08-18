@@ -55,10 +55,26 @@ export interface YokomitsuHttpLoginDiagnostic {
   homeGet?: {
     httpStatus: number;
     finalUrl: string;
+    redirectedToLogin: boolean;
     sessionExpired: boolean;
     authenticated: boolean;
+    cookieNamesBefore: string[];
     cookieNamesAfter: string[];
+    cookieNamesAdded: string[];
+    cookieNamesRemoved: string[];
+    signals: YokomitsuHomeAuthenticationSignals;
+    falseReason?: string;
   };
+}
+
+export interface YokomitsuHomeAuthenticationSignals {
+  containsLoginForm: boolean;
+  containsPasswordInput: boolean;
+  containsAuthTokenField: boolean;
+  containsProcessLoginReference: boolean;
+  portalSignalNames: string[];
+  portalElementCount: number;
+  hasAuthenticatedPortalSignals: boolean;
 }
 
 export interface YokomitsuHttpLoginResult {
@@ -209,13 +225,16 @@ export async function authenticateYokomitsuHttpSession(
     accept: 'text/html,application/xhtml+xml',
     referer: YOKOMITSU_HTTP_LOGIN_URL,
   });
+  const cookieNamesBeforeHomeGet = cookieNamesAfterLoginPost;
   const homeSessionExpired = isYokomitsuSessionExpiredResponse(homeResponse);
+  const homeSignals = analyzeYokomitsuHomeAuthentication(homeResponse.body);
   const cookieNamesAfterHomeGet = await getSafeCookieNames(client);
+  const redirectedToLogin = isYokomitsuLoginUrl(homeResponse.url);
   const authenticated = !homeSessionExpired
     && hasReachedYokomitsuPortal({
       currentUrl: homeResponse.url,
-      hasPasswordInput: false,
-      portalElementCount: 1,
+      hasPasswordInput: homeSignals.containsPasswordInput,
+      portalElementCount: homeSignals.portalElementCount,
       authenticatedCatalogResponses: 0,
       hasYokomitsuFrontCookie: cookieNamesAfterHomeGet.includes(YOKOMITSU_FRONT_COOKIE_NAME)
         || sessionCookieNames.includes(YOKOMITSU_FRONT_COOKIE_NAME),
@@ -223,9 +242,21 @@ export async function authenticateYokomitsuHttpSession(
   diagnostic.homeGet = {
     httpStatus: homeResponse.status,
     finalUrl: sanitizeDiagnosticUrl(homeResponse.url),
+    redirectedToLogin,
     sessionExpired: homeSessionExpired,
     authenticated,
+    cookieNamesBefore: cookieNamesBeforeHomeGet,
     cookieNamesAfter: cookieNamesAfterHomeGet,
+    cookieNamesAdded: diffCookieNames(cookieNamesAfterHomeGet, cookieNamesBeforeHomeGet),
+    cookieNamesRemoved: diffCookieNames(cookieNamesBeforeHomeGet, cookieNamesAfterHomeGet),
+    signals: homeSignals,
+    falseReason: authenticated ? undefined : inferHomeAuthenticationFalseReason({
+      redirectedToLogin,
+      sessionExpired: homeSessionExpired,
+      hasYokomitsuFrontCookie: cookieNamesAfterHomeGet.includes(YOKOMITSU_FRONT_COOKIE_NAME)
+        || sessionCookieNames.includes(YOKOMITSU_FRONT_COOKIE_NAME),
+      signals: homeSignals,
+    }),
   };
   return {
     ...baseResult,
@@ -289,12 +320,7 @@ export function extractSetCookieNames(headers: Record<string, string | string[] 
 }
 
 export function isYokomitsuSessionExpiredResponse(response: YokomitsuHttpResponse): boolean {
-  try {
-    const url = new URL(response.url);
-    if (/\/v2\/login\/?$/i.test(url.pathname)) return true;
-  } catch {
-    // Continue with body checks for non-URL test fixtures.
-  }
+  if (isYokomitsuLoginUrl(response.url)) return true;
   if (response.status >= 300 && response.status < 400) {
     const location = Object.entries(response.headers)
       .find(([key]) => /^location$/i.test(key))?.[1];
@@ -302,6 +328,44 @@ export function isYokomitsuSessionExpiredResponse(response: YokomitsuHttpRespons
     if (locationText && /\/v2\/login/i.test(locationText)) return true;
   }
   return isYokomitsuLoginHtml(response.body);
+}
+
+export function analyzeYokomitsuHomeAuthentication(html: string): YokomitsuHomeAuthenticationSignals {
+  const root = parse(html);
+  const containsPasswordInput = root.querySelectorAll('input[type="password"], input[name="password"]').length > 0;
+  const containsAuthTokenField = root.querySelectorAll('input[name="auth_token"]').length > 0;
+  const containsProcessLoginReference = /process-login\.php/i.test(html);
+  const containsLoginForm = root.querySelectorAll([
+    'form#formLogin',
+    'form[action*="process-login.php" i]',
+    'form input[name="rut"]',
+    'form input[name="password"]',
+  ].join(', ')).length > 0;
+  const signalSelectors: Array<[string, string]> = [
+    ['logout-link', 'a[href*="logout" i], a[href*="salir" i]'],
+    ['catalog-link', 'a[href*="catalog" i], a[href*="catalogo" i]'],
+    ['product-link', 'a[href*="producto" i], a[href*="productos" i]'],
+    ['catalog-container', '[class*="catalog" i], [class*="catalogo" i]'],
+    ['product-container', '[class*="producto" i], [class*="repuesto" i]'],
+    ['price-container', '[class*="precio" i]'],
+    ['stock-container', '[class*="stock" i]'],
+    ['search-endpoint-reference', 'form[action*="load-data-search.php" i]'],
+  ];
+  const portalSignalNames = signalSelectors
+    .filter(([, selector]) => root.querySelectorAll(selector).length > 0)
+    .map(([name]) => name);
+  if (/load-data-search\.php/i.test(html)) portalSignalNames.push('search-endpoint-reference');
+  const uniqueSignalNames = Array.from(new Set(portalSignalNames)).sort();
+  const portalElementCount = uniqueSignalNames.length;
+  return {
+    containsLoginForm,
+    containsPasswordInput,
+    containsAuthTokenField,
+    containsProcessLoginReference,
+    portalSignalNames: uniqueSignalNames,
+    portalElementCount,
+    hasAuthenticatedPortalSignals: portalElementCount > 0,
+  };
 }
 
 async function postYokomitsuCatalog(client: YokomitsuHttpClient, body: string): Promise<YokomitsuHttpResponse> {
@@ -312,8 +376,8 @@ async function postYokomitsuCatalog(client: YokomitsuHttpClient, body: string): 
 }
 
 function isYokomitsuLoginHtml(body: string): boolean {
-  const text = body.toLowerCase();
-  return /name=["']password["']|type=["']password["']|process-login\.php|formlogin|auth_token/.test(text);
+  const signals = analyzeYokomitsuHomeAuthentication(body);
+  return signals.containsLoginForm && signals.containsPasswordInput;
 }
 
 async function getSafeCookieNames(client: YokomitsuHttpClient): Promise<string[]> {
@@ -345,4 +409,32 @@ function sanitizeDiagnosticUrl(value: string): string {
   } catch {
     return value.replace(/(authorization|cookie|auth_token|token|password|pass|rut)=([^&\s]+)/gi, '$1=[REDACTED]');
   }
+}
+
+function isYokomitsuLoginUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return /\/v2\/login\/?$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function diffCookieNames(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return left.filter((name) => !rightSet.has(name)).sort();
+}
+
+function inferHomeAuthenticationFalseReason(input: {
+  redirectedToLogin: boolean;
+  sessionExpired: boolean;
+  hasYokomitsuFrontCookie: boolean;
+  signals: YokomitsuHomeAuthenticationSignals;
+}): string {
+  if (input.redirectedToLogin) return 'home redirected to login URL';
+  if (input.signals.containsLoginForm && input.signals.containsPasswordInput) return 'home contains login form and password input';
+  if (input.sessionExpired) return 'home matched session-expired response';
+  if (!input.hasYokomitsuFrontCookie) return 'YOKOMITSU_FRONT cookie name not present after home';
+  if (!input.signals.hasAuthenticatedPortalSignals) return 'home has session cookie but no authenticated portal structural signals';
+  return 'home did not satisfy authenticated portal detector';
 }
