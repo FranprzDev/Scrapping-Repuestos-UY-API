@@ -92,8 +92,14 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
     hostname: 'autopartesmagallanes.uy',
     seedUrls: ['https://autopartesmagallanes.uy/products/'],
     platform: 'woocommerce',
-    productUrlPatterns: [/\/(?:[^/?#]+\/)+[^/?#]*ref-?[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i],
-    categoryUrlPatterns: [/\/(?:products|product-category|para-desarmar\/repuestos-de)(?:\/|\?|$)/i],
+    productUrlPatterns: [
+      // Match URLs with -ref- or ref- pattern, but exclude archive/vehicle pages
+      // Exclude: /para-desarmar/, /restos/ (these are archive pages)
+      // Include: all other categories with -ref- or ref- in URL slug
+      /^(?!.*(?:\/repuestos-de(?:-|\/)|\/restos\/repuestos-de-para-desarmar\/)).*\/[^/?#]*-ref-[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i,
+      /^(?!.*(?:\/repuestos-de(?:-|\/)|\/restos\/repuestos-de-para-desarmar\/)).*\/[^/?#]*ref-[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i,
+    ],
+    categoryUrlPatterns: [/\/(?:products|product-category|para-desarmar\/repuestos-de|restos\/repuestos-de-para-desarmar)(?:\/|\?|$)/i, /\/repuestos-de(?:-|\/|$)/i],
     paginationStrategy: { type: 'next-link', selector: 'a.next.page-numbers[href], a[rel="next"]', maxPages: 500 },
     requestDelay: 750,
   }),
