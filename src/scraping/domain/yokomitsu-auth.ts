@@ -31,7 +31,34 @@ export interface YokomitsuHttpResponse {
 export interface YokomitsuHttpClient {
   get: (url: string, headers?: Record<string, string>) => Promise<YokomitsuHttpResponse>;
   post: (url: string, body: string, headers?: Record<string, string>) => Promise<YokomitsuHttpResponse>;
+  getCookieNames?: () => Promise<string[]>;
   clearSession?: () => Promise<unknown>;
+}
+
+export interface YokomitsuHttpLoginDiagnostic {
+  loginGet: {
+    httpStatus: number;
+    finalUrl: string;
+    setCookieNames: string[];
+    cookieNamesBefore: string[];
+    cookieNamesAfter: string[];
+  };
+  loginPost?: {
+    httpStatus: number;
+    finalUrl: string;
+    sanitizedResponse: unknown;
+    fieldNames: string[];
+    cookieNamesBefore: string[];
+    cookieNamesAfter: string[];
+    responseErrorFalse: boolean;
+  };
+  homeGet?: {
+    httpStatus: number;
+    finalUrl: string;
+    sessionExpired: boolean;
+    authenticated: boolean;
+    cookieNamesAfter: string[];
+  };
 }
 
 export interface YokomitsuHttpLoginResult {
@@ -46,6 +73,7 @@ export interface YokomitsuHttpLoginResult {
   message?: string;
   status?: number;
   error?: string;
+  diagnostic: YokomitsuHttpLoginDiagnostic;
 }
 
 export interface YokomitsuCatalogFetchOptions {
@@ -104,12 +132,23 @@ export async function authenticateYokomitsuHttpSession(
   client: YokomitsuHttpClient,
   credentials: YokomitsuCredentials,
 ): Promise<YokomitsuHttpLoginResult> {
+  const cookieNamesBeforeLoginGet = await getSafeCookieNames(client);
   const loginPage = await client.get(YOKOMITSU_HTTP_LOGIN_URL, {
     accept: 'text/html,application/xhtml+xml',
   });
+  const cookieNamesAfterLoginGet = await getSafeCookieNames(client);
   const sessionCookieNames = extractSetCookieNames(loginPage.headers)
     .filter((name) => name === YOKOMITSU_FRONT_COOKIE_NAME);
   const authToken = extractYokomitsuAuthTokenFromHtml(loginPage.body);
+  const diagnostic: YokomitsuHttpLoginDiagnostic = {
+    loginGet: {
+      httpStatus: loginPage.status,
+      finalUrl: sanitizeDiagnosticUrl(loginPage.url),
+      setCookieNames: sessionCookieNames,
+      cookieNamesBefore: cookieNamesBeforeLoginGet,
+      cookieNamesAfter: cookieNamesAfterLoginGet,
+    },
+  };
   const baseResult = {
     method: 'POST' as const,
     endpoint: YOKOMITSU_PROCESS_LOGIN_ENDPOINT,
@@ -126,15 +165,35 @@ export async function authenticateYokomitsuHttpSession(
       authenticated: false,
       status: loginPage.status,
       error: 'auth_token missing from login page',
+      diagnostic,
     };
   }
 
   const form = buildYokomitsuLoginForm(credentials, authToken);
+  const cookieNamesBeforeLoginPost = await getSafeCookieNames(client);
   const loginResponse = await client.post(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, form.toString(), {
-    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json, text/javascript, */*; q=0.01',
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    origin: 'https://www.yokomitsuparts.com.uy',
+    referer: YOKOMITSU_HTTP_LOGIN_URL,
     'x-requested-with': 'XMLHttpRequest',
   });
+  const cookieNamesAfterLoginPost = await getSafeCookieNames(client);
   const parsed = parseYokomitsuLoginResponse(loginResponse.body);
+  diagnostic.loginPost = {
+    httpStatus: loginResponse.status,
+    finalUrl: sanitizeDiagnosticUrl(loginResponse.url),
+    sanitizedResponse: sanitizeYokomitsuLoginResponse(loginResponse.body),
+    fieldNames: Array.from(buildYokomitsuLoginForm({
+      username: '',
+      password: '',
+      office: credentials.office,
+      remember: credentials.remember,
+    }, '').keys()),
+    cookieNamesBefore: cookieNamesBeforeLoginPost,
+    cookieNamesAfter: cookieNamesAfterLoginPost,
+    responseErrorFalse: parsed.error === false,
+  };
   if (!parsed.success) {
     return {
       ...baseResult,
@@ -142,26 +201,39 @@ export async function authenticateYokomitsuHttpSession(
       status: loginResponse.status,
       message: parsed.message,
       error: 'login rejected by process-login.php',
+      diagnostic,
     };
   }
 
   const homeResponse = await client.get(YOKOMITSU_LOGIN_URL, {
     accept: 'text/html,application/xhtml+xml',
+    referer: YOKOMITSU_HTTP_LOGIN_URL,
   });
-  const authenticated = !isYokomitsuSessionExpiredResponse(homeResponse)
+  const homeSessionExpired = isYokomitsuSessionExpiredResponse(homeResponse);
+  const cookieNamesAfterHomeGet = await getSafeCookieNames(client);
+  const authenticated = !homeSessionExpired
     && hasReachedYokomitsuPortal({
       currentUrl: homeResponse.url,
       hasPasswordInput: false,
       portalElementCount: 1,
       authenticatedCatalogResponses: 0,
-      hasYokomitsuFrontCookie: sessionCookieNames.includes(YOKOMITSU_FRONT_COOKIE_NAME),
+      hasYokomitsuFrontCookie: cookieNamesAfterHomeGet.includes(YOKOMITSU_FRONT_COOKIE_NAME)
+        || sessionCookieNames.includes(YOKOMITSU_FRONT_COOKIE_NAME),
     });
+  diagnostic.homeGet = {
+    httpStatus: homeResponse.status,
+    finalUrl: sanitizeDiagnosticUrl(homeResponse.url),
+    sessionExpired: homeSessionExpired,
+    authenticated,
+    cookieNamesAfter: cookieNamesAfterHomeGet,
+  };
   return {
     ...baseResult,
     authenticated,
     status: homeResponse.status,
     message: parsed.message,
     error: authenticated ? undefined : 'home did not confirm authenticated portal',
+    diagnostic,
   };
 }
 
@@ -242,4 +314,35 @@ async function postYokomitsuCatalog(client: YokomitsuHttpClient, body: string): 
 function isYokomitsuLoginHtml(body: string): boolean {
   const text = body.toLowerCase();
   return /name=["']password["']|type=["']password["']|process-login\.php|formlogin|auth_token/.test(text);
+}
+
+async function getSafeCookieNames(client: YokomitsuHttpClient): Promise<string[]> {
+  if (!client.getCookieNames) return [];
+  return client.getCookieNames()
+    .then((names) => Array.from(new Set(names.filter(Boolean))).sort())
+    .catch(() => []);
+}
+
+function sanitizeYokomitsuLoginResponse(body: string): unknown {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    return {
+      error: parsed.error,
+      message: typeof parsed.message === 'string' ? cleanText(parsed.message) : undefined,
+    };
+  } catch {
+    return '[NON_JSON_LOGIN_RESPONSE_REDACTED]';
+  }
+}
+
+function sanitizeDiagnosticUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (SENSITIVE_AUTH_KEY_PATTERN.test(key)) url.searchParams.set(key, '[REDACTED]');
+    }
+    return url.toString();
+  } catch {
+    return value.replace(/(authorization|cookie|auth_token|token|password|pass|rut)=([^&\s]+)/gi, '$1=[REDACTED]');
+  }
 }
