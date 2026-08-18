@@ -63,6 +63,10 @@ async function main(): Promise<void> {
       errors: result.errors,
       sessionRenewed: result.sessionRenewed,
       failedCategories: result.failedCategories,
+      categoryCoverage: result.categoryCoverage,
+      largestCoverageGaps: result.categoryCoverage
+        .filter((category) => category.numberRegister > category.urlsExtracted)
+        .slice(0, 20),
       outputPath,
       checkpointPath,
       limitations: result.limitations,
