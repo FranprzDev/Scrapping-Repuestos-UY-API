@@ -1,5 +1,11 @@
 import 'dotenv/config';
-import { chromium, type Page, type Request, type Response } from 'playwright';
+import { chromium, type APIRequestContext, type APIResponse, type Page, type Request, type Response } from 'playwright';
+import {
+  authenticateYokomitsuHttpSession,
+  YOKOMITSU_HTTP_LOGIN_URL,
+  type YokomitsuHttpClient,
+  type YokomitsuHttpResponse,
+} from '../src/scraping/domain/yokomitsu-auth';
 import {
   closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
@@ -138,7 +144,7 @@ async function main() {
   });
 
   try {
-    await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+    await page.goto(manualLogin ? YOKOMITSU_LOGIN_URL : YOKOMITSU_HTTP_LOGIN_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => undefined);
     report.login.fieldNames = await collectLoginFieldNames(page);
 
@@ -158,14 +164,23 @@ async function main() {
         return;
       }
     } else {
-      const filled = await fillLoginForm(page, USERNAME as string, PASSWORD as string);
-      if (!filled) {
-        report.status = 'blocked';
-        report.restrictions.push('Could not identify username/password fields safely');
+      const login = await authenticateYokomitsuHttpSession(
+        createPlaywrightYokomitsuHttpClient(context.request),
+        { username: USERNAME as string, password: PASSWORD as string },
+      );
+      report.login.method = login.method;
+      report.login.endpoint = login.endpoint;
+      report.login.fieldNames = login.fieldNames;
+      report.login.usesSessionCookie = login.usesSessionCookie;
+      for (const name of login.sessionCookieNames) observedSessionCookieNames.add(name);
+
+      if (!login.authenticated) {
+        report.status = 'login-failed';
+        report.restrictions.push(login.error ?? 'HTTP login did not reach an authenticated portal view');
         return;
       }
 
-      await submitLogin(page);
+      await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle').catch(() => undefined);
       await page.waitForTimeout(1500);
     }
@@ -275,46 +290,6 @@ async function inspectResponse(
   }
 }
 
-async function fillLoginForm(page: Page, username: string, password: string): Promise<boolean> {
-  const passwordInput = page.locator('input[type="password"]').first();
-  if (await passwordInput.count() === 0) return false;
-  const usernameInput = page.locator([
-    'input[name*="user" i]',
-    'input[name*="usuario" i]',
-    'input[name*="email" i]',
-    'input[name*="login" i]',
-    'input[name*="cliente" i]',
-    'input[type="email"]',
-    'input[type="text"]',
-  ].join(', ')).first();
-  if (await usernameInput.count() === 0) return false;
-
-  await usernameInput.fill(username);
-  await passwordInput.fill(password);
-  return true;
-}
-
-async function submitLogin(page: Page): Promise<void> {
-  const submit = page.locator([
-    'button[type="submit"]',
-    'input[type="submit"]',
-    'button:has-text("Ingresar")',
-    'button:has-text("Entrar")',
-    'button:has-text("Login")',
-    'button:has-text("Iniciar")',
-  ].join(', ')).first();
-
-  if (await submit.count() > 0) {
-    await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => undefined),
-      submit.click(),
-    ]);
-    return;
-  }
-
-  await page.keyboard.press('Enter');
-}
-
 async function exploreCatalog(page: Page): Promise<void> {
   const candidateUrls = await collectYokomitsuCatalogLinks(page);
 
@@ -326,6 +301,30 @@ async function exploreCatalog(page: Page): Promise<void> {
       // Continue probing other safe catalog-looking links.
     }
   }
+}
+
+function createPlaywrightYokomitsuHttpClient(request: APIRequestContext): YokomitsuHttpClient {
+  return {
+    get: async (url, headers) => toYokomitsuHttpResponse(await request.get(url, { headers })),
+    post: async (url, body, headers) => toYokomitsuHttpResponse(await request.post(url, {
+      headers,
+      data: body,
+    })),
+  };
+}
+
+async function toYokomitsuHttpResponse(response: APIResponse): Promise<YokomitsuHttpResponse> {
+  const headers = response.headers();
+  const setCookies = response.headersArray()
+    .filter((header) => /^set-cookie$/i.test(header.name))
+    .map((header) => header.value);
+  if (setCookies.length > 0) headers['set-cookie'] = setCookies;
+  return {
+    url: response.url(),
+    status: response.status(),
+    headers,
+    body: await response.text(),
+  };
 }
 
 async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
@@ -367,7 +366,7 @@ async function collectLoginFieldNames(page: Page): Promise<string[]> {
 function isLikelyLoginRequest(request: Request): boolean {
   if (request.method() === 'GET') return false;
   const combined = `${request.url()} ${request.postData() ?? ''}`;
-  return /login|auth|signin|ingresar|usuario|password|passwd|pwd/i.test(combined);
+  return /process-login|login|auth|signin|ingresar|usuario|rut|password|passwd|pwd/i.test(combined);
 }
 
 function isYokomitsuUrl(value: string): boolean {
@@ -417,7 +416,7 @@ function parseArgs(values: string[]): Map<string, string> {
 
 function redactError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/(authorization|cookie|token|password|pass)=([^&\s]+)/gi, '$1=[REDACTED]');
+  return message.replace(/(authorization|cookie|auth_token|token|password|pass|rut)=([^&\s]+)/gi, '$1=[REDACTED]');
 }
 
 function printReport(): void {
