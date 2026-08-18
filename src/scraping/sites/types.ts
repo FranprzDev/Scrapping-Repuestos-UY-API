@@ -169,4 +169,5 @@ export interface CatalogPipelineOptions {
   maxProducts?: number;
   outputRoot?: string;
   signal?: AbortSignal;
+  persistProducts?: (site: CatalogSiteConfig, products: ProductRecord[]) => Promise<{ outputPath?: string } | void>;
 }
