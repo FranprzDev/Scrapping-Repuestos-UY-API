@@ -65,6 +65,17 @@ export interface YokomitsuFailedCategory {
   reason: string;
 }
 
+export interface YokomitsuCategoryCoverage {
+  key: string;
+  name?: string;
+  numberRegister: number;
+  totalPages: number;
+  pagesProcessed: number;
+  urlsExtracted: number;
+  newUrls: number;
+  duplicateUrls: number;
+}
+
 export interface YokomitsuFullCheckpoint {
   version: 1;
   discoveryMethod?: YokomitsuDiscoveryMethod;
@@ -108,6 +119,7 @@ export interface YokomitsuFullScrapeResult {
   sessionRenewed: boolean;
   checkpoint: YokomitsuFullCheckpoint;
   failedCategories: YokomitsuFailedCategory[];
+  categoryCoverage: YokomitsuCategoryCoverage[];
   limitations: string[];
 }
 
@@ -282,6 +294,7 @@ export async function runYokomitsuFullCatalog(
   const retries = options.retries ?? 2;
   const retryDelayMs = options.retryDelayMs ?? 750;
   const limitations: string[] = [];
+  const categoryCoverage: YokomitsuCategoryCoverage[] = [];
   let sessionRenewed = false;
   let totalResults = 0;
   let totalPages = 0;
@@ -364,6 +377,17 @@ export async function runYokomitsuFullCatalog(
   for (const category of discoveredCategories) {
     if (processedCategoryKeys.has(category.key)) continue;
     try {
+      const coverage: YokomitsuCategoryCoverage = {
+        key: category.key,
+        name: category.name,
+        numberRegister: 0,
+        totalPages: 0,
+        pagesProcessed: 0,
+        urlsExtracted: 0,
+        newUrls: 0,
+        duplicateUrls: 0,
+      };
+      categoryCoverage.push(coverage);
       const firstPage = await catalogWithSession(category, 1);
       const firstSummary = parseYokomitsuSearchResponseFull(firstPage.response.body, { ...category, page: 1, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
       if (!firstSummary) {
@@ -374,10 +398,13 @@ export async function runYokomitsuFullCatalog(
 
       const categoryTotalResults = firstSummary.numberRegister ?? firstSummary.products.length;
       const categoryTotalPages = calculateYokomitsuTotalPages(categoryTotalResults, pageSize) ?? (firstSummary.products.length > 0 ? 1 : 0);
+      coverage.numberRegister = categoryTotalResults;
+      coverage.totalPages = categoryTotalPages;
       totalResults += categoryTotalResults;
       totalPages += categoryTotalPages;
-      collectProducts(firstSummary.products);
+      addCoverage(coverage, collectProducts(firstSummary.products));
       await markPageCompleted(category, 1);
+      coverage.pagesProcessed += 1;
 
       for (let page = 2; page <= categoryTotalPages; page += 1) {
         if (completedPages.has(pageKey(category, page))) continue;
@@ -390,10 +417,12 @@ export async function runYokomitsuFullCatalog(
         }
         if (summary.products.length === 0) {
           await markPageCompleted(category, page);
+          coverage.pagesProcessed += 1;
           break;
         }
-        collectProducts(summary.products);
+        addCoverage(coverage, collectProducts(summary.products));
         await markPageCompleted(category, page);
+        coverage.pagesProcessed += 1;
       }
 
       processedCategoryKeys.add(category.key);
@@ -445,7 +474,8 @@ export async function runYokomitsuFullCatalog(
 
   return finalize(totalResults, totalPages);
 
-  function collectProducts(products: ProductRecord[]): void {
+  function collectProducts(products: ProductRecord[]): { extracted: number; fresh: number; duplicates: number } {
+    const stats = { extracted: products.length, fresh: 0, duplicates: 0 };
     for (const product of products) {
       const key = yokomitsuProductDedupKey(product);
       if (!key) {
@@ -459,9 +489,11 @@ export async function runYokomitsuFullCatalog(
         || (urlKey && discoveredUrls.has(urlKey))
         || (skuKey && discoveredSkus.has(skuKey))) {
         checkpoint.counters.duplicates += 1;
+        stats.duplicates += 1;
         continue;
       }
       discoveredKeys.add(key);
+      stats.fresh += 1;
       if (urlKey) discoveredUrls.add(urlKey);
       if (skuKey) discoveredSkus.add(skuKey);
       discoveredProducts.push({ key, listing: product });
@@ -470,6 +502,7 @@ export async function runYokomitsuFullCatalog(
         { sourceUrl: product.sourceUrl, sku: product.sku },
       ]);
     }
+    return stats;
   }
 
   async function markPageCompleted(category: YokomitsuCategoryRef, page: number): Promise<void> {
@@ -516,9 +549,21 @@ export async function runYokomitsuFullCatalog(
       sessionRenewed,
       checkpoint: safeCheckpoint,
       failedCategories: safeCheckpoint.failedCategories,
+      categoryCoverage: categoryCoverage
+        .map((coverage) => ({ ...coverage }))
+        .sort((left, right) => (right.numberRegister - right.urlsExtracted) - (left.numberRegister - left.urlsExtracted)),
       limitations,
     };
   }
+}
+
+function addCoverage(
+  coverage: YokomitsuCategoryCoverage,
+  delta: { extracted: number; fresh: number; duplicates: number },
+): void {
+  coverage.urlsExtracted += delta.extracted;
+  coverage.newUrls += delta.fresh;
+  coverage.duplicateUrls += delta.duplicates;
 }
 
 async function requestWithRetry(
