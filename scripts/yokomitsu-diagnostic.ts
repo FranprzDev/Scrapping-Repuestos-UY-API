@@ -33,8 +33,8 @@ import {
 import {
   collectYokomitsuCatalogLinks,
   detectYokomitsuCaptcha,
-  detectYokomitsuTwoFactor,
   extractYokomitsuProductsFromDom,
+  inspectYokomitsuTwoFactor,
   inspectYokomitsuStorage,
 } from '../src/scraping/domain/yokomitsu-playwright';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
@@ -187,7 +187,9 @@ async function main() {
     }
 
     report.captchaDetected = report.captchaDetected || await detectYokomitsuCaptcha(page);
-    report.twoFactorDetected = await detectYokomitsuTwoFactor(page);
+    const twoFactorInspection = await inspectYokomitsuTwoFactor(page);
+    report.twoFactorDetected = twoFactorInspection.detected;
+    (report as typeof report & { twoFactorSignals?: unknown }).twoFactorSignals = twoFactorInspection.signals;
     report.reachedPortal = await hasReachedPortal(page, authenticatedCatalogResponses);
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
