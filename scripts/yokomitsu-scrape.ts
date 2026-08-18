@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import {
   runYokomitsuFullCatalog,
   createEmptyYokomitsuCheckpoint,
+  parseYokomitsuScrapeArgs,
   sanitizeYokomitsuCheckpoint,
   type YokomitsuFullCheckpoint,
   type YokomitsuFullProgress,
@@ -16,7 +17,7 @@ import {
 import { YOKOMITSU_FRONT_COOKIE_NAME } from '../src/scraping/domain/yokomitsu';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
 
-const args = parseArgs(process.argv.slice(2));
+const args = parseYokomitsuScrapeArgs(process.argv.slice(2));
 const outputPath = resolve(args.get('output') ?? './tmp/yokomitsu-products.jsonl');
 const checkpointPath = resolve(args.get('checkpoint') ?? './tmp/yokomitsu-checkpoint.json');
 const username = process.env.YOKOMITSU_USERNAME;
@@ -47,16 +48,21 @@ async function main(): Promise<void> {
       status: result.limitations.length > 0 ? 'completed-with-limitations' : 'success',
       discoveryMethod: result.discoveryMethod,
       emptySearchReturnedGlobalCatalog: result.emptySearchReturnedGlobalCatalog,
+      categoriesDiscovered: result.categoriesDiscovered,
+      subcategoriesDiscovered: result.subcategoriesDiscovered,
+      leafCategoriesProcessed: result.leafCategoriesProcessed,
       totalResults: result.totalResults,
       pageSize: result.pageSize,
       totalPages: result.totalPages,
       pagesProcessed: result.pagesProcessed,
       urlsDiscovered: result.urlsDiscovered,
+      uniqueProducts: result.uniqueProducts,
       productsProcessed: result.productsProcessed,
       validProducts: result.validProducts,
       duplicates: result.duplicates,
       errors: result.errors,
       sessionRenewed: result.sessionRenewed,
+      failedCategories: result.failedCategories,
       outputPath,
       checkpointPath,
       limitations: result.limitations,
@@ -147,7 +153,11 @@ function printProgress(progress: YokomitsuFullProgress): void {
   console.log(JSON.stringify({
     pagesProcessed: progress.pagesProcessed,
     totalPages: progress.totalPages,
+    categoriesDiscovered: progress.categoriesDiscovered,
+    subcategoriesDiscovered: progress.subcategoriesDiscovered,
+    leafCategoriesProcessed: progress.leafCategoriesProcessed,
     urlsDiscovered: progress.urlsDiscovered,
+    uniqueProducts: progress.uniqueProducts,
     productsProcessed: progress.productsProcessed,
     validProducts: progress.validProducts,
     duplicates: progress.duplicates,
@@ -168,18 +178,13 @@ function getSetCookieHeaders(headers: Headers): string[] {
   return single ? [single] : [];
 }
 
-function parseArgs(values: string[]): Map<string, string> {
-  return new Map(values.map((arg) => {
-    const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2);
-    return [key, value];
-  }));
+if (process.argv[1]?.match(/yokomitsu-scrape\.(?:ts|js)$/)) {
+  void main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(redact(message));
+    process.exitCode = 1;
+  });
 }
-
-void main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(redact(message));
-  process.exitCode = 1;
-});
 
 function redact(value: string): string {
   return value
