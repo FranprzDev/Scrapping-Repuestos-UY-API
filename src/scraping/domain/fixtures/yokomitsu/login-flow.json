@@ -1,0 +1,8 @@
+{
+  "loginHtml": "<html><body><form id=\"formLogin\" action=\"/v2/ajax/process-login.php\"><input type=\"text\" name=\"rut\"><select name=\"office\"><option value=\"0\" selected>Casa Matriz</option></select><input type=\"password\" name=\"password\"><input type=\"checkbox\" name=\"remember\" value=\"1\"><input type=\"hidden\" name=\"auth_token\" value=\"SANITIZED_AUTH_TOKEN\"></form><script src=\"https://www.google.com/recaptcha/api.js\"></script></body></html>",
+  "loginHtmlWithoutToken": "<html><body><form id=\"formLogin\" action=\"/v2/ajax/process-login.php\"><input type=\"text\" name=\"rut\"><input type=\"password\" name=\"password\"></form></body></html>",
+  "portalHtml": "<html><body><nav><a href=\"/v2/logout\">Salir</a></nav><section class=\"catalogo\"><article class=\"producto\">Portal autenticado</article></section></body></html>",
+  "expiredHtml": "<html><body><form id=\"formLogin\" action=\"/v2/ajax/process-login.php\"><input type=\"hidden\" name=\"auth_token\" value=\"SANITIZED_AUTH_TOKEN_2\"><input type=\"password\" name=\"password\"></form></body></html>",
+  "loginSuccess": "{\"error\":false,\"message\":\"success\"}",
+  "loginError": "{\"error\":true,\"message\":\"invalid credentials\"}"
+}
