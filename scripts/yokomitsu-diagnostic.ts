@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { chromium, type APIRequestContext, type APIResponse, type Page, type Request, type Response } from 'playwright';
+import { chromium, type APIRequestContext, type APIResponse, type BrowserContext, type Page, type Request, type Response } from 'playwright';
 import {
   authenticateYokomitsuHttpSession,
   YOKOMITSU_HTTP_LOGIN_URL,
@@ -165,13 +165,14 @@ async function main() {
       }
     } else {
       const login = await authenticateYokomitsuHttpSession(
-        createPlaywrightYokomitsuHttpClient(context.request),
+        createPlaywrightYokomitsuHttpClient(context.request, context),
         { username: USERNAME as string, password: PASSWORD as string },
       );
       report.login.method = login.method;
       report.login.endpoint = login.endpoint;
       report.login.fieldNames = login.fieldNames;
       report.login.usesSessionCookie = login.usesSessionCookie;
+      (report.login as typeof report.login & { httpDiagnostic?: unknown }).httpDiagnostic = login.diagnostic;
       for (const name of login.sessionCookieNames) observedSessionCookieNames.add(name);
 
       if (!login.authenticated) {
@@ -303,13 +304,17 @@ async function exploreCatalog(page: Page): Promise<void> {
   }
 }
 
-function createPlaywrightYokomitsuHttpClient(request: APIRequestContext): YokomitsuHttpClient {
+function createPlaywrightYokomitsuHttpClient(request: APIRequestContext, context: BrowserContext): YokomitsuHttpClient {
   return {
     get: async (url, headers) => toYokomitsuHttpResponse(await request.get(url, { headers })),
     post: async (url, body, headers) => toYokomitsuHttpResponse(await request.post(url, {
       headers,
       data: body,
     })),
+    getCookieNames: async () => {
+      const cookies = await context.cookies('https://www.yokomitsuparts.com.uy');
+      return Array.from(new Set(cookies.map((cookie) => cookie.name))).sort();
+    },
   };
 }
 
