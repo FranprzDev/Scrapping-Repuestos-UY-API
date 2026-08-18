@@ -113,6 +113,14 @@ test('Yokomitsu full recorre categorias, pagina independiente y no limita a 5 pr
   assert.equal(output.length, 14);
   assert.deepEqual(result.limitations, []);
   assert.equal(client.searchRequests.filter((request) => request.id_subsubcategory === '30').length, 2);
+  const largest = result.categoryCoverage.find((category) => category.key === leafKey('10', '20', '30'));
+  assert.ok(largest);
+  assert.equal(largest.numberRegister, 13);
+  assert.equal(largest.totalPages, 2);
+  assert.equal(largest.pagesProcessed, 2);
+  assert.equal(largest.urlsExtracted, 13);
+  assert.equal(largest.newUrls, 13);
+  assert.equal(largest.duplicateUrls, 0);
 });
 
 test('Yokomitsu full procesa categorias sin productos sin fallar', async () => {
@@ -159,6 +167,10 @@ test('Yokomitsu full deduplica globalmente varias categorias con mismo SKU', asy
   assert.equal(result.urlsDiscovered, 1);
   assert.equal(result.duplicates, 1);
   assert.equal(output.length, 1);
+  const duplicatedCategory = result.categoryCoverage.find((category) => category.key === leafKey('11'));
+  assert.equal(duplicatedCategory?.urlsExtracted, 1);
+  assert.equal(duplicatedCategory?.newUrls, 0);
+  assert.equal(duplicatedCategory?.duplicateUrls, 1);
 });
 
 test('Yokomitsu full informa limitacion si una categoria falla y continua las demas', async () => {
