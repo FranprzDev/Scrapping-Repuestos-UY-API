@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  analyzeYokomitsuHomeAuthentication,
   authenticateYokomitsuHttpSession,
   buildYokomitsuLoginForm,
   extractSetCookieNames,
@@ -105,6 +106,16 @@ test('Yokomitsu login HTTP reutiliza YOKOMITSU_FRONT y valida home autenticado',
   assert.equal(result.diagnostic.loginPost?.responseErrorFalse, true);
   assert.equal(result.diagnostic.homeGet?.httpStatus, 200);
   assert.equal(result.diagnostic.homeGet?.authenticated, true);
+  assert.equal(result.diagnostic.homeGet?.redirectedToLogin, false);
+  assert.equal(result.diagnostic.homeGet?.sessionExpired, false);
+  assert.deepEqual(result.diagnostic.homeGet?.cookieNamesBefore, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.deepEqual(result.diagnostic.homeGet?.cookieNamesAfter, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.deepEqual(result.diagnostic.homeGet?.cookieNamesAdded, []);
+  assert.deepEqual(result.diagnostic.homeGet?.cookieNamesRemoved, []);
+  assert.equal(result.diagnostic.homeGet?.signals.containsLoginForm, false);
+  assert.equal(result.diagnostic.homeGet?.signals.containsPasswordInput, false);
+  assert.equal(result.diagnostic.homeGet?.signals.hasAuthenticatedPortalSignals, true);
+  assert.equal(result.diagnostic.homeGet?.falseReason, undefined);
   assert.deepEqual(calls.map((call) => `${call.method} ${call.url}`), [
     `GET ${YOKOMITSU_HTTP_LOGIN_URL}`,
     `POST ${YOKOMITSU_PROCESS_LOGIN_ENDPOINT}`,
@@ -181,6 +192,89 @@ test('Yokomitsu detecta sesion vencida por redirect, HTML de login o home no aut
   }, 302)), true);
   assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_SEARCH_ENDPOINT, fixture.expiredHtml)), true);
   assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_SEARCH_ENDPOINT, '{"error":false,"data":"<article></article>"}')), false);
+});
+
+test('Yokomitsu home autenticado con auth_token no se clasifica como login si no hay password', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const authenticatedHomeWithToken = [
+    '<html><body>',
+    '<input type="hidden" name="auth_token" value="SANITIZED_AUTH_TOKEN_2">',
+    '<script>var endpoint = "/v2/ajax/process-login.php";</script>',
+    '<nav><a href="/v2/salir">Salir</a></nav>',
+    '<section class="catalogo"><article class="producto">Producto sanitizado</article></section>',
+    '<form action="/v2/ajax/load-data-search.php"></form>',
+    '</body></html>',
+  ].join('');
+  const calls: FakeYokomitsuCall[] = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, authenticatedHomeWithToken),
+  ]);
+
+  const result = await authenticateYokomitsuHttpSession(client, {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+
+  assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_LOGIN_URL, authenticatedHomeWithToken)), false);
+  assert.equal(result.authenticated, true);
+  assert.equal(result.diagnostic.homeGet?.signals.containsAuthTokenField, true);
+  assert.equal(result.diagnostic.homeGet?.signals.containsProcessLoginReference, true);
+  assert.equal(result.diagnostic.homeGet?.signals.containsLoginForm, false);
+  assert.equal(result.diagnostic.homeGet?.signals.containsPasswordInput, false);
+  assert.deepEqual(result.diagnostic.homeGet?.signals.portalSignalNames, [
+    'catalog-container',
+    'logout-link',
+    'product-container',
+    'search-endpoint-reference',
+  ]);
+});
+
+test('Yokomitsu home con formulario password queda diagnosticado como no autenticado', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const calls: FakeYokomitsuCall[] = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.expiredHtml),
+  ]);
+
+  const result = await authenticateYokomitsuHttpSession(client, {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+
+  assert.equal(result.authenticated, false);
+  assert.equal(result.diagnostic.homeGet?.signals.containsLoginForm, true);
+  assert.equal(result.diagnostic.homeGet?.signals.containsPasswordInput, true);
+  assert.equal(result.diagnostic.homeGet?.falseReason, 'home contains login form and password input');
+});
+
+test('Yokomitsu resume senales estructurales de home sin exponer HTML privado', () => {
+  const signals = analyzeYokomitsuHomeAuthentication([
+    '<html><body>',
+    '<input type="hidden" name="auth_token" value="SANITIZED_AUTH_TOKEN">',
+    '<nav><a href="/v2/salir">Salir</a></nav>',
+    '<div class="precio"></div>',
+    '<div class="stock"></div>',
+    '<section class="catalogo"></section>',
+    '</body></html>',
+  ].join(''));
+
+  assert.equal(signals.containsAuthTokenField, true);
+  assert.equal(signals.containsLoginForm, false);
+  assert.equal(signals.containsPasswordInput, false);
+  assert.deepEqual(signals.portalSignalNames, [
+    'catalog-container',
+    'logout-link',
+    'price-container',
+    'stock-container',
+  ]);
 });
 
 test('Yokomitsu re-login controlado ocurre como maximo una vez por ejecucion', async () => {
