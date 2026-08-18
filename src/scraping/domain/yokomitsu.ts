@@ -10,7 +10,7 @@ export const YOKOMITSU_FRONT_COOKIE_NAME = 'YOKOMITSU_FRONT';
 export const YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS = 5;
 
 const SENSITIVE_HEADER_PATTERN = /^(authorization|cookie|set-cookie|x-csrf-token|x-xsrf-token)$/i;
-const SENSITIVE_KEY_PATTERN = /(pass|password|passwd|pwd|token|jwt|bearer|authorization|cookie|session|csrf|xsrf|secret)/i;
+const SENSITIVE_KEY_PATTERN = /(rut|user|username|usuario|login|pass|password|passwd|pwd|token|jwt|bearer|authorization|cookie|session|csrf|xsrf|secret)/i;
 const CATALOG_URL_HINT = /(catalog|catalogo|producto|productos|repuesto|repuestos|articulo|articulos|stock|precio|precios|marca|marcas|modelo|modelos|search|buscar|busqueda|familia|categoria)/i;
 const KNOWN_LABELS = [
   'Cod. Yokomitsu',
@@ -261,7 +261,7 @@ export function sanitizeUrl(value: string): string {
     }
     return url.toString();
   } catch {
-    return value.replace(/(authorization|cookie|token|password|pass)=([^&\s]+)/gi, '$1=[REDACTED]');
+    return value.replace(/(authorization|cookie|auth_token|token|password|pass|rut)=([^&\s]+)/gi, '$1=[REDACTED]');
   }
 }
 
@@ -374,6 +374,7 @@ export function parseYokomitsuSearchResponse(
   body: string,
   request: YokomitsuSearchRequest = { page: 1 },
   baseUrl = YOKOMITSU_BASE_URL,
+  maxProducts = YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
 ): YokomitsuSearchResponseSummary | undefined {
   let parsed: unknown;
   try {
@@ -393,8 +394,16 @@ export function parseYokomitsuSearchResponse(
     currentPage,
     totalPages: numberRegister && pageSize ? Math.ceil(numberRegister / pageSize) : undefined,
     textPagination: asText(parsed.text_pagination),
-    products: extractYokomitsuSearchProducts(parsed, baseUrl),
+    products: extractYokomitsuSearchProducts(parsed, baseUrl, maxProducts),
   };
+}
+
+export function parseYokomitsuSearchResponseFull(
+  body: string,
+  request: YokomitsuSearchRequest = { page: 1 },
+  baseUrl = YOKOMITSU_BASE_URL,
+): YokomitsuSearchResponseSummary | undefined {
+  return parseYokomitsuSearchResponse(body, request, baseUrl, Number.POSITIVE_INFINITY);
 }
 
 export function inferYokomitsuFieldsAvailable(products: ProductRecord[]): YokomitsuFieldAvailability {
@@ -480,15 +489,31 @@ function normalizeYokomitsuProduct(record: JsonRecord, baseUrl: string): Product
   }];
 }
 
-function extractYokomitsuSearchProducts(value: unknown, baseUrl: string): ProductRecord[] {
+function extractYokomitsuSearchProducts(value: unknown, baseUrl: string, maxProducts = YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS): ProductRecord[] {
   if (!isRecord(value) || typeof value.data !== 'string') return [];
-  return extractYokomitsuProductsFromHtml(value.data, baseUrl).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
+  return extractYokomitsuProductsFromHtml(value.data, baseUrl, maxProducts);
 }
 
-function extractYokomitsuProductsFromHtml(html: string, baseUrl: string): ProductRecord[] {
+export function extractYokomitsuProductsFromHtml(
+  html: string,
+  baseUrl: string,
+  maxProducts = YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
+): ProductRecord[] {
   const root = parse(html);
   const cards = collectProductCards(root);
-  return cards.flatMap((card) => normalizeYokomitsuHtmlProduct(card, baseUrl)).slice(0, YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS);
+  const products = cards.flatMap((card) => normalizeYokomitsuHtmlProduct(card, baseUrl));
+  return Number.isFinite(maxProducts) ? products.slice(0, maxProducts) : products;
+}
+
+export function extractYokomitsuProductDetailFromHtml(html: string, sourceUrl: string, baseUrl = YOKOMITSU_BASE_URL): ProductRecord | undefined {
+  const root = parse(html);
+  const product = normalizeYokomitsuHtmlProduct(root, baseUrl)[0];
+  if (!product) return undefined;
+  return {
+    ...product,
+    sourceUrl,
+    imageUrls: product.imageUrls && product.imageUrls.length > 0 ? product.imageUrls : product.imageUrl ? [product.imageUrl] : undefined,
+  };
 }
 
 function collectProductCards(root: HTMLElement): HTMLElement[] {
@@ -593,7 +618,7 @@ function labelValue(text: string, labels: string[]): string | undefined {
 }
 
 function readBoundedLabelValue(text: string, label: string): string | undefined {
-  const labelMatch = new RegExp(`${escapeRegex(label)}\s*:`, 'i').exec(text);
+  const labelMatch = new RegExp(`${escapeRegex(label)}\\s*:`, 'i').exec(text);
   if (!labelMatch) return undefined;
 
   const valueStart = labelMatch.index + labelMatch[0].length;
@@ -606,7 +631,7 @@ function readBoundedLabelValue(text: string, label: string): string | undefined 
 
 function firstKnownBoundaryIndex(value: string): number | undefined {
   const boundaries = [
-    ...KNOWN_LABELS.map((label) => new RegExp(`${escapeRegex(label)}\s*:`, 'i')),
+    ...KNOWN_LABELS.map((label) => new RegExp(`${escapeRegex(label)}\\s*:`, 'i')),
     /(?:US\$|\$U|\$|UYU|USD)\s*\d/i,
     /Comprar\b/i,
     new RegExp(KNOWN_STATUS_PATTERN.source, 'i'),
