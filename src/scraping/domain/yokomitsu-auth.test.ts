@@ -72,7 +72,7 @@ test('Yokomitsu interpreta respuestas success y error de process-login.php', () 
 
 test('Yokomitsu login HTTP reutiliza YOKOMITSU_FRONT y valida home autenticado', async () => {
   const fixture = readYokomitsuLoginFixture();
-  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const calls: FakeYokomitsuCall[] = [];
   const client = createFakeYokomitsuClient(calls, [
     response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
       'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
@@ -94,6 +94,17 @@ test('Yokomitsu login HTTP reutiliza YOKOMITSU_FRONT y valida home autenticado',
   assert.deepEqual(result.sessionCookieNames, [YOKOMITSU_FRONT_COOKIE_NAME]);
   assert.equal(result.usesBearerToken, false);
   assert.equal(result.authorizationHeaderObserved, false);
+  assert.deepEqual(result.diagnostic.loginGet.cookieNamesBefore, []);
+  assert.deepEqual(result.diagnostic.loginGet.cookieNamesAfter, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.deepEqual(result.diagnostic.loginPost?.cookieNamesBefore, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.deepEqual(result.diagnostic.loginPost?.cookieNamesAfter, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.deepEqual(result.diagnostic.loginPost?.sanitizedResponse, {
+    error: false,
+    message: 'success',
+  });
+  assert.equal(result.diagnostic.loginPost?.responseErrorFalse, true);
+  assert.equal(result.diagnostic.homeGet?.httpStatus, 200);
+  assert.equal(result.diagnostic.homeGet?.authenticated, true);
   assert.deepEqual(calls.map((call) => `${call.method} ${call.url}`), [
     `GET ${YOKOMITSU_HTTP_LOGIN_URL}`,
     `POST ${YOKOMITSU_PROCESS_LOGIN_ENDPOINT}`,
@@ -106,6 +117,34 @@ test('Yokomitsu login HTTP reutiliza YOKOMITSU_FRONT y valida home autenticado',
     remember: '[VALUE]',
     auth_token: '[REDACTED]',
   });
+});
+
+test('Yokomitsu POST HTTP usa headers equivalentes al XHR real sin valores sensibles', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const calls: FakeYokomitsuCall[] = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.portalHtml),
+  ]);
+
+  await authenticateYokomitsuHttpSession(client, {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+
+  const post = calls.find((call) => call.method === 'POST' && call.url === YOKOMITSU_PROCESS_LOGIN_ENDPOINT);
+  assert.ok(post);
+  assert.equal(post.headers?.accept, 'application/json, text/javascript, */*; q=0.01');
+  assert.equal(post.headers?.['content-type'], 'application/x-www-form-urlencoded; charset=UTF-8');
+  assert.equal(post.headers?.origin, 'https://www.yokomitsuparts.com.uy');
+  assert.equal(post.headers?.referer, YOKOMITSU_HTTP_LOGIN_URL);
+  assert.equal(post.headers?.['x-requested-with'], 'XMLHttpRequest');
+  assert.equal(JSON.stringify(post.headers).includes('SANITIZED_PASSWORD'), false);
+  assert.equal(JSON.stringify(post.headers).includes('SANITIZED_AUTH_TOKEN'), false);
+  assert.equal(JSON.stringify(post.headers).includes('YOKOMITSU_FRONT='), false);
 });
 
 test('Yokomitsu login HTTP falla claramente si auth_token falta o el login responde error', async () => {
@@ -146,7 +185,7 @@ test('Yokomitsu detecta sesion vencida por redirect, HTML de login o home no aut
 
 test('Yokomitsu re-login controlado ocurre como maximo una vez por ejecucion', async () => {
   const fixture = readYokomitsuLoginFixture();
-  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const calls: FakeYokomitsuCall[] = [];
   const client = createFakeYokomitsuClient(calls, [
     response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, { 'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure` }),
     response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
@@ -176,7 +215,7 @@ test('Yokomitsu re-login controlado ocurre como maximo una vez por ejecucion', a
 
 test('Yokomitsu limpia la sesion HTTP en finally', async () => {
   const fixture = readYokomitsuLoginFixture();
-  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const calls: FakeYokomitsuCall[] = [];
   const client = createFakeYokomitsuClient(calls, [
     response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, { 'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure` }),
     response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
@@ -223,23 +262,33 @@ function response(
   return { url, status, headers, body };
 }
 
+interface FakeYokomitsuCall {
+  method: string;
+  url: string;
+  body?: string;
+  headers?: Record<string, string>;
+}
+
 function createFakeYokomitsuClient(
-  calls: Array<{ method: string; url: string; body?: string }>,
+  calls: FakeYokomitsuCall[],
   responses: YokomitsuHttpResponse[],
 ): YokomitsuHttpClient {
+  let hasYokomitsuFront = false;
   return {
-    get: async (url) => {
-      calls.push({ method: 'GET', url });
+    get: async (url, headers) => {
+      calls.push({ method: 'GET', url, headers });
       const next = responses.shift();
       if (!next) throw new Error(`missing fake response for GET ${url}`);
+      if (extractSetCookieNames(next.headers).includes(YOKOMITSU_FRONT_COOKIE_NAME)) hasYokomitsuFront = true;
       return next;
     },
-    post: async (url, body) => {
-      calls.push({ method: 'POST', url, body });
+    post: async (url, body, headers) => {
+      calls.push({ method: 'POST', url, body, headers });
       const next = responses.shift();
       if (!next) throw new Error(`missing fake response for POST ${url}`);
       return next;
     },
+    getCookieNames: async () => hasYokomitsuFront ? [YOKOMITSU_FRONT_COOKIE_NAME] : [],
     clearSession: async () => {
       calls.push({ method: 'CLEAR', url: 'session' });
     },
