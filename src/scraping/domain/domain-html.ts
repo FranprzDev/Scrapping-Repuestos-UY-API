@@ -250,6 +250,18 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
     return candidates;
   }
 
+  if (rule.id === 'autopartesmagallanes') {
+    // Don't use generic JSON-LD extraction - use site-specific WooCommerce extractor only
+    // This prevents duplicate products (JSON-LD + HTML extraction)
+    candidates.length = 0;
+    
+    const detailProduct = extractMagallanesDetailProduct(root, pageUrl, provider, rule);
+    if (detailProduct) {
+      candidates.push(detailProduct);
+    }
+    return candidates;
+  }
+
   const isDetailPage = isLikelyDetailPage(root, pageUrl, rule);
 
   if (!isDetailPage) {
@@ -1148,6 +1160,111 @@ function isSelvirProductCard(href: string, card: HTMLElement, cardText: string):
   const hasPriceText = Boolean(normalizePriceValue(cardText));
 
   return (hasStructuredTitle || hasStructuredPrice) && hasPriceText;
+}
+
+function extractMagallanesDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
+  // Magallanes product URLs have -ref- in them
+  if (!/\-ref\-/i.test(pageUrl)) {
+    return undefined;
+  }
+
+  // Extract product title from h1 - this is the key identifier for a real product page
+  const titleEl = root.querySelector('h1.product_title, h1.product-title, h1');
+  if (!titleEl) {
+    return undefined;
+  }
+
+  const title = cleanText(titleEl.text);
+  if (!title) {
+    return undefined;
+  }
+
+  // Extract price - ALLOW UNDEFINED (some products may not have public pricing)
+  let priceText: string | undefined;
+  const priceSelectors = [
+    '.woocommerce-Price-amount',
+    '.product-price',
+    '.price',
+    '[data-price]',
+    '.product_price',
+  ];
+
+  for (const selector of priceSelectors) {
+    const priceEl = root.querySelector(selector);
+    if (priceEl) {
+      const text = cleanText(priceEl.text);
+      // Accept price even if it's just "...", as it indicates a price section exists
+      if (text && text.length > 0 && text !== '...') {
+        priceText = text;
+        break;
+      }
+    }
+  }
+
+  // Extract primary image
+  const imageSelectors = [
+    'img.wp-post-image',
+    'img[data-lazy-src]',
+    'img[data-src]',
+    'figure img',
+    '.product-image img',
+  ];
+
+  let imageUrl: string | undefined;
+  for (const selector of imageSelectors) {
+    const imgEl = root.querySelector(selector);
+    if (imgEl) {
+      imageUrl = normalizeUrl(
+        imgEl.getAttribute('data-lazy-src') || imgEl.getAttribute('data-src') || imgEl.getAttribute('src'),
+        pageUrl,
+      );
+      if (imageUrl && !imageUrl.includes('placeholder')) break;
+    }
+  }
+
+  // If no image found with lazy-loading attrs, try standard img src
+  if (!imageUrl) {
+    const firstImg = root.querySelector('img[src]');
+    if (firstImg && !firstImg.getAttribute('src')?.includes('placeholder')) {
+      imageUrl = normalizeUrl(firstImg.getAttribute('src'), pageUrl);
+    }
+  }
+
+  // Extract availability from button or text
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
+
+  // Extract description
+  const description = firstNonEmpty(
+    selectText(root, [
+      '.woocommerce-product-details__short-description',
+      '.product-description',
+      '#tab-description',
+      '.summary p',
+    ]),
+  );
+
+  // Return product even if price is undefined - this is a valid product page
+  return {
+    productName: title,
+    price: priceText ? normalizePriceValue(priceText) : undefined,
+    currency: priceText ? inferCurrency(priceText) : undefined,
+    description,
+    imageUrl,
+    sourceUrl: pageUrl,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability([availabilityText].filter(Boolean).join(' '), rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability([availabilityText].filter(Boolean).join(' '), rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
+    extractedAt: new Date().toISOString(),
+    provider,
+  };
 }
 
 function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
