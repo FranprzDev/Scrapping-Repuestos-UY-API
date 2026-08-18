@@ -1,4 +1,5 @@
 import type { ProductRecord } from '../interfaces/scraping.types';
+import { parse, type HTMLElement } from 'node-html-parser';
 import {
   authenticateYokomitsuHttpSession,
   isYokomitsuSessionExpiredResponse,
@@ -10,6 +11,7 @@ import {
   extractYokomitsuProductDetailFromHtml,
   parseYokomitsuSearchResponseFull,
   YOKOMITSU_BASE_URL,
+  YOKOMITSU_LOGIN_URL,
   YOKOMITSU_SEARCH_ENDPOINT,
   type YokomitsuSearchRequest,
 } from './yokomitsu';
@@ -32,9 +34,13 @@ export interface YokomitsuFullScrapeOptions {
 }
 
 export interface YokomitsuFullProgress {
+  categoriesDiscovered: number;
+  subcategoriesDiscovered: number;
+  leafCategoriesProcessed: number;
   pagesProcessed: number;
   totalPages?: number;
   urlsDiscovered: number;
+  uniqueProducts: number;
   productsProcessed: number;
   validProducts: number;
   duplicates: number;
@@ -43,38 +49,65 @@ export interface YokomitsuFullProgress {
   elapsedMs: number;
 }
 
+export interface YokomitsuCategoryRef {
+  key: string;
+  name?: string;
+  url?: string;
+  id_category?: string;
+  id_subcategory?: string;
+  id_subsubcategory?: string;
+  option_filter?: string;
+  level: 'category' | 'subcategory' | 'subsubcategory' | 'leaf';
+}
+
+export interface YokomitsuFailedCategory {
+  key: string;
+  reason: string;
+}
+
 export interface YokomitsuFullCheckpoint {
   version: 1;
   discoveryMethod?: YokomitsuDiscoveryMethod;
   completedPages: string[];
+  processedCategoryKeys: string[];
+  discoveredCategories: YokomitsuCategoryRef[];
   discoveredProducts: Array<{ sourceUrl?: string; sku?: string }>;
   processedProductKeys: string[];
   counters: {
+    categoriesDiscovered: number;
+    subcategoriesDiscovered: number;
+    leafCategoriesProcessed: number;
     pagesProcessed: number;
     productsProcessed: number;
     validProducts: number;
     duplicates: number;
     errors: number;
   };
+  failedCategories: YokomitsuFailedCategory[];
   updatedAt: string;
 }
 
-export type YokomitsuDiscoveryMethod = 'empty-search-global';
+export type YokomitsuDiscoveryMethod = 'category-tree';
 
 export interface YokomitsuFullScrapeResult {
   discoveryMethod?: YokomitsuDiscoveryMethod;
-  emptySearchReturnedGlobalCatalog: boolean;
+  emptySearchReturnedGlobalCatalog: false;
+  categoriesDiscovered: number;
+  subcategoriesDiscovered: number;
+  leafCategoriesProcessed: number;
   totalResults?: number;
   pageSize: number;
   totalPages?: number;
   pagesProcessed: number;
   urlsDiscovered: number;
+  uniqueProducts: number;
   productsProcessed: number;
   validProducts: number;
   duplicates: number;
   errors: number;
   sessionRenewed: boolean;
   checkpoint: YokomitsuFullCheckpoint;
+  failedCategories: YokomitsuFailedCategory[];
   limitations: string[];
 }
 
@@ -84,6 +117,7 @@ interface DiscoveredProduct {
 }
 
 interface CatalogPage {
+  category: YokomitsuCategoryRef;
   page: number;
   response: YokomitsuHttpResponse;
 }
@@ -92,15 +126,21 @@ export function createEmptyYokomitsuCheckpoint(now = new Date().toISOString()): 
   return {
     version: 1,
     completedPages: [],
+    processedCategoryKeys: [],
+    discoveredCategories: [],
     discoveredProducts: [],
     processedProductKeys: [],
     counters: {
+      categoriesDiscovered: 0,
+      subcategoriesDiscovered: 0,
+      leafCategoriesProcessed: 0,
       pagesProcessed: 0,
       productsProcessed: 0,
       validProducts: 0,
       duplicates: 0,
       errors: 0,
     },
+    failedCategories: [],
     updatedAt: now,
   };
 }
@@ -119,6 +159,42 @@ export function buildYokomitsuCatalogSearchBody(input: Partial<YokomitsuSearchRe
   }).toString();
 }
 
+export function buildYokomitsuCategorySearchBody(category: YokomitsuCategoryRef, page: number, register = YOKOMITSU_FULL_REGISTER): string {
+  return buildYokomitsuCatalogSearchBody({
+    id_category: category.id_category,
+    id_subcategory: category.id_subcategory,
+    id_subsubcategory: category.id_subsubcategory,
+    option_filter: category.option_filter,
+    search: '',
+    order: '',
+    register,
+    page,
+    view: YOKOMITSU_FULL_VIEW,
+  });
+}
+
+export function parseYokomitsuScrapeArgs(values: string[]): Map<string, string> {
+  const parsed = new Map<string, string>();
+  for (let index = 0; index < values.length; index += 1) {
+    const arg = values[index];
+    if (!arg.startsWith('--')) continue;
+    const withoutPrefix = arg.replace(/^--/, '');
+    const equalsIndex = withoutPrefix.indexOf('=');
+    if (equalsIndex >= 0) {
+      parsed.set(withoutPrefix.slice(0, equalsIndex), withoutPrefix.slice(equalsIndex + 1));
+      continue;
+    }
+    const next = values[index + 1];
+    if (next && !next.startsWith('--')) {
+      parsed.set(withoutPrefix, next);
+      index += 1;
+      continue;
+    }
+    parsed.set(withoutPrefix, 'true');
+  }
+  return parsed;
+}
+
 export function calculateYokomitsuTotalPages(totalResults: number | undefined, pageSize: number): number | undefined {
   return totalResults && pageSize > 0 ? Math.ceil(totalResults / pageSize) : undefined;
 }
@@ -130,16 +206,53 @@ export function yokomitsuProductDedupKey(product: ProductRecord): string | undef
   return undefined;
 }
 
+export function discoverYokomitsuCategoriesFromHtml(html: string, baseUrl = YOKOMITSU_BASE_URL): YokomitsuCategoryRef[] {
+  const root = parse(html);
+  const discovered = new Map<string, YokomitsuCategoryRef>();
+
+  for (const element of root.querySelectorAll('a[href], option[value], [data-id_category], [data-id-category], [data-category], [data-id_subcategory], [data-id-subcategory], [data-subcategory], [data-id_subsubcategory], [data-id-subsubcategory], [data-subsubcategory]')) {
+    const direct = categoryFromElement(element, baseUrl);
+    if (direct) discovered.set(direct.key, direct);
+  }
+
+  for (const match of html.matchAll(/load-data-search\.php[^"'`<>{}]*/gi)) {
+    const query = match[0].split('?')[1];
+    if (!query) continue;
+    const ref = categoryFromParams(new URLSearchParams(query));
+    if (ref) discovered.set(ref.key, ref);
+  }
+
+  return Array.from(discovered.values())
+    .filter(hasCategorySearchSignal)
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
 export function sanitizeYokomitsuCheckpoint(checkpoint: YokomitsuFullCheckpoint): YokomitsuFullCheckpoint {
   return {
     version: 1,
     discoveryMethod: checkpoint.discoveryMethod,
-    completedPages: Array.from(new Set(checkpoint.completedPages)).sort(),
-    discoveredProducts: sanitizeDiscoveredProducts(checkpoint.discoveredProducts ?? []),
-    processedProductKeys: Array.from(new Set(checkpoint.processedProductKeys))
-      .filter((key) => !/cookie|authorization|password|auth_token|token|rut|YOKOMITSU_FRONT=/i.test(key))
+    completedPages: Array.from(new Set(checkpoint.completedPages ?? []))
+      .filter((key) => !containsSecretMarker(key))
       .sort(),
-    counters: { ...checkpoint.counters },
+    processedCategoryKeys: Array.from(new Set(checkpoint.processedCategoryKeys ?? []))
+      .filter((key) => !containsSecretMarker(key))
+      .sort(),
+    discoveredCategories: sanitizeCategories(checkpoint.discoveredCategories ?? []),
+    discoveredProducts: sanitizeDiscoveredProducts(checkpoint.discoveredProducts ?? []),
+    processedProductKeys: Array.from(new Set(checkpoint.processedProductKeys ?? []))
+      .filter((key) => !containsSecretMarker(key))
+      .sort(),
+    counters: {
+      categoriesDiscovered: checkpoint.counters?.categoriesDiscovered ?? 0,
+      subcategoriesDiscovered: checkpoint.counters?.subcategoriesDiscovered ?? 0,
+      leafCategoriesProcessed: checkpoint.counters?.leafCategoriesProcessed ?? 0,
+      pagesProcessed: checkpoint.counters?.pagesProcessed ?? 0,
+      productsProcessed: checkpoint.counters?.productsProcessed ?? 0,
+      validProducts: checkpoint.counters?.validProducts ?? 0,
+      duplicates: checkpoint.counters?.duplicates ?? 0,
+      errors: checkpoint.counters?.errors ?? 0,
+    },
+    failedCategories: sanitizeFailedCategories(checkpoint.failedCategories ?? []),
     updatedAt: checkpoint.updatedAt,
   };
 }
@@ -152,6 +265,7 @@ export async function runYokomitsuFullCatalog(
   const now = options.now ?? (() => new Date().toISOString());
   const checkpoint = sanitizeYokomitsuCheckpoint(options.checkpoint ?? createEmptyYokomitsuCheckpoint(now()));
   const completedPages = new Set(checkpoint.completedPages);
+  const processedCategoryKeys = new Set(checkpoint.processedCategoryKeys);
   const processedKeys = new Set(checkpoint.processedProductKeys);
   const discoveredKeys = new Set<string>();
   const discoveredUrls = new Set<string>();
@@ -169,16 +283,32 @@ export async function runYokomitsuFullCatalog(
   const retryDelayMs = options.retryDelayMs ?? 750;
   const limitations: string[] = [];
   let sessionRenewed = false;
-  let loginAttempts = 0;
+  let totalResults = 0;
+  let totalPages = 0;
 
   const login = async () => {
-    loginAttempts += 1;
     const result = await authenticateYokomitsuHttpSession(client, options.credentials);
     if (!result.authenticated) throw new Error(result.error ?? 'Yokomitsu login failed');
   };
 
-  const postCatalog = async (page: number): Promise<YokomitsuHttpResponse> => {
-    const body = buildYokomitsuCatalogSearchBody({ page, register: pageSize, view: YOKOMITSU_FULL_VIEW, search: '' });
+  const requestHome = async (): Promise<YokomitsuHttpResponse> => requestWithRetry(
+    async () => client.get(YOKOMITSU_LOGIN_URL, { accept: 'text/html,application/xhtml+xml' }),
+    { retries, retryDelayMs, isRetryable: (response) => response.status === 429 || response.status >= 500 },
+  );
+
+  const getAuthenticatedHome = async (): Promise<YokomitsuHttpResponse> => {
+    let response = await requestHome();
+    if (isYokomitsuSessionExpiredResponse(response) && !sessionRenewed) {
+      sessionRenewed = true;
+      await login();
+      response = await requestHome();
+    }
+    if (isYokomitsuSessionExpiredResponse(response)) throw new Error('Yokomitsu session expired during category discovery');
+    return response;
+  };
+
+  const postCatalog = async (category: YokomitsuCategoryRef, page: number): Promise<YokomitsuHttpResponse> => {
+    const body = buildYokomitsuCategorySearchBody(category, page, pageSize);
     return requestWithRetry(async () => client.post(YOKOMITSU_SEARCH_ENDPOINT, body, {
       accept: 'application/json, text/javascript, */*; q=0.01',
       'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -192,22 +322,18 @@ export async function runYokomitsuFullCatalog(
 
   const getDetail = async (url: string): Promise<YokomitsuHttpResponse> => requestWithRetry(
     async () => client.get(url, { accept: 'text/html,application/xhtml+xml' }),
-    {
-      retries,
-      retryDelayMs,
-      isRetryable: (response) => response.status === 429 || response.status >= 500,
-    },
+    { retries, retryDelayMs, isRetryable: (response) => response.status === 429 || response.status >= 500 },
   );
 
-  const catalogWithSession = async (page: number): Promise<CatalogPage> => {
-    let response = await postCatalog(page);
+  const catalogWithSession = async (category: YokomitsuCategoryRef, page: number): Promise<CatalogPage> => {
+    let response = await postCatalog(category, page);
     if (isYokomitsuSessionExpiredResponse(response) && !sessionRenewed) {
       sessionRenewed = true;
       await login();
-      response = await postCatalog(page);
+      response = await postCatalog(category, page);
     }
     if (isYokomitsuSessionExpiredResponse(response)) throw new Error('Yokomitsu session expired during catalog pagination');
-    return { page, response };
+    return { category, page, response };
   };
 
   const detailWithSession = async (url: string): Promise<YokomitsuHttpResponse> => {
@@ -222,34 +348,63 @@ export async function runYokomitsuFullCatalog(
   };
 
   await login();
-  const firstPage = await catalogWithSession(1);
-  const firstSummary = parseYokomitsuSearchResponseFull(firstPage.response.body, { page: 1, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
-  if (!firstSummary || !firstSummary.numberRegister || firstSummary.numberRegister <= 0) {
-    limitations.push('empty search did not return a global catalog; category discovery is required before full coverage');
+  const home = await getAuthenticatedHome();
+  const discoveredCategories = mergeCategories(checkpoint.discoveredCategories, discoverYokomitsuCategoriesFromHtml(home.body, YOKOMITSU_BASE_URL));
+  checkpoint.discoveryMethod = 'category-tree';
+  checkpoint.discoveredCategories = discoveredCategories;
+  checkpoint.counters.categoriesDiscovered = countCategories(discoveredCategories);
+  checkpoint.counters.subcategoriesDiscovered = countSubcategories(discoveredCategories);
+  await saveCheckpoint();
+
+  if (discoveredCategories.length === 0) {
+    limitations.push('no category IDs were discovered from authenticated portal HTML');
     return finalize();
   }
 
-  checkpoint.discoveryMethod = 'empty-search-global';
-  const totalResults = firstSummary.numberRegister;
-  const totalPages = calculateYokomitsuTotalPages(totalResults, pageSize);
-  collectProducts(firstSummary.products);
-  await markPageCompleted('empty:1');
+  for (const category of discoveredCategories) {
+    if (processedCategoryKeys.has(category.key)) continue;
+    try {
+      const firstPage = await catalogWithSession(category, 1);
+      const firstSummary = parseYokomitsuSearchResponseFull(firstPage.response.body, { ...category, page: 1, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
+      if (!firstSummary) {
+        checkpoint.counters.errors += 1;
+        addFailedCategory(category, 'invalid catalog JSON response');
+        continue;
+      }
 
-  const pageNumbers = Array.from({ length: Math.max((totalPages ?? 1) - 1, 0) }, (_, index) => index + 2)
-    .filter((page) => !completedPages.has(`empty:${page}`));
-  for (const page of pageNumbers) {
-    const pageResult = await catalogWithSession(page);
-    const summary = parseYokomitsuSearchResponseFull(pageResult.response.body, { page, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
-    if (!summary) {
+      const categoryTotalResults = firstSummary.numberRegister ?? firstSummary.products.length;
+      const categoryTotalPages = calculateYokomitsuTotalPages(categoryTotalResults, pageSize) ?? (firstSummary.products.length > 0 ? 1 : 0);
+      totalResults += categoryTotalResults;
+      totalPages += categoryTotalPages;
+      collectProducts(firstSummary.products);
+      await markPageCompleted(category, 1);
+
+      for (let page = 2; page <= categoryTotalPages; page += 1) {
+        if (completedPages.has(pageKey(category, page))) continue;
+        const pageResult = await catalogWithSession(category, page);
+        const summary = parseYokomitsuSearchResponseFull(pageResult.response.body, { ...category, page, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
+        if (!summary) {
+          checkpoint.counters.errors += 1;
+          addFailedCategory(category, `invalid catalog JSON response on page ${page}`);
+          continue;
+        }
+        if (summary.products.length === 0) {
+          await markPageCompleted(category, page);
+          break;
+        }
+        collectProducts(summary.products);
+        await markPageCompleted(category, page);
+      }
+
+      processedCategoryKeys.add(category.key);
+      checkpoint.processedCategoryKeys = Array.from(processedCategoryKeys);
+      checkpoint.counters.leafCategoriesProcessed = processedCategoryKeys.size;
+      await saveCheckpoint();
+    } catch (error) {
       checkpoint.counters.errors += 1;
-      continue;
+      addFailedCategory(category, error instanceof Error ? error.message : 'category failed');
+      await saveCheckpoint();
     }
-    if (summary.products.length === 0) {
-      await markPageCompleted(`empty:${page}`);
-      break;
-    }
-    collectProducts(summary.products);
-    await markPageCompleted(`empty:${page}`);
   }
 
   await runPool(discoveredProducts, concurrency, async (entry) => {
@@ -281,6 +436,13 @@ export async function runYokomitsuFullCatalog(
     }
   });
 
+  if (checkpoint.failedCategories.length > 0) {
+    limitations.push(`${checkpoint.failedCategories.length} categories failed and require retry`);
+  }
+  if (processedCategoryKeys.size < discoveredCategories.length) {
+    limitations.push(`${discoveredCategories.length - processedCategoryKeys.size} discovered categories remain unprocessed`);
+  }
+
   return finalize(totalResults, totalPages);
 
   function collectProducts(products: ProductRecord[]): void {
@@ -310,7 +472,8 @@ export async function runYokomitsuFullCatalog(
     }
   }
 
-  async function markPageCompleted(key: string): Promise<void> {
+  async function markPageCompleted(category: YokomitsuCategoryRef, page: number): Promise<void> {
+    const key = pageKey(category, page);
     if (!completedPages.has(key)) {
       completedPages.add(key);
       checkpoint.completedPages = Array.from(completedPages);
@@ -320,27 +483,39 @@ export async function runYokomitsuFullCatalog(
     }
   }
 
+  function addFailedCategory(category: YokomitsuCategoryRef, reason: string): void {
+    checkpoint.failedCategories = sanitizeFailedCategories([
+      ...checkpoint.failedCategories,
+      { key: category.key, reason },
+    ]);
+  }
+
   async function saveCheckpoint(): Promise<void> {
     checkpoint.updatedAt = now();
     await options.onCheckpoint?.(sanitizeYokomitsuCheckpoint(checkpoint));
   }
 
-  function finalize(totalResults?: number, totalPages?: number): YokomitsuFullScrapeResult {
+  function finalize(finalTotalResults = totalResults, finalTotalPages = totalPages): YokomitsuFullScrapeResult {
     const safeCheckpoint = sanitizeYokomitsuCheckpoint(checkpoint);
     return {
       discoveryMethod: checkpoint.discoveryMethod,
-      emptySearchReturnedGlobalCatalog: checkpoint.discoveryMethod === 'empty-search-global',
-      totalResults,
+      emptySearchReturnedGlobalCatalog: false,
+      categoriesDiscovered: safeCheckpoint.counters.categoriesDiscovered,
+      subcategoriesDiscovered: safeCheckpoint.counters.subcategoriesDiscovered,
+      leafCategoriesProcessed: safeCheckpoint.counters.leafCategoriesProcessed,
+      totalResults: finalTotalResults || undefined,
       pageSize,
-      totalPages,
+      totalPages: finalTotalPages || undefined,
       pagesProcessed: safeCheckpoint.counters.pagesProcessed,
       urlsDiscovered: discoveredKeys.size,
+      uniqueProducts: discoveredKeys.size,
       productsProcessed: safeCheckpoint.counters.productsProcessed,
       validProducts: safeCheckpoint.counters.validProducts,
       duplicates: safeCheckpoint.counters.duplicates,
       errors: safeCheckpoint.counters.errors,
       sessionRenewed,
       checkpoint: safeCheckpoint,
+      failedCategories: safeCheckpoint.failedCategories,
       limitations,
     };
   }
@@ -376,6 +551,148 @@ async function runPool<T>(items: T[], concurrency: number, worker: (item: T) => 
     }
   });
   await Promise.all(workers);
+}
+
+function categoryFromElement(element: HTMLElement, baseUrl: string): YokomitsuCategoryRef | undefined {
+  const href = element.getAttribute('href');
+  const value = element.getAttribute('value');
+  const attrs = attributeText(element);
+  const text = cleanNodeText(element);
+  const params = new URLSearchParams();
+
+  for (const [param, patterns] of [
+    ['id_category', [/data-id_category=["']?(\d+)/i, /data-id-category=["']?(\d+)/i, /data-category=["']?(\d+)/i, /id_category[=:]\s*["']?(\d+)/i]],
+    ['id_subcategory', [/data-id_subcategory=["']?(\d+)/i, /data-id-subcategory=["']?(\d+)/i, /data-subcategory=["']?(\d+)/i, /id_subcategory[=:]\s*["']?(\d+)/i]],
+    ['id_subsubcategory', [/data-id_subsubcategory=["']?(\d+)/i, /data-id-subsubcategory=["']?(\d+)/i, /data-subsubcategory=["']?(\d+)/i, /id_subsubcategory[=:]\s*["']?(\d+)/i]],
+    ['option_filter', [/data-option_filter=["']?(\d+)/i, /data-option-filter=["']?(\d+)/i, /option_filter[=:]\s*["']?(\d+)/i]],
+  ] as const) {
+    const found = patterns.map((pattern) => attrs.match(pattern)?.[1]).find(Boolean);
+    if (found) params.set(param, found);
+  }
+
+  if (value && /^\d+$/.test(value)) {
+    const name = (element.getAttribute('name') ?? element.parentNode?.getAttribute?.('name') ?? '').toLowerCase();
+    if (name.includes('subsub')) params.set('id_subsubcategory', value);
+    else if (name.includes('sub')) params.set('id_subcategory', value);
+    else if (name.includes('categor')) params.set('id_category', value);
+  }
+
+  if (href) {
+    try {
+      const url = new URL(href, baseUrl);
+      for (const key of ['id_category', 'id_subcategory', 'id_subsubcategory', 'option_filter']) {
+        const param = url.searchParams.get(key);
+        if (param) params.set(key, param);
+      }
+      const productPath = url.pathname.match(/\/productos\/([^/]+)\/([^/]+)\/(\d+)\/([^/?#]+)/i);
+      if (productPath && !params.get('id_subsubcategory')) {
+        params.set('id_subsubcategory', productPath[3]);
+        return categoryFromParams(params, text || decodeURIComponent(productPath[2]), url.toString(), 'subsubcategory');
+      }
+      return categoryFromParams(params, text, url.toString());
+    } catch {
+      return categoryFromParams(params, text);
+    }
+  }
+
+  return categoryFromParams(params, text);
+}
+
+function categoryFromParams(
+  params: URLSearchParams,
+  name?: string,
+  url?: string,
+  forcedLevel?: YokomitsuCategoryRef['level'],
+): YokomitsuCategoryRef | undefined {
+  const id_category = cleanParam(params.get('id_category'));
+  const id_subcategory = cleanParam(params.get('id_subcategory'));
+  const id_subsubcategory = cleanParam(params.get('id_subsubcategory'));
+  const option_filter = cleanParam(params.get('option_filter'));
+  if (!id_category && !id_subcategory && !id_subsubcategory && !option_filter) return undefined;
+  const level = forcedLevel
+    ?? (id_subsubcategory ? 'subsubcategory' : id_subcategory ? 'subcategory' : id_category ? 'category' : 'leaf');
+  const ref = {
+    key: categoryKey({ id_category, id_subcategory, id_subsubcategory, option_filter }),
+    name: sanitizeCategoryName(name),
+    url: sanitizeCategoryUrl(url),
+    id_category,
+    id_subcategory,
+    id_subsubcategory,
+    option_filter,
+    level,
+  };
+  return ref.key ? ref : undefined;
+}
+
+function mergeCategories(...groups: YokomitsuCategoryRef[][]): YokomitsuCategoryRef[] {
+  const merged = new Map<string, YokomitsuCategoryRef>();
+  for (const group of groups) {
+    for (const category of sanitizeCategories(group)) {
+      merged.set(category.key, { ...merged.get(category.key), ...category });
+    }
+  }
+  return Array.from(merged.values()).sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function sanitizeCategories(categories: YokomitsuCategoryRef[]): YokomitsuCategoryRef[] {
+  const seen = new Set<string>();
+  const safe: YokomitsuCategoryRef[] = [];
+  for (const category of categories) {
+    if (containsSecretMarker(JSON.stringify(category))) continue;
+    const normalized: YokomitsuCategoryRef = {
+      key: categoryKey(category),
+      name: sanitizeCategoryName(category.name),
+      url: sanitizeCategoryUrl(category.url),
+      id_category: cleanParam(category.id_category),
+      id_subcategory: cleanParam(category.id_subcategory),
+      id_subsubcategory: cleanParam(category.id_subsubcategory),
+      option_filter: cleanParam(category.option_filter),
+      level: category.level,
+    };
+    if (!normalized.key || seen.has(normalized.key) || containsSecretMarker(JSON.stringify(normalized))) continue;
+    seen.add(normalized.key);
+    safe.push(normalized);
+  }
+  return safe;
+}
+
+function sanitizeFailedCategories(values: YokomitsuFailedCategory[]): YokomitsuFailedCategory[] {
+  const seen = new Set<string>();
+  const safe: YokomitsuFailedCategory[] = [];
+  for (const value of values) {
+    const key = value.key?.trim();
+    if (!key || containsSecretMarker(key) || seen.has(key)) continue;
+    seen.add(key);
+    safe.push({ key, reason: containsSecretMarker(value.reason) ? '[REDACTED]' : value.reason.slice(0, 160) });
+  }
+  return safe;
+}
+
+function hasCategorySearchSignal(category: YokomitsuCategoryRef): boolean {
+  return Boolean(category.id_category || category.id_subcategory || category.id_subsubcategory || category.option_filter);
+}
+
+function pageKey(category: YokomitsuCategoryRef, page: number): string {
+  return `${category.key}:page:${page}`;
+}
+
+function categoryKey(input: Partial<YokomitsuCategoryRef>): string {
+  return [
+    `cat:${input.id_category ?? ''}`,
+    `sub:${input.id_subcategory ?? ''}`,
+    `subsub:${input.id_subsubcategory ?? ''}`,
+    `opt:${input.option_filter ?? ''}`,
+  ].join('|');
+}
+
+function countCategories(categories: YokomitsuCategoryRef[]): number {
+  return new Set(categories.map((category) => category.id_category).filter(Boolean)).size;
+}
+
+function countSubcategories(categories: YokomitsuCategoryRef[]): number {
+  return new Set(categories
+    .filter((category) => category.id_subcategory)
+    .map((category) => [category.id_category, category.id_subcategory].filter(Boolean).join(':'))).size;
 }
 
 function mergeYokomitsuProduct(listing: ProductRecord, detail?: ProductRecord): ProductRecord {
@@ -420,9 +737,13 @@ function reportProgress(
   checkpoint: YokomitsuFullCheckpoint,
 ): void {
   onProgress?.({
+    categoriesDiscovered: checkpoint.counters.categoriesDiscovered,
+    subcategoriesDiscovered: checkpoint.counters.subcategoriesDiscovered,
+    leafCategoriesProcessed: checkpoint.counters.leafCategoriesProcessed,
     pagesProcessed: checkpoint.counters.pagesProcessed,
     totalPages,
     urlsDiscovered,
+    uniqueProducts: urlsDiscovered,
     productsProcessed: checkpoint.counters.productsProcessed,
     validProducts: checkpoint.counters.validProducts,
     duplicates: checkpoint.counters.duplicates,
@@ -463,13 +784,52 @@ function sanitizeDiscoveredProducts(values: Array<{ sourceUrl?: string; sku?: st
     const sourceUrl = canonicalYokomitsuUrl(value.sourceUrl);
     const sku = value.sku?.trim();
     if (!sourceUrl && !sku) continue;
-    if ([sourceUrl, sku].filter(Boolean).join(' ').match(/cookie|authorization|password|auth_token|token|rut|YOKOMITSU_FRONT=/i)) continue;
+    if ([sourceUrl, sku].filter(Boolean).join(' ').match(secretPattern())) continue;
     const key = sourceUrl ? `url:${sourceUrl}` : `sku:${sku?.toUpperCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     safe.push({ sourceUrl, sku });
   }
   return safe;
+}
+
+function attributeText(element: HTMLElement): string {
+  return element.rawAttrs ?? '';
+}
+
+function cleanNodeText(element: HTMLElement): string | undefined {
+  return sanitizeCategoryName(element.structuredText || element.text);
+}
+
+function cleanParam(value: string | undefined | null): string | undefined {
+  const cleaned = value?.trim();
+  return cleaned && /^\d+$/.test(cleaned) ? cleaned : undefined;
+}
+
+function sanitizeCategoryName(value: string | undefined): string | undefined {
+  const cleaned = value?.replace(/\s+/g, ' ').trim();
+  if (!cleaned || containsSecretMarker(cleaned)) return undefined;
+  return cleaned.slice(0, 120);
+}
+
+function sanitizeCategoryUrl(value: string | undefined): string | undefined {
+  if (!value || containsSecretMarker(value)) return undefined;
+  try {
+    const url = new URL(value, YOKOMITSU_BASE_URL);
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function containsSecretMarker(value: string | undefined): boolean {
+  return Boolean(value && secretPattern().test(value));
+}
+
+function secretPattern(): RegExp {
+  return /cookie|authorization|password|auth_token|token|rut|YOKOMITSU_FRONT=|bearer|session/i;
 }
 
 function delay(ms: number): Promise<void> {
