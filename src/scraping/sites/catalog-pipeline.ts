@@ -11,6 +11,7 @@ export async function runCatalogPipeline(options: CatalogPipelineOptions): Promi
   const context = {
     site: options.site,
     maxPages: options.maxPages,
+    maxProducts: options.maxProducts,
     signal: options.signal,
     fetch: async (url: string, init?: { headers?: Record<string, string> }) => {
       const response = await fetchHtml(url, 5, { headers: init?.headers, signal: options.signal });
@@ -73,5 +74,13 @@ function emptyAudit(options: CatalogPipelineOptions): CatalogAuditReport {
     rejected: 0,
     errors: 0,
     estimatedCoverage: 0,
+    limited: false,
+    terminationReason: 'catalog_end',
+    requestedLimits: {
+      ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
+      ...(options.maxProducts !== undefined ? { maxProducts: options.maxProducts } : {}),
+    },
+    pagesAudited: 0,
+    productsAudited: 0,
   };
 }

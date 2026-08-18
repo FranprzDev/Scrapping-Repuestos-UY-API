@@ -55,6 +55,7 @@ export interface CatalogHttpResponse {
 export interface CatalogRequestContext {
   site: CatalogSiteConfig;
   maxPages?: number;
+  maxProducts?: number;
   signal?: AbortSignal;
   fetch(url: string, init?: { headers?: Record<string, string> }): Promise<CatalogHttpResponse>;
 }
@@ -77,6 +78,11 @@ export interface DiscoveryResult {
   uniqueUrls: string[];
   duplicates: number;
   errors: CatalogPipelineError[];
+  limited: boolean;
+  terminationReason: CatalogTerminationReason;
+  requestedLimits: CatalogAuditLimits;
+  pagesAudited: number;
+  productsAudited: number;
 }
 
 export interface ExtractionResult {
@@ -112,7 +118,12 @@ export interface CatalogAuditReport {
   duplicates: number;
   rejected: number;
   errors: number;
-  estimatedCoverage: number;
+  estimatedCoverage: number | null;
+  limited: boolean;
+  terminationReason: CatalogTerminationReason;
+  requestedLimits: CatalogAuditLimits;
+  pagesAudited: number;
+  productsAudited: number;
   outputPath?: string;
 }
 
@@ -135,6 +146,12 @@ export interface CatalogDuplicateProduct {
 
 export type CatalogPipelinePhase = 'discovery' | 'extraction' | 'normalization' | 'validation' | 'persistence';
 export type CatalogRunMode = 'discover' | 'probe' | 'audit' | 'run';
+export type CatalogTerminationReason = 'catalog_end' | 'max_pages' | 'max_products' | 'repeated_page' | 'no_progress';
+
+export interface CatalogAuditLimits {
+  maxPages?: number;
+  maxProducts?: number;
+}
 
 export interface CatalogAdapter {
   readonly platform: CatalogPlatform;
