@@ -48,6 +48,11 @@ export async function runCatalogPipeline(options: CatalogPipelineOptions): Promi
   const auditPath = path.join(auditRoot, `${options.site.id}.json`);
   await writeFile(auditPath, `${JSON.stringify({ report, discovery, extraction, normalization, validation }, null, 2)}\n`);
 
+  if (options.mode === 'run' && options.persistProducts) {
+    const persisted = await options.persistProducts(options.site, validation.products);
+    return { ...report, outputPath: persisted?.outputPath ?? auditPath };
+  }
+
   if (options.mode === 'run' && adapter.persist) {
     const persisted = await adapter.persist(options.site, validation.products, auditRoot);
     return { ...report, outputPath: persisted.outputPath };
