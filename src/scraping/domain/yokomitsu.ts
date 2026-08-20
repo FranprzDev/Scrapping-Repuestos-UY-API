@@ -646,12 +646,25 @@ function smallestTextContainer(candidates: HTMLElement[]): HTMLElement {
 function closestYokomitsuProductCard(element: HTMLElement): HTMLElement | undefined {
   let current: HTMLElement | undefined = element;
   let best: HTMLElement | undefined;
+
   while (current) {
     const text = elementText(current) ?? '';
-    if (looksLikeYokomitsuProductElement(current) && text.length <= 3_000) best = current;
+    const productLinks = current.querySelectorAll('a[href*="producto-detalle"]').length;
+
+    if (productLinks > 1) break;
+
+    if (
+      productLinks === 1 &&
+      looksLikeYokomitsuProductElement(current) &&
+      text.length <= 3_000
+    ) {
+      best = current;
+    }
+
     const parent: unknown = current.parentNode;
     current = isHtmlElementLike(parent) ? parent : undefined;
   }
+
   return best;
 }
 
