@@ -1,5 +1,11 @@
 import 'dotenv/config';
-import { chromium, type Page, type Request, type Response } from 'playwright';
+import { chromium, type APIRequestContext, type APIResponse, type BrowserContext, type Page, type Request, type Response } from 'playwright';
+import {
+  authenticateYokomitsuHttpSession,
+  YOKOMITSU_HTTP_LOGIN_URL,
+  type YokomitsuHttpClient,
+  type YokomitsuHttpResponse,
+} from '../src/scraping/domain/yokomitsu-auth';
 import {
   closeYokomitsuSessionResources,
   extractFieldNamesFromBody,
@@ -16,7 +22,9 @@ import {
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
+  summarizeYokomitsuSearchAuth,
   YOKOMITSU_BASE_URL,
+  YOKOMITSU_FRONT_COOKIE_NAME,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_MAX_DIAGNOSTIC_PRODUCTS,
   type YokomitsuDiagnosticReport,
@@ -25,8 +33,8 @@ import {
 import {
   collectYokomitsuCatalogLinks,
   detectYokomitsuCaptcha,
-  detectYokomitsuTwoFactor,
   extractYokomitsuProductsFromDom,
+  inspectYokomitsuTwoFactor,
   inspectYokomitsuStorage,
 } from '../src/scraping/domain/yokomitsu-playwright';
 import type { ProductRecord } from '../src/scraping/interfaces/scraping.types';
@@ -53,6 +61,7 @@ const report: YokomitsuDiagnosticReport = {
     usesBearerToken: false,
     usesLocalStorage: false,
     usesRefreshToken: false,
+    sessionCookieNames: [],
   },
   catalogApiCandidates: [],
   pagination: {
@@ -91,6 +100,10 @@ async function main() {
 
   const requests = new Map<Request, YokomitsuNetworkCall>();
   const productSamples = new Map<string, ProductRecord>();
+  const observedSessionCookieNames = new Set<string>();
+  let observedSearchUsesSessionCookie = false;
+  let observedSearchAuthorizationHeader = false;
+  let observedSearchUsesBearerToken = false;
   let sawAuthorizationHeader = false;
   let authenticatedCatalogResponses = 0;
 
@@ -98,6 +111,13 @@ async function main() {
     if (!isYokomitsuUrl(request.url())) return;
     const headers = request.headers();
     sawAuthorizationHeader ||= typeof headers.authorization === 'string' && headers.authorization.trim().length > 0;
+    if (isYokomitsuSearchEndpoint(request.url())) {
+      const authSummary = summarizeYokomitsuSearchAuth(headers);
+      observedSearchUsesSessionCookie ||= authSummary.usesSessionCookie;
+      observedSearchAuthorizationHeader ||= authSummary.authorizationHeaderObserved;
+      observedSearchUsesBearerToken ||= authSummary.usesBearerToken;
+      for (const name of authSummary.cookieNames) observedSessionCookieNames.add(name);
+    }
     const likelyLoginRequest = isLikelyLoginRequest(request);
     const call: YokomitsuNetworkCall = {
       method: request.method(),
@@ -124,8 +144,9 @@ async function main() {
   });
 
   try {
-    await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+    await page.goto(manualLogin ? YOKOMITSU_LOGIN_URL : YOKOMITSU_HTTP_LOGIN_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => undefined);
+    report.login.fieldNames = await collectLoginFieldNames(page);
 
     report.captchaDetected = await detectYokomitsuCaptcha(page);
     if (report.captchaDetected && !manualLogin) {
@@ -143,25 +164,49 @@ async function main() {
         return;
       }
     } else {
-      const filled = await fillLoginForm(page, USERNAME as string, PASSWORD as string);
-      if (!filled) {
-        report.status = 'blocked';
-        report.restrictions.push('Could not identify username/password fields safely');
+      const login = await authenticateYokomitsuHttpSession(
+        createPlaywrightYokomitsuHttpClient(context.request, context),
+        { username: USERNAME as string, password: PASSWORD as string },
+      );
+      report.login.method = login.method;
+      report.login.endpoint = login.endpoint;
+      report.login.fieldNames = login.fieldNames;
+      report.login.usesSessionCookie = login.usesSessionCookie;
+      (report.login as typeof report.login & { httpDiagnostic?: unknown }).httpDiagnostic = login.diagnostic;
+      for (const name of login.sessionCookieNames) observedSessionCookieNames.add(name);
+
+      if (!login.authenticated) {
+        report.status = 'login-failed';
+        report.restrictions.push(login.error ?? 'HTTP login did not reach an authenticated portal view');
         return;
       }
 
-      await submitLogin(page);
+      await page.goto(YOKOMITSU_LOGIN_URL, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle').catch(() => undefined);
       await page.waitForTimeout(1500);
     }
 
     report.captchaDetected = report.captchaDetected || await detectYokomitsuCaptcha(page);
-    report.twoFactorDetected = await detectYokomitsuTwoFactor(page);
+    const twoFactorInspection = await inspectYokomitsuTwoFactor(page);
+    report.twoFactorDetected = twoFactorInspection.detected;
+    (report as typeof report & { twoFactorSignals?: unknown }).twoFactorSignals = twoFactorInspection.signals;
     report.reachedPortal = await hasReachedPortal(page, authenticatedCatalogResponses);
     report.authenticated = report.reachedPortal && !report.twoFactorDetected;
 
     const cookies = await context.cookies();
-    report.login.usesSessionCookie = cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name)) || cookies.length > 0;
+    report.login.usesSessionCookie = observedSearchUsesSessionCookie
+      || cookies.some((cookie) => /session|sess|sid|php|laravel|ci_session|connect/i.test(cookie.name))
+      || cookies.length > 0;
+    for (const cookie of cookies) {
+      if (cookie.name === YOKOMITSU_FRONT_COOKIE_NAME) observedSessionCookieNames.add(cookie.name);
+    }
+    report.login.sessionCookieNames = Array.from(observedSessionCookieNames).sort();
+    report.login.observedCatalogSearchAuth = {
+      usesSessionCookie: observedSearchUsesSessionCookie,
+      cookieNames: report.login.sessionCookieNames,
+      usesBearerToken: observedSearchUsesBearerToken,
+      authorizationHeaderObserved: observedSearchAuthorizationHeader,
+    };
     const storageSignals = await inspectYokomitsuStorage(page);
     report.login.usesLocalStorage = storageSignals.localStorageKeys > 0;
     report.login.usesJwt = storageSignals.hasJwt;
@@ -248,46 +293,6 @@ async function inspectResponse(
   }
 }
 
-async function fillLoginForm(page: Page, username: string, password: string): Promise<boolean> {
-  const passwordInput = page.locator('input[type="password"]').first();
-  if (await passwordInput.count() === 0) return false;
-  const usernameInput = page.locator([
-    'input[name*="user" i]',
-    'input[name*="usuario" i]',
-    'input[name*="email" i]',
-    'input[name*="login" i]',
-    'input[name*="cliente" i]',
-    'input[type="email"]',
-    'input[type="text"]',
-  ].join(', ')).first();
-  if (await usernameInput.count() === 0) return false;
-
-  await usernameInput.fill(username);
-  await passwordInput.fill(password);
-  return true;
-}
-
-async function submitLogin(page: Page): Promise<void> {
-  const submit = page.locator([
-    'button[type="submit"]',
-    'input[type="submit"]',
-    'button:has-text("Ingresar")',
-    'button:has-text("Entrar")',
-    'button:has-text("Login")',
-    'button:has-text("Iniciar")',
-  ].join(', ')).first();
-
-  if (await submit.count() > 0) {
-    await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => undefined),
-      submit.click(),
-    ]);
-    return;
-  }
-
-  await page.keyboard.press('Enter');
-}
-
 async function exploreCatalog(page: Page): Promise<void> {
   const candidateUrls = await collectYokomitsuCatalogLinks(page);
 
@@ -301,9 +306,40 @@ async function exploreCatalog(page: Page): Promise<void> {
   }
 }
 
+function createPlaywrightYokomitsuHttpClient(request: APIRequestContext, context: BrowserContext): YokomitsuHttpClient {
+  return {
+    get: async (url, headers) => toYokomitsuHttpResponse(await request.get(url, { headers })),
+    post: async (url, body, headers) => toYokomitsuHttpResponse(await request.post(url, {
+      headers,
+      data: body,
+    })),
+    getCookieNames: async () => {
+      const cookies = await context.cookies('https://www.yokomitsuparts.com.uy');
+      return Array.from(new Set(cookies.map((cookie) => cookie.name))).sort();
+    },
+  };
+}
+
+async function toYokomitsuHttpResponse(response: APIResponse): Promise<YokomitsuHttpResponse> {
+  const headers = response.headers();
+  const setCookies = response.headersArray()
+    .filter((header) => /^set-cookie$/i.test(header.name))
+    .map((header) => header.value);
+  if (setCookies.length > 0) headers['set-cookie'] = setCookies;
+  return {
+    url: response.url(),
+    status: response.status(),
+    headers,
+    body: await response.text(),
+  };
+}
+
 async function hasReachedPortal(page: Page, authenticatedCatalogResponses: number): Promise<boolean> {
   const url = page.url();
   const hasPassword = await page.locator('input[type="password"]').count().catch(() => 1);
+  const hasYokomitsuFrontCookie = await page.context().cookies()
+    .then((cookies) => cookies.some((cookie) => cookie.name === YOKOMITSU_FRONT_COOKIE_NAME))
+    .catch(() => false);
   const portalElementCount = await page.locator([
     'a[href*="logout" i]',
     'a[href*="salir" i]',
@@ -319,13 +355,25 @@ async function hasReachedPortal(page: Page, authenticatedCatalogResponses: numbe
     hasPasswordInput: hasPassword > 0,
     portalElementCount,
     authenticatedCatalogResponses,
+    hasYokomitsuFrontCookie,
   });
+}
+
+async function collectLoginFieldNames(page: Page): Promise<string[]> {
+  const inputs = page.locator('form input[name], input[type="password"][name], input[type="email"][name], input[type="text"][name]');
+  const count = await inputs.count().catch(() => 0);
+  const names = new Set<string>();
+  for (let index = 0; index < count; index += 1) {
+    const name = await inputs.nth(index).getAttribute('name').catch(() => null);
+    if (name) names.add(name);
+  }
+  return Array.from(names);
 }
 
 function isLikelyLoginRequest(request: Request): boolean {
   if (request.method() === 'GET') return false;
   const combined = `${request.url()} ${request.postData() ?? ''}`;
-  return /login|auth|signin|ingresar|usuario|password|passwd|pwd/i.test(combined);
+  return /process-login|login|auth|signin|ingresar|usuario|rut|password|passwd|pwd/i.test(combined);
 }
 
 function isYokomitsuUrl(value: string): boolean {
@@ -359,7 +407,7 @@ async function waitForManualLogin(page: Page, catalogResponses: () => number, ti
 function printManualLoginInstructions(): void {
   console.log([
     'Yokomitsu manual diagnostic mode.',
-    'A visible Chromium window is open at the login page.',
+    'A visible Chromium window is open at the Yokomitsu home/login page.',
     'Please sign in manually, solve any CAPTCHA manually, and wait until the authenticated portal is loaded.',
     'The diagnostic will not type, read, print, or store your username, password, cookies, tokens, storage state, screenshots, HAR, or private HTML.',
     `Waiting up to ${MANUAL_LOGIN_TIMEOUT_MS}ms for the authenticated portal...`,
@@ -375,7 +423,7 @@ function parseArgs(values: string[]): Map<string, string> {
 
 function redactError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/(authorization|cookie|token|password|pass)=([^&\s]+)/gi, '$1=[REDACTED]');
+  return message.replace(/(authorization|cookie|auth_token|token|password|pass|rut)=([^&\s]+)/gi, '$1=[REDACTED]');
 }
 
 function printReport(): void {

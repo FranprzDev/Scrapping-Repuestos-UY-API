@@ -4,6 +4,7 @@ import { chromium, type Browser } from 'playwright';
 import {
   detectYokomitsuCaptcha,
   extractYokomitsuProductsFromDom,
+  inspectYokomitsuTwoFactor,
 } from './yokomitsu-playwright';
 
 test('Yokomitsu Playwright smoke no depende de helpers serializados por esbuild', async (t) => {
@@ -50,6 +51,36 @@ test('Yokomitsu Playwright smoke no depende de helpers serializados por esbuild'
     assert.equal(products[0].sku, 'YK-001');
     assert.equal(products[0].sourceUrl, 'https://www.yokomitsuparts.com.uy/v2/producto/YK-001');
     assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/imagenes/filtro.jpg');
+
+    await page.goto(dataUrl(`
+      <html><body>
+        <section class="catalogo">
+          <article class="producto">
+            <a href="/v2/producto-detalle/modelo/1/item">Repuesto con token de descripcion</a>
+            <span class="precio">$3.406 +IVA</span>
+            <span class="stock">Stock Critico</span>
+            <script>window.verificacion = "texto generico sanitizado";</script>
+          </article>
+        </section>
+      </body></html>
+    `));
+    const genericPortalInspection = await inspectYokomitsuTwoFactor(page);
+    assert.equal(genericPortalInspection.detected, false);
+    assert.deepEqual(genericPortalInspection.signals, []);
+
+    await page.goto(dataUrl(`
+      <html><body>
+        <form id="formVerify">
+          <label for="otp">Codigo de verificacion</label>
+          <input id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric">
+          <button>Validar</button>
+        </form>
+      </body></html>
+    `));
+    const challengeInspection = await inspectYokomitsuTwoFactor(page);
+    assert.equal(challengeInspection.detected, true);
+    assert.equal(challengeInspection.signals[0].type, 'input-field');
+    assert.equal(challengeInspection.signals[0].name, 'otp');
   } finally {
     await page.close().catch(() => undefined);
     await browser.close().catch(() => undefined);

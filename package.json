@@ -23,7 +23,8 @@
     "catalog:audit": "tsx scripts/catalog-command.ts --mode=audit",
     "catalog:run": "tsx scripts/catalog-command.ts --mode=run",
     "site:create": "tsx scripts/site-create.ts",
-    "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts"
+    "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts",
+    "yokomitsu:scrape": "tsx scripts/yokomitsu-scrape.ts"
   },
   "engines": {
     "node": ">=20.11"

@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   closeYokomitsuSessionResources,
+  extractCookieNames,
   extractFieldNamesFromBody,
+  extractYokomitsuProductDetailFromHtml,
   extractYokomitsuProductsFromJson,
   hasReachedYokomitsuPortal,
   hasVisibleYokomitsuCaptchaChallenge,
@@ -17,11 +19,31 @@ import {
   normalizeYokomitsuPrice,
   parseYokomitsuSearchRequestBody,
   parseYokomitsuSearchResponse,
+  parseYokomitsuSearchResponseFull,
   sanitizeHeaders,
   sanitizeRequestBody,
   sanitizeUrl,
   summarizeJsonShape,
+  summarizeYokomitsuSearchAuth,
+  YOKOMITSU_FRONT_COOKIE_NAME,
+  YOKOMITSU_LEGACY_LOGIN_URL,
+  YOKOMITSU_LOGIN_URL,
+  YOKOMITSU_SEARCH_ENDPOINT,
 } from './yokomitsu';
+import {
+  authenticateYokomitsuHttpSession,
+  buildYokomitsuLoginForm,
+  extractSetCookieNames,
+  extractYokomitsuAuthTokenFromHtml,
+  fetchYokomitsuCatalogWithSession,
+  isYokomitsuSessionExpiredResponse,
+  parseYokomitsuLoginResponse,
+  withYokomitsuHttpSession,
+  YOKOMITSU_HTTP_LOGIN_URL,
+  YOKOMITSU_PROCESS_LOGIN_ENDPOINT,
+  type YokomitsuHttpClient,
+  type YokomitsuHttpResponse,
+} from './yokomitsu-auth';
 
 test('Yokomitsu normaliza precios uruguayos sin afectar otros proveedores', () => {
   assert.equal(normalizeYokomitsuPrice('$ 1.234'), '1234');
@@ -49,11 +71,199 @@ test('Yokomitsu redacta credenciales, cookies y tokens en requests', () => {
     accept: 'application/json',
   });
   assert.deepEqual(sanitizeRequestBody('usuario=demo&password=secret&empresa=abc'), {
-    usuario: '[VALUE]',
+    usuario: '[REDACTED]',
     password: '[REDACTED]',
     empresa: '[VALUE]',
   });
+  assert.deepEqual(sanitizeRequestBody('rut=123456&auth_token=SANITIZED_AUTH_TOKEN&password=secret&remember=0'), {
+    rut: '[REDACTED]',
+    auth_token: '[REDACTED]',
+    password: '[REDACTED]',
+    remember: '[VALUE]',
+  });
   assert.deepEqual(extractFieldNamesFromBody('usuario=demo&password=secret'), ['usuario', 'password']);
+});
+
+test('Yokomitsu extrae auth_token hidden y nombres de Set-Cookie sin valores', () => {
+  const fixture = readYokomitsuLoginFixture();
+  assert.equal(extractYokomitsuAuthTokenFromHtml(fixture.loginHtml), 'SANITIZED_AUTH_TOKEN');
+  assert.equal(extractYokomitsuAuthTokenFromHtml(fixture.loginHtmlWithoutToken), undefined);
+  assert.deepEqual(extractSetCookieNames({
+    'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+  }), [YOKOMITSU_FRONT_COOKIE_NAME]);
+});
+
+test('Yokomitsu arma login HTTP con campos reales y redaccion segura', () => {
+  const form = buildYokomitsuLoginForm({
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  }, 'SANITIZED_AUTH_TOKEN');
+
+  assert.deepEqual(Array.from(form.keys()), ['rut', 'office', 'password', 'remember', 'auth_token']);
+  assert.equal(form.get('office'), '0');
+  assert.equal(form.get('remember'), '0');
+  assert.deepEqual(sanitizeRequestBody(form.toString()), {
+    rut: '[REDACTED]',
+    office: '[VALUE]',
+    password: '[REDACTED]',
+    remember: '[VALUE]',
+    auth_token: '[REDACTED]',
+  });
+});
+
+test('Yokomitsu interpreta respuestas success y error de process-login.php', () => {
+  const fixture = readYokomitsuLoginFixture();
+  assert.deepEqual(parseYokomitsuLoginResponse(fixture.loginSuccess), {
+    success: true,
+    message: 'success',
+    error: false,
+  });
+  assert.deepEqual(parseYokomitsuLoginResponse('{"error":false,"message":"success-cart"}'), {
+    success: true,
+    message: 'success-cart',
+    error: false,
+  });
+  assert.deepEqual(parseYokomitsuLoginResponse(fixture.loginError), {
+    success: false,
+    message: 'invalid credentials',
+    error: true,
+  });
+});
+
+test('Yokomitsu login HTTP reutiliza YOKOMITSU_FRONT y valida home autenticado', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.portalHtml),
+  ]);
+
+  const result = await authenticateYokomitsuHttpSession(client, {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+
+  assert.equal(result.authenticated, true);
+  assert.equal(result.method, 'POST');
+  assert.equal(result.endpoint, YOKOMITSU_PROCESS_LOGIN_ENDPOINT);
+  assert.deepEqual(result.fieldNames, ['rut', 'office', 'password', 'remember', 'auth_token']);
+  assert.equal(result.usesSessionCookie, true);
+  assert.deepEqual(result.sessionCookieNames, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.equal(result.usesBearerToken, false);
+  assert.equal(result.authorizationHeaderObserved, false);
+  assert.deepEqual(calls.map((call) => `${call.method} ${call.url}`), [
+    `GET ${YOKOMITSU_HTTP_LOGIN_URL}`,
+    `POST ${YOKOMITSU_PROCESS_LOGIN_ENDPOINT}`,
+    `GET ${YOKOMITSU_LOGIN_URL}`,
+  ]);
+  assert.deepEqual(sanitizeRequestBody(calls[1].body), {
+    rut: '[REDACTED]',
+    office: '[VALUE]',
+    password: '[REDACTED]',
+    remember: '[VALUE]',
+    auth_token: '[REDACTED]',
+  });
+});
+
+test('Yokomitsu login HTTP falla claramente si auth_token falta o el login responde error', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const missingToken = await authenticateYokomitsuHttpSession(createFakeYokomitsuClient([], [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtmlWithoutToken, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+  ]), {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+  assert.equal(missingToken.authenticated, false);
+  assert.match(missingToken.error ?? '', /auth_token missing/);
+
+  const rejected = await authenticateYokomitsuHttpSession(createFakeYokomitsuClient([], [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, {
+      'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure`,
+    }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginError),
+  ]), {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  });
+  assert.equal(rejected.authenticated, false);
+  assert.match(rejected.error ?? '', /login rejected/);
+});
+
+test('Yokomitsu detecta sesion vencida por redirect, HTML de login o home no autenticado', () => {
+  const fixture = readYokomitsuLoginFixture();
+  assert.equal(isYokomitsuSessionExpiredResponse(response('https://www.yokomitsuparts.com.uy/v2/login', fixture.expiredHtml)), true);
+  assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_SEARCH_ENDPOINT, '', {
+    location: '/v2/login',
+  }, 302)), true);
+  assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_SEARCH_ENDPOINT, fixture.expiredHtml)), true);
+  assert.equal(isYokomitsuSessionExpiredResponse(response(YOKOMITSU_SEARCH_ENDPOINT, '{"error":false,"data":"<article></article>"}')), false);
+});
+
+test('Yokomitsu re-login controlado ocurre como maximo una vez por ejecucion', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, { 'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure` }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.portalHtml),
+    response(YOKOMITSU_SEARCH_ENDPOINT, fixture.expiredHtml),
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, { 'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure` }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.portalHtml),
+    response(YOKOMITSU_SEARCH_ENDPOINT, fixture.expiredHtml),
+  ]);
+
+  const result = await fetchYokomitsuCatalogWithSession(client, {
+    body: 'search=CREMALLERA&register=12&view=grid',
+    credentials: {
+      username: 'SANITIZED_RUT',
+      password: 'SANITIZED_PASSWORD',
+    },
+    maxRelogins: 1,
+  });
+
+  assert.equal(result.loginAttempts, 2);
+  assert.equal(result.relogins, 1);
+  assert.equal(result.sessionExpired, true);
+  assert.equal(calls.filter((call) => call.url === YOKOMITSU_PROCESS_LOGIN_ENDPOINT).length, 2);
+  assert.equal(calls.filter((call) => call.url === YOKOMITSU_SEARCH_ENDPOINT).length, 2);
+});
+
+test('Yokomitsu limpia la sesion HTTP en finally', async () => {
+  const fixture = readYokomitsuLoginFixture();
+  const calls: Array<{ method: string; url: string; body?: string }> = [];
+  const client = createFakeYokomitsuClient(calls, [
+    response(YOKOMITSU_HTTP_LOGIN_URL, fixture.loginHtml, { 'set-cookie': `${YOKOMITSU_FRONT_COOKIE_NAME}=REDACTED; Path=/; Secure` }),
+    response(YOKOMITSU_PROCESS_LOGIN_ENDPOINT, fixture.loginSuccess),
+    response(YOKOMITSU_LOGIN_URL, fixture.portalHtml),
+  ]);
+
+  await assert.rejects(() => clientWithSessionCleanup(client, async () => {
+    throw new Error('diagnostic failed after login');
+  }), /diagnostic failed/);
+  assert.equal(calls.at(-1)?.method, 'CLEAR');
+});
+
+test('Yokomitsu resume autenticacion observada del buscador sin valores sensibles', () => {
+  const auth = summarizeYokomitsuSearchAuth({
+    cookie: `${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; other_cookie=redacted`,
+    'x-requested-with': 'XMLHttpRequest',
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+  });
+
+  assert.equal(auth.usesSessionCookie, true);
+  assert.deepEqual(auth.cookieNames, [YOKOMITSU_FRONT_COOKIE_NAME]);
+  assert.equal(auth.authorizationHeaderObserved, false);
+  assert.equal(auth.usesBearerToken, false);
+  assert.deepEqual(extractCookieNames(`${YOKOMITSU_FRONT_COOKIE_NAME}=redacted; analytics=redacted`), [
+    YOKOMITSU_FRONT_COOKIE_NAME,
+    'analytics',
+  ]);
 });
 
 test('Yokomitsu extrae muestra desde JSON sanitizado de catalogo', () => {
@@ -155,9 +365,252 @@ test('Yokomitsu extrae productos desde data HTML sin asumir stock por Comprar', 
   assert.equal(products[0].price, '3406');
   assert.equal(products[0].currency, 'UYU');
   assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-001.jpg');
-  assert.equal(products[0].availability, undefined);
+  assert.equal(products[0].availability, 'Stock Cr\u00edtico');
+  assert.equal(products[0].attributes?.stockStatus, 'Stock Cr\u00edtico');
   assert.equal(products[0].stock, undefined);
   assert.equal(products[1].price, '9221');
+  assert.equal(products[1].availability, 'out_of_stock');
+  assert.equal(products[1].attributes?.stockStatus, 'out_of_stock');
+  assert.equal(products[1].stock, undefined);
+});
+
+test('Yokomitsu extrae todas las cards aunque el listado tenga muchos elementos de menu', () => {
+  const menu = Array.from({ length: 40 }, (_, index) => `<li>Menu global ${index + 1}</li>`).join('');
+  const data = `
+    <ul class="menu">${menu}</ul>
+    <section class="resultados">
+      ${Array.from({ length: 12 }, (_, index) => `
+        <article class="producto" data-codprod="YK-LIST-${index + 1}">
+          <a href="/v2/producto-detalle/demo/${index + 1}/producto-${index + 1}"><h3>Producto listado ${index + 1}</h3></a>
+          <span>C\u00f3d. Yokomitsu: YK-LIST-${index + 1}</span>
+          <strong class="precio">$3.406 +IVA</strong>
+        </article>
+      `).join('')}
+    </section>
+  `;
+
+  const products = extractYokomitsuProductsFromJson({ number_register: 12, data });
+
+  assert.equal(products.length, 5);
+  const full = parseYokomitsuSearchResponseFull(JSON.stringify({ number_register: 12, data }), parseYokomitsuSearchRequestBody('register=12'));
+  assert.equal(full?.products.length, 12);
+});
+
+test('Yokomitsu detalle no contamina descripcion ni imagenes con assets globales', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <style>.menu { display: block; }</style>
+        <script>function globalMenu(){ $.ajax('/v2/ajax/menu.php'); }</script>
+      </head>
+      <body>
+        <nav>Inicio Catalogo Ofertas Contacto</nav>
+        <img src="/images/icon-fono.svg">
+        <main>
+          <article class="producto-detalle" data-codprod="YK-DETAIL-1">
+            <h1>Cremallera direccion Toyota Corolla</h1>
+            <div class="product-gallery">
+              <img src="/v2/img/yokomitsu/yok-detail-1.jpg">
+              <img data-zoom-image="/v2/img/yokomitsu/yok-detail-1-alt.webp">
+              <img src="/images/loading.gif">
+            </div>
+            <section class="descripcion-producto">Cremallera hidraulica nueva para aplicacion sanitizada.</section>
+            <span>C\u00f3d. Yokomitsu: YK-DETAIL-1</span>
+            <span>Marca: DemoBrand</span>
+            <span>Modelo: Corolla</span>
+            <span>OEM: OEM-DETAIL-1</span>
+            <span>Procedencia: CHINA</span>
+            <span>Stock Cr\u00edtico</span>
+            <strong class="precio">$9.221 +IVA</strong>
+          </article>
+        </main>
+        <footer>Texto global del menu que no pertenece a la ficha</footer>
+      </body>
+    </html>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/demo/1/cremallera');
+
+  assert.ok(product);
+  assert.equal(product.productName, 'Cremallera direccion Toyota Corolla');
+  assert.equal(product.sku, 'YK-DETAIL-1');
+  assert.equal(product.brand, 'DemoBrand');
+  assert.equal(product.price, '9221');
+  assert.equal(product.currency, 'UYU');
+  assert.equal(product.availability, 'Stock Cr\u00edtico');
+  assert.equal(product.description, 'Cremallera hidraulica nueva para aplicacion sanitizada.');
+  assert.equal(product.description?.includes('function('), false);
+  assert.equal(product.description?.includes('$.ajax'), false);
+  assert.equal(product.description?.includes('<script'), false);
+  assert.equal(product.description?.includes('Texto global del menu'), false);
+  assert.equal(product.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1.jpg');
+  assert.deepEqual(product.imageUrls, [
+    'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1-alt.webp',
+  ]);
+  assert.equal(product.category, undefined);
+  assert.equal(product.compatibleBrands, undefined);
+  assert.equal(product.compatibleModels, undefined);
+});
+
+test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <article class="producto-detalle" data-codprod="YK-DETAIL-EMPTY">
+      <h1>Pieza sin descripcion real</h1>
+      <img src="/images/logo.png">
+      <img src="/images/icon-fono.svg">
+      <div class="descripcion">function init(){ $.ajax('/x'); } Menu global Catalogo Contacto</div>
+      <span>C\u00f3d. Yokomitsu: YK-DETAIL-EMPTY</span>
+      <strong class="precio">$3.406 +IVA</strong>
+    </article>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/demo/2/pieza');
+
+  assert.ok(product);
+  assert.equal(product.description, undefined);
+  assert.equal(product.imageUrl, undefined);
+  assert.equal(product.imageUrls, undefined);
+  assert.equal(product.sku, 'YK-DETAIL-EMPTY');
+  assert.equal(product.price, '3406');
+});
+
+test('Yokomitsu corta campos etiquetados antes de otra etiqueta o estado', () => {
+  const products = extractYokomitsuProductsFromJson(JSON.parse(readYokomitsuFixture('label-edge-cases.json')));
+
+  assert.equal(products.length, 5);
+
+  const withOem = products.find((product) => product.sku === 'YK-OEM-1');
+  assert.equal(withOem?.attributes?.referencia, 'OEM-123');
+  assert.equal(withOem?.attributes?.procedencia, 'CHINA');
+
+  const emptyOem = products.find((product) => product.sku === 'YK-OEM-2');
+  assert.equal(emptyOem?.attributes?.referencia, undefined);
+  assert.equal(emptyOem?.attributes?.procedencia, 'CHINA');
+
+  const critical = products.find((product) => product.sku === 'YK-STOCK-1');
+  assert.equal(critical?.attributes?.procedencia, 'CHINA');
+  assert.equal(critical?.availability, 'Stock Cr\u00edtico');
+  assert.equal(critical?.attributes?.stockStatus, 'Stock Cr\u00edtico');
+  assert.equal(critical?.stock, undefined);
+
+  const procedenciaOnly = products.find((product) => product.sku === 'YK-PROC-1');
+  assert.equal(procedenciaOnly?.attributes?.procedencia, 'BRASIL');
+  assert.equal(procedenciaOnly?.availability, undefined);
+
+  const emptyArrival = products.find((product) => product.sku === 'YK-ARR-1');
+  assert.equal(emptyArrival?.attributes?.proximaLlegada, undefined);
+  assert.equal(emptyArrival?.attributes?.procedencia, 'JAP\u00d3N');
+});
+
+test('Yokomitsu conserva completa proxima llegada antes de estado o etiqueta', () => {
+  const data = `
+    <article class="producto" data-codprod="YK-ARR-20-DIAS">
+      <a href="/v2/producto-detalle/demo/arr-20-dias/llegada-stock"><h3>Pieza llegada stock</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-ARR-20-DIAS</span>
+      <span>Pr\u00f3xima llegada: 20 dias</span>
+      <span>Stock Cr\u00edtico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-20-DIAS-ACCENT">
+      <a href="/v2/producto-detalle/demo/arr-20-dias-accent/llegada-stock"><h3>Pieza llegada con acento</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-ARR-20-DIAS-ACCENT</span>
+      <span>Pr\u00f3xima llegada: 20 d\u00edas</span>
+      <span>Stock Cr\u00edtico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-LABEL">
+      <a href="/v2/producto-detalle/demo/arr-label/llegada-label"><h3>Pieza llegada etiqueta</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-ARR-LABEL</span>
+      <span>Pr\u00f3xima llegada: 45 dias</span>
+      <span>Procedencia: CHINA</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+    <article class="producto" data-codprod="YK-ARR-EMPTY">
+      <a href="/v2/producto-detalle/demo/arr-empty/llegada-vacia"><h3>Pieza llegada vacia</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-ARR-EMPTY</span>
+      <span>Pr\u00f3xima llegada:</span>
+      <span>Procedencia: BRASIL</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `;
+  const products = extractYokomitsuProductsFromJson({ number_register: 4, data });
+
+  const beforeStatus = products.find((product) => product.sku === 'YK-ARR-20-DIAS');
+  assert.equal(beforeStatus?.attributes?.proximaLlegada, '20 dias');
+  assert.equal(beforeStatus?.availability, 'Stock Cr\u00edtico');
+  assert.equal(beforeStatus?.attributes?.stockStatus, 'Stock Cr\u00edtico');
+
+  const accented = products.find((product) => product.sku === 'YK-ARR-20-DIAS-ACCENT');
+  assert.equal(accented?.attributes?.proximaLlegada, '20 d\u00edas');
+  assert.equal(accented?.availability, 'Stock Cr\u00edtico');
+
+  const beforeLabel = products.find((product) => product.sku === 'YK-ARR-LABEL');
+  assert.equal(beforeLabel?.attributes?.proximaLlegada, '45 dias');
+  assert.equal(beforeLabel?.attributes?.procedencia, 'CHINA');
+
+  const empty = products.find((product) => product.sku === 'YK-ARR-EMPTY');
+  assert.equal(empty?.attributes?.proximaLlegada, undefined);
+  assert.equal(empty?.attributes?.procedencia, 'BRASIL');
+});
+
+test('Yokomitsu no elimina el ultimo caracter valido antes del boundary', () => {
+  const data = `
+    <article class="producto" data-codprod="YK-LAST-CHAR">
+      <a href="/v2/producto-detalle/demo/last-char/llegada"><h3>Pieza ultimo caracter</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-LAST-CHAR</span>
+      <span>Pr\u00f3xima llegada: ABC123s</span>
+      <span>Stock Cr\u00edtico</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `;
+  const products = extractYokomitsuProductsFromJson({ number_register: 1, data });
+
+  assert.equal(products[0].attributes?.proximaLlegada, 'ABC123s');
+  assert.equal(products[0].availability, 'Stock Cr\u00edtico');
+});
+
+test('Yokomitsu separa estados negativos de disponibilidad sin capturarlos como labels', () => {
+  const data = ['Sin stock', 'Agotado', 'No disponible'].map((status, index) => `
+    <article class="producto" data-codprod="YK-NEG-${index + 1}">
+      <a href="/v2/producto-detalle/demo/neg-${index + 1}/estado-${index + 1}"><h3>Pieza ${status}</h3></a>
+      <span>C\u00f3d. Yokomitsu: YK-NEG-${index + 1}</span>
+      <span>Marca: DemoBrand</span>
+      <span>Modelo: Demo ${index + 1}</span>
+      <span>OEM:</span>
+      <span>Procedencia: CHINA</span>
+      <span>${status}</span>
+      <strong class="precio">$1.234 +IVA</strong>
+    </article>
+  `).join('');
+  const products = extractYokomitsuProductsFromJson({ number_register: 3, data });
+
+  assert.equal(products.length, 3);
+  for (const product of products) {
+    assert.equal(product.attributes?.referencia, undefined);
+    assert.equal(product.attributes?.procedencia, 'CHINA');
+    assert.equal(product.availability, 'out_of_stock');
+    assert.equal(product.attributes?.stockStatus, 'out_of_stock');
+  }
+});
+
+test('Yokomitsu no usa etiquetas conocidas como valores de otros campos', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto" data-codprod="YK-LABEL-1">
+        <a href="/v2/producto-detalle/demo/label/contaminacion"><h3>Pieza etiquetas</h3></a>
+        <span>C\u00f3d. Yokomitsu: YK-LABEL-1</span>
+        <span>Marca:</span>
+        <span>Modelo: Demo Label</span>
+        <span>OEM:</span>
+        <span>Procedencia:</span>
+        <span>Stock Cr\u00edtico</span>
+        <strong class="precio">$1.234 +IVA</strong>
+      </article>
+    `,
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].brand, undefined);
+  assert.equal(products[0].attributes?.referencia, undefined);
+  assert.equal(products[0].attributes?.procedencia, undefined);
+  assert.equal(products[0].availability, 'Stock Cr\u00edtico');
 });
 
 test('Yokomitsu resume shape, campos y paginacion sin guardar datos privados', () => {
@@ -219,6 +672,39 @@ test('Yokomitsu detecta ingreso manual exitoso sin leer credenciales', () => {
   }), false);
 });
 
+test('Yokomitsu usa /v2/home canonico como entrada principal', () => {
+  assert.equal(YOKOMITSU_LOGIN_URL, 'https://www.yokomitsuparts.com.uy/v2/home');
+  assert.equal(YOKOMITSU_LEGACY_LOGIN_URL, 'https://yokomitsuparts.com.uy/v2/login');
+  assert.notEqual(YOKOMITSU_LOGIN_URL, YOKOMITSU_LEGACY_LOGIN_URL);
+});
+
+test('Yokomitsu no asume autenticacion por estar en /v2/home si hay password', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: true,
+    portalElementCount: 4,
+    authenticatedCatalogResponses: 1,
+    hasYokomitsuFrontCookie: true,
+  }), false);
+});
+
+test('Yokomitsu acepta /v2/home autenticado por senales de portal o cookie', () => {
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 1,
+    authenticatedCatalogResponses: 0,
+  }), true);
+
+  assert.equal(hasReachedYokomitsuPortal({
+    currentUrl: 'https://www.yokomitsuparts.com.uy/v2/home',
+    hasPasswordInput: false,
+    portalElementCount: 0,
+    authenticatedCatalogResponses: 0,
+    hasYokomitsuFrontCookie: true,
+  }), true);
+});
+
 test('Yokomitsu detecta timeout esperando login manual', () => {
   assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 300_999, 300_000), false);
   assert.equal(hasYokomitsuManualLoginTimedOut(1_000, 301_000, 300_000), true);
@@ -277,4 +763,50 @@ test('Yokomitsu cierra el contexto incluso si clearCookies falla', async () => {
 
 function readYokomitsuFixture(name: string): string {
   return readFileSync(join(process.cwd(), 'src', 'scraping', 'domain', 'fixtures', 'yokomitsu', name), 'utf8');
+}
+
+function readYokomitsuLoginFixture(): Record<string, string> {
+  return JSON.parse(readYokomitsuFixture('login-flow.json')) as Record<string, string>;
+}
+
+function response(
+  url: string,
+  body: string,
+  headers: Record<string, string | string[] | undefined> = {},
+  status = 200,
+): YokomitsuHttpResponse {
+  return { url, status, headers, body };
+}
+
+function createFakeYokomitsuClient(
+  calls: Array<{ method: string; url: string; body?: string }>,
+  responses: YokomitsuHttpResponse[],
+): YokomitsuHttpClient {
+  return {
+    get: async (url) => {
+      calls.push({ method: 'GET', url });
+      const next = responses.shift();
+      if (!next) throw new Error(`missing fake response for GET ${url}`);
+      return next;
+    },
+    post: async (url, body) => {
+      calls.push({ method: 'POST', url, body });
+      const next = responses.shift();
+      if (!next) throw new Error(`missing fake response for POST ${url}`);
+      return next;
+    },
+    clearSession: async () => {
+      calls.push({ method: 'CLEAR', url: 'session' });
+    },
+  };
+}
+
+async function clientWithSessionCleanup(
+  client: YokomitsuHttpClient,
+  callback: () => Promise<void>,
+): Promise<void> {
+  await withYokomitsuHttpSession(client, {
+    username: 'SANITIZED_RUT',
+    password: 'SANITIZED_PASSWORD',
+  }, callback);
 }
