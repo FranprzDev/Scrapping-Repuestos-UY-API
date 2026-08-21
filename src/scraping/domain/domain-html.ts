@@ -1356,11 +1356,16 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
-  const imageUrls = uniqueStrings(
-    attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')
-      .map((value) => normalizeUrl(value, pageUrl))
-      .filter((value): value is string => Boolean(value)),
-  );
+  const imageUrls = rule.id === 'repuestosavenida'
+    ? extractRepuestosAvenidaImages(root, pageUrl)
+    : uniqueStrings(
+        attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')
+          .map((value) => normalizeUrl(value, pageUrl))
+          .filter((value): value is string => Boolean(value)),
+      );
+  const fallbackOgImage = rule.id === 'repuestosavenida'
+    ? validRepuestosAvenidaImageUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl)
+    : normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl);
 
 
   return {
@@ -1374,7 +1379,7 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
       imageUrls[0]
       ?? (rule.id === 'grfrenos'
         ? undefined
-        : normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl)),
+        : fallbackOgImage),
     imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
     sourceUrl: pageUrl,
     availability:
@@ -1390,6 +1395,163 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractRepuestosAvenidaImages(root: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const selector of [
+    'article.storefront-product .storefront-product-image[data-role="main-image"]',
+    '.storefront-product-stage img[data-role="main-image"]',
+    '.storefront-product-media .storefront-product-image',
+  ]) {
+    queryAll(root, selector).forEach((element) => {
+      urls.push(...imageCandidatesFromElement(element, pageUrl));
+    });
+  }
+
+  queryAll(root, 'article.storefront-product[data-product-gallery], article.storefront-product[data-gallery]').forEach((element) => {
+    for (const attribute of ['data-product-gallery', 'data-gallery']) {
+      const raw = element.getAttribute(attribute);
+      if (!raw) {
+        continue;
+      }
+      parseRepuestosAvenidaGalleryAttribute(raw)
+        .map((value) => validRepuestosAvenidaImageUrl(value, pageUrl))
+        .filter((value): value is string => Boolean(value))
+        .forEach((value) => urls.push(value));
+    }
+  });
+
+  queryAll(root, '.storefront-product-gallery [data-thumb-url]').forEach((element) => {
+    urls.push(
+      ...[
+        element.getAttribute('data-thumb-url'),
+      ].filter((value): value is string => Boolean(value)),
+    );
+  });
+
+  const jsonLdImages = extractJsonLdImageUrls(root, pageUrl)
+    .map((value) => validRepuestosAvenidaImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  return uniqueStrings([
+    ...urls.map((value) => validRepuestosAvenidaImageUrl(value, pageUrl)).filter((value): value is string => Boolean(value)),
+    ...jsonLdImages,
+  ]);
+}
+
+function imageCandidatesFromElement(element: HTMLElement, pageUrl: string): string[] {
+  return [
+    element.getAttribute('data-large_image'),
+    element.getAttribute('data-zoom-image'),
+    element.getAttribute('data-src'),
+    element.getAttribute('src'),
+    largestSrcsetCandidate(element.getAttribute('srcset')),
+  ]
+    .map((value) => normalizeUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+}
+
+function largestSrcsetCandidate(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return value
+    .split(',')
+    .map((part) => {
+      const [url, descriptor] = part.trim().split(/\s+/, 2);
+      const width = Number(descriptor?.replace(/[^\d.]/g, '') ?? 0);
+      return { url, width: Number.isFinite(width) ? width : 0 };
+    })
+    .filter((candidate) => Boolean(candidate.url))
+    .sort((a, b) => b.width - a.width)[0]?.url;
+}
+
+function parseRepuestosAvenidaGalleryAttribute(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(decodeHtmlAttribute(raw)) as unknown;
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.flatMap((item) => {
+      if (typeof item === 'string') {
+        return [item];
+      }
+      if (!item || typeof item !== 'object') {
+        return [];
+      }
+      const record = item as Record<string, unknown>;
+      return [asString(record.url), asString(record.src), asString(record.full), asString(record.image)]
+        .filter((value): value is string => Boolean(value));
+    });
+  } catch {
+    return [];
+  }
+}
+
+function extractJsonLdImageUrls(root: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  root.querySelectorAll('script[type="application/ld+json"]').forEach((element) => {
+    const raw = element.textContent;
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      for (const node of flattenJsonLd(parsed)) {
+        if ((node['@type'] ?? '') !== 'Product') {
+          continue;
+        }
+        const images = Array.isArray(node.image) ? node.image : [node.image];
+        images
+          .map((value) => normalizeUrl(asString(value), pageUrl))
+          .filter((value): value is string => Boolean(value))
+          .forEach((value) => urls.push(value));
+      }
+    } catch {
+      // Ignore malformed JSON-LD.
+    }
+  });
+
+  return urls;
+}
+
+function validRepuestosAvenidaImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const url = normalizeUrl(value, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const comparable = url.toLowerCase();
+  if (/(?:logo|repuestos-avenida-logo|favicon|placeholder|no-image|sin-imagen|header|footer|whatsapp)/i.test(comparable)) {
+    return undefined;
+  }
+  if (!/\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  return canonicalizeRepuestosAvenidaImageUrl(url);
+}
+
+function canonicalizeRepuestosAvenidaImageUrl(value: string): string {
+  const url = new URL(value);
+  url.hash = '';
+  for (const key of [...url.searchParams.keys()]) {
+    if (/^(utm_|fbclid$|gclid$|mc_|v$|ver$)/i.test(key)) {
+      url.searchParams.delete(key);
+    }
+  }
+  return url.toString();
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#x22;/gi, '"')
+    .replace(/&amp;/g, '&');
 }
 
 function selectText(root: HTMLElement, selectors: string[]): string[] {
