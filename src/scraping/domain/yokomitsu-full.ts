@@ -1,4 +1,4 @@
-import type { ProductRecord } from '../interfaces/scraping.types';
+﻿import type { ProductRecord } from '../interfaces/scraping.types';
 import { parse, type HTMLElement } from 'node-html-parser';
 import {
   authenticateYokomitsuHttpSession,
@@ -360,9 +360,15 @@ export async function runYokomitsuFullCatalog(
     return response;
   };
 
+  console.log('production-yokomitsu stage=auth-start');
   await login();
+  console.log('production-yokomitsu stage=auth-ok');
+
+  console.log('production-yokomitsu stage=home-start');
   const home = await getAuthenticatedHome();
+  console.log(`production-yokomitsu stage=home-ok status=${home.status} bodyLength=${home.body.length}`);
   const discoveredCategories = mergeCategories(checkpoint.discoveredCategories, discoverYokomitsuCategoriesFromHtml(home.body, YOKOMITSU_BASE_URL));
+  console.log(`production-yokomitsu stage=discovery-ok categories=${discoveredCategories.length}`);
   checkpoint.discoveryMethod = 'category-tree';
   checkpoint.discoveredCategories = discoveredCategories;
   checkpoint.counters.categoriesDiscovered = countCategories(discoveredCategories);
@@ -388,7 +394,9 @@ export async function runYokomitsuFullCatalog(
         duplicateUrls: 0,
       };
       categoryCoverage.push(coverage);
+      console.log(`production-yokomitsu stage=category-start name=${category.name} key=${category.key}`);
       const firstPage = await catalogWithSession(category, 1);
+      console.log(`production-yokomitsu stage=category-response name=${category.name} status=${firstPage.response.status} bodyLength=${firstPage.response.body.length}`);
       const firstSummary = parseYokomitsuSearchResponseFull(firstPage.response.body, { ...category, page: 1, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
       if (!firstSummary) {
         checkpoint.counters.errors += 1;
@@ -880,3 +888,4 @@ function secretPattern(): RegExp {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
