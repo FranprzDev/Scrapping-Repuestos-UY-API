@@ -1,8 +1,11 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+﻿import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InventoryStoreService } from './inventory/inventory-store.service';
+import type { ProductRecord } from './interfaces/scraping.types';
 import { getCatalogSite } from './sites/catalog-sites';
 import { runCatalogPipeline } from './sites/catalog-pipeline';
+import { runYokomitsuFullCatalog } from './domain/yokomitsu-full';
+import { YokomitsuCookieJarHttpClient } from './domain/yokomitsu-http-client';
 
 const DEFAULT_PRODUCTION_SITE_IDS = [
   'repuestosavenida',
@@ -56,7 +59,17 @@ export class ScrapingSchedulerService implements OnModuleInit {
 
     try {
       for (const siteId of siteIds) {
-        const site = getCatalogSite(siteId);
+      if (siteId === 'yokomitsu') {
+        try {
+          await this.runYokomitsuProduction(runAt);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`production-catalog-site failed site=yokomitsu message=${message}`);
+        }
+        continue;
+      }
+
+      const site = getCatalogSite(siteId);
         if (!site?.enabled) {
           this.logger.warn(`production-catalog-scrape skipped unknown_or_disabled_site=${siteId}`);
           continue;
@@ -90,6 +103,67 @@ export class ScrapingSchedulerService implements OnModuleInit {
       this.isRunning = false;
     }
   }
+  private async runYokomitsuProduction(runAt: string): Promise<void> {
+    const username = process.env.YOKOMITSU_USERNAME?.trim();
+    const password = process.env.YOKOMITSU_PASSWORD;
+
+    if (!username || !password) {
+      throw new Error('Missing YOKOMITSU_USERNAME/YOKOMITSU_PASSWORD');
+    }
+
+    const client = new YokomitsuCookieJarHttpClient();
+    const pendingProducts: ProductRecord[] = [];
+    let persisted = 0;
+
+    const flush = async (): Promise<void> => {
+      if (pendingProducts.length === 0) return;
+
+      const batch = pendingProducts.splice(0, pendingProducts.length);
+
+      await this.inventoryStoreService.upsertSiteProducts(
+        'https://www.yokomitsuparts.com.uy/v2/',
+        batch,
+        runAt,
+      );
+
+      persisted += batch.length;
+    };
+
+    this.logger.log('production-yokomitsu started');
+
+    try {
+      const result = await runYokomitsuFullCatalog(client, {
+        credentials: { username, password },
+
+        outputProduct: async (product) => {
+          pendingProducts.push(product);
+
+          if (pendingProducts.length >= 100) {
+            await flush();
+          }
+        },
+
+        onProgress: (progress) => {
+          if (
+            progress.productsProcessed > 0 &&
+            progress.productsProcessed % 250 === 0
+          ) {
+            this.logger.log(
+              `production-yokomitsu progress products=${progress.productsProcessed} valid=${progress.validProducts} urls=${progress.urlsDiscovered} errors=${progress.errors}`,
+            );
+          }
+        },
+      });
+
+      await flush();
+
+      this.logger.log(
+        `production-yokomitsu completed products=${result.validProducts} persisted=${persisted} urls=${result.urlsDiscovered} errors=${result.errors}`,
+      );
+    } finally {
+      await client.clearSession();
+    }
+  }
 }
 
 function parseProductionSiteIds(raw: string | undefined): string[] {
@@ -107,3 +181,8 @@ function positiveIntegerOrUndefined(raw: string | undefined): number | undefined
   const value = Number(raw);
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
+
+
+
+
+
