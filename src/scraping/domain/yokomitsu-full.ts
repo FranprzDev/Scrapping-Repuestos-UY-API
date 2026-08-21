@@ -451,12 +451,15 @@ export async function runYokomitsuFullCatalog(
     }
     try {
       const sourceUrl = entry.listing.sourceUrl;
+      console.log(`production-yokomitsu product-start key=${entry.key} url=${sourceUrl ?? 'none'}`);
       const detail = sourceUrl ? await detailWithSession(sourceUrl) : undefined;
+      console.log(`production-yokomitsu product-detail key=${entry.key} status=${detail?.status ?? 'none'} bodyLength=${detail?.body.length ?? 0}`);
       const detailProduct = detail && sourceUrl
         ? extractYokomitsuProductDetailFromHtml(detail.body, sourceUrl, YOKOMITSU_BASE_URL)
         : undefined;
       const product = mergeYokomitsuProduct(entry.listing, detailProduct);
       checkpoint.counters.productsProcessed += 1;
+      console.log(`production-yokomitsu product-done key=${entry.key} processed=${checkpoint.counters.productsProcessed} valid=${checkpoint.counters.validProducts}`);
       if (isValidYokomitsuProduct(product)) {
         checkpoint.counters.validProducts += 1;
         await options.outputProduct?.(product);
@@ -888,4 +891,6 @@ function secretPattern(): RegExp {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+
 
