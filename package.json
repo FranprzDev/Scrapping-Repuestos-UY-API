@@ -25,7 +25,7 @@
     "site:create": "tsx scripts/site-create.ts",
     "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts",
     "yokomitsu:scrape": "tsx scripts/yokomitsu-scrape.ts",
-    "repuestosavenida:images:backfill": "tsx scripts/repuestosavenida-image-backfill.ts"
+    "repuestosavenida:images:backfill": "node dist/scraping/backfills/repuestosavenida-image-backfill.cli.js"
   },
   "engines": {
     "node": ">=20.11"

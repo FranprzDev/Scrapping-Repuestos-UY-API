@@ -1,5 +1,6 @@
 import test from 'node:test';
 import * as assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { PostgresRepuestosAvenidaImageBackfillStore } from './repuestosavenida-image-backfill-postgres';
 import {
@@ -12,6 +13,16 @@ const productUrl = 'https://repuestosavenida.com.uy/producto/faro-saveiro';
 const logoUrl = 'https://urutienda-base.nyc3.digitaloceanspaces.com/stores/513-repuestosavenidacomuy/media/2026/08/logo-a2a53ee977a6081ebe8554ae62ab13d2__md.webp';
 const productImage = 'https://urutienda-base.nyc3.digitaloceanspaces.com/stores/513-repuestosavenidacomuy/media/2026/08/product-real.webp';
 const secondProductImage = 'https://urutienda-base.nyc3.digitaloceanspaces.com/stores/513-repuestosavenidacomuy/media/2026/08/product-real-2.webp';
+
+test('Repuestos Avenida image backfill package script runs the compiled production entrypoint', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  const command = packageJson.scripts['repuestosavenida:images:backfill'];
+
+  assert.equal(command, 'node dist/scraping/backfills/repuestosavenida-image-backfill.cli.js');
+  assert.doesNotMatch(command, /\btsx\b/);
+});
 
 test('Repuestos Avenida image backfill processes only existing Repuestos Avenida product URLs', async () => {
   const store = new MemoryBackfillStore([
