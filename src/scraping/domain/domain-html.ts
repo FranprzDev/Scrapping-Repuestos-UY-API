@@ -194,6 +194,12 @@ function isChapareiSemanticCategoryLink(href: string, cardText: string): boolean
 
 export function extractProductsFromHtml(html: string, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const root = parse(html);
+
+  if (rule.id === 'selvir' && /\/product\//i.test(pageUrl)) {
+    const detailProduct = extractSelvirDetailProduct(root, pageUrl, provider, rule);
+    return detailProduct ? [detailProduct] : extractJsonLdProducts(root, pageUrl, provider);
+  }
+
   const candidates: ProductRecord[] = [];
 
   candidates.push(...extractJsonLdProducts(root, pageUrl, provider));
