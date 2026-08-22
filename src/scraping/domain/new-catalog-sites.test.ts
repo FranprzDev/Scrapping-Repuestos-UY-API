@@ -70,15 +70,21 @@ test('Familcar descubre las marcas del menú principal', () => {
 });
 
 test('Fenicio calcula cobertura, pagina y conserva la marca compatible', () => {
+  const imageUrl = 'https://f.fcdn.app/imgs/9f5e2b/www.familcar.com/famiuy/ccc4/original/catalogo/CN030037I_CN030037I_1/1024-1024/paragolpe-paragolpe.jpg';
+  const logoUrl = 'https://f.fcdn.app/imgs/d69b00/www.familcar.com/famiuy/d1ad/original/marcas/citroen/0x0/citroen';
   const html = `
     <div class="articleList aListProductos" data-tot="12" data-totAbs="202">
       <div class="it" data-codprod="CN030037I" data-disp="1">
-        <a class="img" href="/catalogo/paragolpe_CN030037I_CN030037I"><img src="/img.jpg"></a>
+        <a class="img" href="/catalogo/paragolpe_CN030037I_CN030037I">
+          <div class="logoMarca"><img src="${logoUrl}" alt="Citroen"></div>
+          <img src="/catalogo/CN030037I_CN030037I_1/480_480/paragolpe-paragolpe.jpg">
+        </a>
         <div class="info">
           <a class="tit" href="/catalogo/paragolpe_CN030037I_CN030037I" title="PARAGOLPE CITROEN">PARAGOLPE CITROEN</a>
           <div class="marca">Familcar</div>
           <strong class="precio venta"><span class="sim">$</span><span class="monto">4.090</span></strong>
         </div>
+        <input type="hidden" class="json" value="{&quot;variante&quot;:{&quot;img&quot;:{&quot;u&quot;:&quot;${imageUrl}&quot;}}}">
       </div>
     </div>
   `;
@@ -88,7 +94,59 @@ test('Fenicio calcula cobertura, pagina y conserva la marca compatible', () => {
   const products = extractFenicioProducts(html, 'https://www.familcar.com/citroen', 'domain', 'Citroen');
   assert.equal(products.length, 1);
   assert.equal(products[0].price, '4.090');
+  assert.equal(products[0].imageUrl, imageUrl);
+  assert.equal(products[0].imageUrls?.includes(logoUrl), false);
   assert.deepEqual(products[0].compatibleBrands, ['Citroen']);
+});
+
+test('Familcar detalle Fenicio prioriza og:image y no toma el logo del header', () => {
+  const rule = findDomainRule('https://www.familcar.com/catalogo/tapa-de-cilindros_P160031I_P160031I');
+  assert.ok(rule);
+
+  const productImage = 'https://f.fcdn.app/imgs/f10f47/www.familcar.com/famiuy/ccc4/original/catalogo/P160031I_P160031I_1/800x800/tapa-de-cilindros-tapa-de-cilindros.jpg';
+  const logoImage = 'https://f.fcdn.app/assets/commerce/www.familcar.com/2b0b_5087/public/web/img/logo.svg';
+  const products = extractProductsFromHtml(`
+    <html>
+      <head><meta property="og:image" content="${productImage}"></head>
+      <body id="pgCatalogoDetalle">
+        <header><img src="${logoImage}" alt="Familcar"></header>
+        <main>
+          <h1>TAPA DE CILINDROS</h1>
+          <strong class="precio venta"><span class="sim">$</span><span class="monto">15.590</span></strong>
+          <input type="hidden" class="json" value="{&quot;variante&quot;:{&quot;img&quot;:{&quot;u&quot;:&quot;${productImage}&quot;}}}">
+        </main>
+      </body>
+    </html>
+  `, 'https://www.familcar.com/catalogo/tapa-de-cilindros_P160031I_P160031I', 'domain', rule);
+
+  assert.equal(products[0].imageUrl, productImage);
+  assert.equal(products[0].imageUrls?.includes(logoImage), false);
+});
+
+test('Cymaco detalle Fenicio rechaza logos, cocardas e iconos antes de la imagen real', () => {
+  const rule = findDomainRule('https://cymaco.com.uy/catalogo/amortiguador-fiat-del-uno_5810_001');
+  assert.ok(rule);
+
+  const productImage = 'https://f.fcdn.app/imgs/e89af5/cymaco.com.uy/cymuy/858e/original/catalogo/5810/460x460/amortiguador-fiat-del-uno.jpg';
+  const logoImage = 'https://f.fcdn.app/assets/commerce/cymaco.com.uy/4a4e_23c6/public/web/img/logo.svg';
+  const cocardaImage = 'https://f.fcdn.app/imgs/a49ca7/cymaco.com.uy/cymuy/4b73/original/grupoproductos/1808/100-100/cocarda.svg';
+  const products = extractProductsFromHtml(`
+    <html>
+      <head><meta property="og:image" content="${productImage}"></head>
+      <body id="pgCatalogoDetalle">
+        <header><img src="${logoImage}" alt="Cymaco"></header>
+        <main>
+          <h1>AMORTIGUADOR FIAT DEL. UNO</h1>
+          <div class="cocardas"><img src="${cocardaImage}" alt="Nuevo"></div>
+          <strong class="precio venta"><span class="sim">$</span><span class="monto">3.480</span></strong>
+          <img src="${productImage}" alt="AMORTIGUADOR FIAT DEL. UNO">
+        </main>
+      </body>
+    </html>
+  `, 'https://cymaco.com.uy/catalogo/amortiguador-fiat-del-uno_5810_001', 'domain', rule);
+
+  assert.equal(products[0].imageUrl, productImage);
+  assert.deepEqual(products[0].imageUrls, [productImage]);
 });
 
 test('Larrique usa una única respuesta acumulada de la última página', () => {
