@@ -157,7 +157,7 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
-    if (rule.id === 'multishop') {
+    if (isShopifyCatalogRule(rule)) {
       return {
         seedUrl: sourceUrl,
         pages: [{ url: buildShopifyProductsUrl(sourceUrl, 1), depth: 0, productCount: 0 }],
@@ -303,8 +303,8 @@ export class DomainProvider implements ScrapingProvider {
       };
     }
 
-    if (rule.id === 'multishop') {
-      const result = await this.extractMultishopProducts(sourceUrl, maxItems);
+    if (isShopifyCatalogRule(rule)) {
+      const result = await this.extractShopifyCatalogProducts(sourceUrl, maxItems);
       return {
         ...result,
         products: await this.enrichProductDetails(result.products, rule, maxItems),
@@ -597,7 +597,7 @@ export class DomainProvider implements ScrapingProvider {
     return { urls: productUrls, pages, products };
   }
 
-  private async extractMultishopProducts(sourceUrl: string, maxItems: number) {
+  private async extractShopifyCatalogProducts(sourceUrl: string, maxItems: number) {
     const products: ProductRecord[] = [];
     const pages: Array<{ url: string; method: string; productCount: number }> = [];
     const pageSize = 250;
@@ -1798,6 +1798,10 @@ function inferFenicioBrandSeed(value: string, site: 'cymaco' | 'familcar'): Cata
 
 function isSitemapCatalog(rule: DomainRule): boolean {
   return ['italur', 'mirvic'].includes(rule.id);
+}
+
+function isShopifyCatalogRule(rule: DomainRule): boolean {
+  return ['multishop', 'leoradiadores'].includes(rule.id);
 }
 
 function isSameCatalogHost(value: string, baseUrl: string): boolean {

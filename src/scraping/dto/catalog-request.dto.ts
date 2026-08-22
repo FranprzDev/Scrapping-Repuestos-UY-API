@@ -70,6 +70,8 @@ export const NEW_CATALOG_SITES = [
   'https://www.yaguaron.com.uy/',
   'https://www.italur.com/',
   'https://mirvic.com.uy/',
+  'https://diegoradiadores.com.uy/tienda/',
+  'https://www.leoradiadores.com.uy/collections/all',
 ] as const;
 
 export const DEFAULT_CATALOG_SITES = [...BASE_CATALOG_SITES, ...GRFRENOS_CATALOG_SITES, ...SELVIR_CATALOG_SITES, ...FEYVI_CATALOG_SITES, ...EUROPARTS_CATALOG_SITES, ...NEW_CATALOG_SITES] as const;
