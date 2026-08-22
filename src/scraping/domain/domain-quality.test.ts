@@ -1271,6 +1271,80 @@ test('extrae imagen real de ficha Selvir sin mezclar relacionados ni producto3',
   assert.equal(products[0].imageUrls?.some((url) => url.includes('41710.jpg')), false);
 });
 
+test('consolida ficha Selvir con JSON-LD sin imagen y galeria real', () => {
+  const pageUrl = 'https://www.selvir.com.uy/product/techo-pride-sedan/';
+  const rule = findDomainRule(pageUrl);
+  assert.ok(rule);
+
+  const html = `
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "TAZA RUEDA CENTRO TOYOTA HILUX 18",
+            "url": "https://www.selvir.com.uy/product/techo-pride-sedan/",
+            "offers": {
+              "priceSpecification": [
+                {
+                  "@type": "UnitPriceSpecification",
+                  "price": "364.00",
+                  "priceCurrency": "UYU"
+                }
+              ],
+              "availability": "https://schema.org/InStock"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <main>
+          <div class="woocommerce-product-gallery">
+            <figure class="woocommerce-product-gallery__wrapper">
+              <div class="woocommerce-product-gallery__image">
+                <a href="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg" class="product-zoom-link">
+                  <picture>
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.webp" type="image/webp">
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg" type="image/jpeg">
+                    <img class="wp-post-image" src="https://www.selvir.com.uy/images/producto3.gif" alt="TAZA RUEDA CENTRO TOYOTA HILUX 18">
+                  </picture>
+                </a>
+              </div>
+            </figure>
+          </div>
+          <h1 class="product-info-title">TAZA RUEDA CENTRO TOYOTA HILUX 18</h1>
+          <div class="product-info-price"><span class="price-number">$364</span></div>
+          <button>Añadir al carrito</button>
+        </main>
+        <section class="related products">
+          <article>
+            <a href="/product/faro-relacionado/" class="product-zoom-link">
+              <img src="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2025/10/14/1/41710.jpg">
+            </a>
+            <div class="product-info-title">FARO RELACIONADO</div>
+            <span class="price-number">$1.782</span>
+          </article>
+        </section>
+      </body>
+    </html>
+  `;
+
+  const products = extractProductsFromHtml(html, pageUrl, 'domain', rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'TAZA RUEDA CENTRO TOYOTA HILUX 18');
+  assert.equal(products[0].price, '364');
+  assert.equal(products[0].sourceUrl, pageUrl);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg');
+  assert.ok(products[0].imageUrl?.endsWith('/936.jpg'));
+  assert.deepEqual(products[0].imageUrls, [
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.webp',
+  ]);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('producto3.gif')), false);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('41710.jpg')), false);
+});
+
 test('ignora links de categoria Selvir al extraer productos', () => {
   const rule = findDomainRule('https://www.selvir.com.uy/product-category/carroceria/');
   assert.ok(rule);
