@@ -1,4 +1,4 @@
-import { parse } from 'node-html-parser';
+import { HTMLElement, parse } from 'node-html-parser';
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { cleanText, inferCurrency, mergeCompatibleBrands, normalizePriceValue } from './product-quality';
 
@@ -148,9 +148,9 @@ export function extractFenicioProducts(
     }
 
     const sku = cleanText(card.getAttribute('data-codprod'));
-    const image = card.querySelector('img');
     const commercialBrand = cleanText(card.querySelector('.marca')?.text ?? card.querySelector('.logoMarca img')?.getAttribute('alt'));
     const available = card.getAttribute('data-disp') !== '0';
+    const imageUrls = extractFenicioCardImageUrls(card, pageUrl);
 
     return [{
       productName,
@@ -158,7 +158,8 @@ export function extractFenicioProducts(
       currency: inferCurrency(rawPrice) ?? 'UYU',
       brand: commercialBrand,
       sku,
-      imageUrl: normalizeUrl(image?.getAttribute('src') ?? image?.getAttribute('data-src'), pageUrl),
+      imageUrl: imageUrls[0],
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       sourceUrl,
       availability: available ? 'in_stock' : 'out_of_stock',
       compatibleBrands: mergeCompatibleBrands(undefined, contextBrand ? [contextBrand] : undefined),
@@ -166,6 +167,110 @@ export function extractFenicioProducts(
       provider,
     }];
   });
+}
+
+function extractFenicioCardImageUrls(card: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  card.querySelectorAll('input.json[value]').forEach((input) => {
+    urls.push(...extractFenicioJsonImageUrls(input.getAttribute('value'), pageUrl));
+  });
+
+  card.querySelectorAll('a.img img').forEach((image) => {
+    urls.push(...fenicioImageCandidatesFromElement(image, pageUrl));
+  });
+
+  const thumb = normalizeUrl(card.getAttribute('data-im'), pageUrl);
+  if (thumb) {
+    urls.push(thumb);
+  }
+
+  return uniqueStrings(urls.filter((url) => isValidFenicioProductImageUrl(url)));
+}
+
+function extractFenicioJsonImageUrls(raw: string | undefined, pageUrl: string): string[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(decodeHtmlAttribute(raw)) as unknown;
+    const urls: string[] = [];
+    collectFenicioJsonImageUrls(parsed, urls);
+    return urls
+      .map((url) => normalizeUrl(url, pageUrl))
+      .filter((url): url is string => Boolean(url));
+  } catch {
+    return [];
+  }
+}
+
+function collectFenicioJsonImageUrls(value: unknown, urls: string[]): void {
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectFenicioJsonImageUrls(item, urls));
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  const image = record.img;
+  if (typeof image === 'string') {
+    urls.push(image);
+  } else if (image && typeof image === 'object') {
+    const imageRecord = image as Record<string, unknown>;
+    for (const key of ['u', 'url', 'src', 'original']) {
+      if (typeof imageRecord[key] === 'string') {
+        urls.push(imageRecord[key]);
+      }
+    }
+  }
+
+  Object.values(record).forEach((child) => collectFenicioJsonImageUrls(child, urls));
+}
+
+function fenicioImageCandidatesFromElement(element: HTMLElement, pageUrl: string): string[] {
+  return [
+    element.getAttribute('data-original'),
+    element.getAttribute('data-lazy-src'),
+    element.getAttribute('data-src'),
+    element.getAttribute('src'),
+    largestSrcsetCandidate(element.getAttribute('srcset')),
+  ]
+    .map((value) => normalizeUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+}
+
+function isValidFenicioProductImageUrl(url: string): boolean {
+  const lowered = url.toLowerCase();
+  if (new RegExp('(^|[/_.-])logo([/_.-]|$)', 'i').test(lowered)
+    || /logomarca|favicon|brand|branding|banner|placeholder|no-image|sin-imagen|whatsapp|facebook|instagram|iconos?|cocarda|grupoproductos|descuentos|medios?[-_]?pago|creditoydebito|visa|mastercard|assets\/commerce/i.test(lowered)) {
+    return false;
+  }
+
+  return /\.(?:avif|gif|jpe?g|png|webp|svg)(?:[?#]|$)/i.test(url);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function largestSrcsetCandidate(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return value
+    .split(',')
+    .map((part) => {
+      const [url, descriptor] = part.trim().split(/\s+/, 2);
+      const width = Number(descriptor?.replace(/[^\d.]/g, '') ?? 0);
+      return { url, width: Number.isFinite(width) ? width : 0 };
+    })
+    .filter((candidate) => Boolean(candidate.url))
+    .sort((a, b) => b.width - a.width)[0]?.url;
 }
 
 export function extractLarriqueTotalResults(html: string): number | undefined {
@@ -280,6 +385,14 @@ function decodeXmlEntities(value: string | undefined): string | undefined {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'");
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#x22;/gi, '"')
+    .replace(/&amp;/g, '&');
 }
 
 function stripHtml(value: string): string {

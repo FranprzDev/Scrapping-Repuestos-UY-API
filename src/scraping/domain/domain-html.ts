@@ -1358,14 +1358,18 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
   const imageUrls = rule.id === 'repuestosavenida'
     ? extractRepuestosAvenidaImages(root, pageUrl)
-    : uniqueStrings(
-        attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')
-          .map((value) => normalizeUrl(value, pageUrl))
-          .filter((value): value is string => Boolean(value)),
-      );
+    : isFenicioRule(rule)
+      ? extractFenicioDetailImages(root, pageUrl)
+      : uniqueStrings(
+          attributeValues(root, rule.detailSelectors?.image ?? ['img'], 'src')
+            .map((value) => normalizeUrl(value, pageUrl))
+            .filter((value): value is string => Boolean(value)),
+        );
   const fallbackOgImage = rule.id === 'repuestosavenida'
     ? validRepuestosAvenidaImageUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl)
-    : normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl);
+    : isFenicioRule(rule)
+      ? validFenicioProductImageUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl)
+      : normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl);
 
 
   return {
@@ -1439,6 +1443,101 @@ function extractRepuestosAvenidaImages(root: HTMLElement, pageUrl: string): stri
     ...urls.map((value) => validRepuestosAvenidaImageUrl(value, pageUrl)).filter((value): value is string => Boolean(value)),
     ...jsonLdImages,
   ]);
+}
+
+function isFenicioRule(rule: DomainRule): boolean {
+  return rule.id === 'cymaco' || rule.id === 'familcar';
+}
+
+function extractFenicioDetailImages(root: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [
+    firstAttributeValue(root, ['meta[property="og:image"]'], 'content'),
+    firstAttributeValue(root, ['meta[name="twitter:image"]'], 'content'),
+  ].filter((value): value is string => Boolean(value));
+
+  queryAll(root, 'input.json[value]').forEach((input) => {
+    urls.push(...parseFenicioJsonImageUrls(input.getAttribute('value')));
+  });
+
+  for (const selector of [
+    '#ficha img',
+    '#wrapperFicha img',
+    '.ficha img',
+    '.fichaProducto img',
+    '.galeria img',
+    '.imagenes img',
+    '.swiper-slide img',
+    'main img',
+  ]) {
+    queryAll(root, selector).forEach((element) => {
+      urls.push(...imageCandidatesFromElement(element, pageUrl));
+    });
+  }
+
+  return uniqueStrings(
+    urls
+      .map((url) => validFenicioProductImageUrl(url, pageUrl))
+      .filter((url): url is string => Boolean(url)),
+  );
+}
+
+function parseFenicioJsonImageUrls(raw: string | undefined): string[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(decodeHtmlAttribute(raw)) as unknown;
+    const urls: string[] = [];
+    collectFenicioJsonImageUrls(parsed, urls);
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
+function collectFenicioJsonImageUrls(value: unknown, urls: string[]): void {
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectFenicioJsonImageUrls(item, urls));
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  const image = record.img;
+  if (typeof image === 'string') {
+    urls.push(image);
+  } else if (image && typeof image === 'object') {
+    const imageRecord = image as Record<string, unknown>;
+    for (const key of ['u', 'url', 'src', 'original']) {
+      if (typeof imageRecord[key] === 'string') {
+        urls.push(imageRecord[key]);
+      }
+    }
+  }
+
+  Object.values(record).forEach((child) => collectFenicioJsonImageUrls(child, urls));
+}
+
+function validFenicioProductImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const url = normalizeUrl(value, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const lowered = url.toLowerCase();
+  if (new RegExp('(^|[/_.-])logo([/_.-]|$)', 'i').test(lowered)
+    || /logomarca|favicon|brand|branding|banner|placeholder|no-image|sin-imagen|whatsapp|facebook|instagram|iconos?|cocarda|grupoproductos|descuentos|medios?[-_]?pago|creditoydebito|visa|mastercard|assets\/commerce/i.test(lowered)) {
+    return undefined;
+  }
+  if (!/\.(?:avif|gif|jpe?g|png|webp|svg)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  return url;
 }
 
 function imageCandidatesFromElement(element: HTMLElement, pageUrl: string): string[] {
