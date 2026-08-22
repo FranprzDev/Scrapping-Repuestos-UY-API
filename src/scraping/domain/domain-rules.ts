@@ -178,9 +178,9 @@ export const DOMAIN_RULES: DomainRule[] = [
     hostnames: ['feyvi.com.uy', 'www.feyvi.com.uy'],
     preferredMethod: 'http',
     preserveOutOfStock: true,
-    productUrlPatterns: [/^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){2}[^/]+\/?$/i],
+    productUrlPatterns: [/^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/?#]+\/){2}[^/?#]+\/?$/i],
     categoryUrlPatterns: [
-      /^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/]+\/){1,2}(?:page-\d+\/)?$/i,
+      /^https?:\/\/(?:www\.)?feyvi\.com\.uy\/repuestos\/(?:[^/?#]+\/){1,2}(?:page-\d+\/)?$/i,
     ],
     excludeUrlPatterns: [/\/contacto/i, /\/mi-cuenta/i, /\/carrito/i, /[?&]dispatch=product_features\.add_product(?:&|$)/i, /[?&]items_per_page=/i],
     positiveAvailabilityTexts: ['agregar al carrito', 'comprar', 'anadir al carrito', 'añadir al carrito'],

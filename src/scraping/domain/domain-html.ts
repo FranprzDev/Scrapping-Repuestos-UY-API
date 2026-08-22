@@ -115,6 +115,9 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
     const card = findCardContainer(anchor);
     const cardText = cleanText(card.text) ?? '';
     if (isSemanticProductLink(href, cardText, rule)) {
+      if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+        return;
+      }
       productLinks.add(href);
       return;
     }
@@ -280,6 +283,10 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
 
 export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
   const root = parse(html);
+  return extractCompatibilityFromRoot(root);
+}
+
+function extractCompatibilityFromRoot(root: HTMLElement): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
   const vehicleTexts = new Set<string>();
   const brands = new Set<string>();
   const models = new Set<string>();
@@ -352,11 +359,13 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
   }
 
   for (const group of root.querySelectorAll('.ty-product-feature-group')) {
-    const groupLabel = cleanText(group.querySelector('.ty-subheader, .ty-product-feature__label')?.text);
+    const groupLabel = cleanText(group.querySelector('.ty-subheader, .ty-product-feature__label, h3')?.text);
     if (normalizeCompatibilityLabel(groupLabel) !== 'modelo') continue;
 
     for (const feature of group.querySelectorAll('.ty-product-feature')) {
-      const brand = cleanText(feature.querySelector('.ty-product-feature__label')?.text)?.replace(/\s*:\s*$/, '');
+      const label = feature.querySelector('.ty-product-feature__label')?.clone() as HTMLElement | undefined;
+      label?.querySelectorAll('.ty-help-info, .hidden').forEach((element) => element.remove());
+      const brand = cleanText(label?.text)?.replace(/\s*:\s*$/, '');
       if (!brand || /^(fabricante|marca|modelo)$/i.test(brand)) continue;
       const values = feature.querySelectorAll('.ty-product-feature__multiple-item').map((item) => cleanText(item.text)).filter((value): value is string => Boolean(value));
       if (values.length === 0) continue;
@@ -658,6 +667,10 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
+    if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+      return;
+    }
+
     if (rule.id === 'selvir' && !isSelvirProductCard(href, card, cardText)) {
       return;
     }
@@ -682,12 +695,19 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
+    const imageUrls = rule.id === 'feyvi'
+      ? extractFeyviImages(card, pageUrl)
+      : uniqueStrings([
+          normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
+        ].filter((value): value is string => Boolean(value)));
+
     products.push({
       productName,
       price: normalizePriceValue(rawPrice),
       currency: inferCurrency(rawPrice),
       description: cleanText(firstElementText(card, ['p'])),
-      imageUrl: normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
+      imageUrl: imageUrls[0],
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       sourceUrl: href,
       availability:
         resolveAvailability(cardText, rule) === 'in_stock'
@@ -1342,6 +1362,10 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     return undefined;
   }
 
+  if (rule.id === 'feyvi') {
+    return extractFeyviDetailProduct(root, pageUrl, provider, rule);
+  }
+
   const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
   const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
   if (!title) {
@@ -1399,6 +1423,119 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractFeyviDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
+  const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
+  if (!title) {
+    return undefined;
+  }
+
+  const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
+  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
+    return undefined;
+  }
+
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
+  const compatibility = extractCompatibilityFromRoot(root);
+  const imageUrls = extractFeyviImages(root, pageUrl);
+  const brand = extractFeyviBrand(root);
+  const skuText = firstNonEmpty([
+    firstAttributeValue(root, ['meta[itemprop="sku"]'], 'content'),
+    ...selectText(root, rule.detailSelectors?.sku ?? []),
+  ]);
+
+  return {
+    productName: title,
+    price: normalizePriceValue(rawPrice),
+    currency: inferCurrency(rawPrice),
+    brand,
+    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1] ?? skuText),
+    description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    ...compatibility,
+    sourceUrl: pageUrl,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability(pageText, rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability(pageText, rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
+    extractedAt: new Date().toISOString(),
+    provider,
+  };
+}
+
+function extractFeyviBrand(root: HTMLElement): string | undefined {
+  const jsonLdBrand = firstNonEmpty(extractJsonLdProducts(root, 'https://www.feyvi.com.uy/', 'domain').map((product) => product.brand));
+  if (jsonLdBrand) {
+    return jsonLdBrand;
+  }
+
+  for (const feature of root.querySelectorAll('.ty-product-feature, .ty-control-group')) {
+    const label = normalizeCompatibilityLabel(feature.querySelector('.ty-product-feature__label, .ty-control-group__label, .abt-yt-feature-name')?.text);
+    if (label !== 'fabricante') {
+      continue;
+    }
+
+    const clone = feature.clone() as HTMLElement;
+    clone.querySelector('.ty-product-feature__label, .ty-control-group__label, .abt-yt-feature-name')?.remove();
+    clone.querySelectorAll('input, label').forEach((element) => element.remove());
+    const value = cleanText(clone.text);
+    if (value) {
+      return value;
+    }
+  }
+
+  return firstAttributeValue(root, ['meta[itemprop="brand"]'], 'content');
+}
+
+function extractFeyviImages(root: HTMLElement, pageUrl: string): string[] {
+  const primary = uniqueStrings([
+    ...attributeValues(root, ['.ty-product-img .cm-image-previewer[href]', '[id^="product_images_"] .cm-image-previewer[href]'], 'href'),
+    ...queryAll(root, '.ty-product-img img, [id^="product_images_"] img, .ty-grid-list__image .abt-single-image img, .ty-grid-list__image img').flatMap((element) => imageCandidatesFromElement(element, pageUrl)),
+  ])
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  const jsonLdImages = extractJsonLdImageUrls(root, pageUrl)
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  const ogImages = attributeValues(root, ['meta[property="og:image"], meta[name="twitter:image"]'], 'content')
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  return uniqueStrings([...primary, ...jsonLdImages, ...ogImages]);
+}
+
+function validFeyviImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const url = normalizeUrl(value, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const lowered = url.toLowerCase();
+  if (!/\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  if (/logo|favicon|placeholder|no-image|sin-imagen|loader|sprite|banner|promo|medios?[-_]?pago|visa|mastercard|whatsapp|facebook|instagram|abt__yt_mwi__icon|design\/themes|\/icons?\//i.test(lowered)) {
+    return undefined;
+  }
+
+  if (!/\/images\/(?:thumbnails\/\d+\/\d+\/)?detailed\//i.test(lowered)) {
+    return undefined;
+  }
+
+  return url;
 }
 
 function extractRepuestosAvenidaImages(root: HTMLElement, pageUrl: string): string[] {
