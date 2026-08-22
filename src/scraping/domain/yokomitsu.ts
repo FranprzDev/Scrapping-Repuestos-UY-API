@@ -48,8 +48,11 @@ const KNOWN_LABELS = [
 const KNOWN_STATUS_PATTERN = /(?:stock\s+cr[i\u00ed]tico|sin\s+stock|agotado|no\s+disponible)/i;
 const MAX_DETAIL_DESCRIPTION_LENGTH = 2_000;
 const DESCRIPTION_CONTAMINATION_PATTERN = /function\s*\(|\$\.ajax|<script|<\/script|<style|<\/style|\.css\b|recaptcha|grecaptcha|navbar|footer|menu/i;
-const UI_IMAGE_PATTERN = /(?:icon|logo|fono|phone|whatsapp|facebook|instagram|loading|loader|spinner|ajax-loader|background|bg-|banner|recaptcha|captcha|sprite|placeholder)\.(?:svg|png|jpe?g|gif|webp)$/i;
+const UI_IMAGE_PATTERN = /(?:^|[-_/])(?:icon|logo|logotipo|fono|phone|whatsapp|facebook|instagram|loading|loader|spinner|ajax-loader|background|bg|fondo|banner|slider|recaptcha|captcha|sprite|placeholder|sin-?imagen|no-?image|contenido-no-disponible|lightbox)(?:[-_.]|$)/i;
 const PRODUCT_IMAGE_PATH_PATTERN = /(?:producto|productos|product|products|yokomitsu|repuesto|repuestos|catalogo|catalog|imagenes|images|img|foto|fotos|upload|uploads)/i;
+const PRODUCT_IMAGE_DYNAMIC_PATH_PATTERN = /(?:image|imagen|img|foto|photo|picture|thumb|thumbnail)/i;
+const YOKOMITSU_DETAIL_GALLERY_PATH_PATTERN = /\/(?:v2\/)?upload\/productsgalleries\//i;
+const INVALID_CATEGORY_PATTERN = /^(?:#N\/A|#VALUE!|#REF!|#DIV\/0!|#ERROR!)(?:\b|\s|\(|$)/i;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -456,17 +459,18 @@ export function inferPaginationFromCalls(calls: YokomitsuNetworkCall[]): { obser
 }
 
 function normalizeYokomitsuProduct(record: JsonRecord, baseUrl: string): ProductRecord[] {
-  const productName = firstText(record, ['productName', 'name', 'nombre', 'descripcion', 'description', 'detalle', 'articulo']);
   const sku = firstText(record, ['sku', 'codigo', 'code', 'cod_articulo', 'codArticulo', 'id_producto', 'idProducto', 'referencia']);
   const rawPrice = firstText(record, ['price', 'precio', 'precioVenta', 'precio_venta', 'importe', 'monto']);
+  const sourceUrl = normalizeUrl(firstText(record, ['sourceUrl', 'url', 'link', 'href', 'permalink']), baseUrl)[0]
+    ?? (sku ? new URL(`producto/${encodeURIComponent(sku)}`, baseUrl).toString() : baseUrl);
+  const productName = sanitizeYokomitsuProductName(firstText(record, ['productName', 'name', 'nombre', 'descripcion', 'description', 'detalle', 'articulo']))
+    ?? deriveYokomitsuProductNameFromSourceUrl(sourceUrl);
   if (!productName && !sku) return [];
 
   const imageUrls = uniqueStrings([
     firstText(record, ['imageUrl', 'imagen', 'image', 'foto', 'urlImagen']),
     ...arrayTexts(record, ['imageUrls', 'imagenes', 'images', 'fotos']),
   ].flatMap((value) => normalizeUrl(value, baseUrl)));
-  const sourceUrl = normalizeUrl(firstText(record, ['sourceUrl', 'url', 'link', 'href', 'permalink']), baseUrl)[0]
-    ?? (sku ? new URL(`producto/${encodeURIComponent(sku)}`, baseUrl).toString() : baseUrl);
   const stock = firstText(record, ['stock', 'existencia', 'cantidad', 'disponible']);
   const vehicleBrand = firstText(record, ['vehicleBrand', 'marcaVehiculo', 'marca_vehiculo', 'marcaAuto', 'marca']);
   const vehicleModel = firstText(record, ['vehicleModel', 'modeloVehiculo', 'modelo_vehiculo', 'modeloAuto', 'modelo']);
@@ -512,13 +516,17 @@ export function extractYokomitsuProductsFromHtml(
 export function extractYokomitsuProductDetailFromHtml(html: string, sourceUrl: string, baseUrl = YOKOMITSU_BASE_URL): ProductRecord | undefined {
   const root = parse(html);
   const detailRoot = selectYokomitsuDetailContainer(root);
-  const product = normalizeYokomitsuHtmlProduct(detailRoot, baseUrl, { detail: true })[0];
+  const product = normalizeYokomitsuHtmlProduct(detailRoot, baseUrl, { detail: true, documentRoot: root })[0];
   if (!product) return undefined;
   return {
     ...product,
     sourceUrl,
     imageUrls: product.imageUrls && product.imageUrls.length > 0 ? product.imageUrls : product.imageUrl ? [product.imageUrl] : undefined,
   };
+}
+
+export function filterYokomitsuDetailGalleryImageUrls(values: Array<string | undefined>): string[] {
+  return uniqueStrings(values.filter((value): value is string => Boolean(value)).filter(isYokomitsuDetailGalleryImageUrl));
 }
 
 function collectProductCards(root: HTMLElement): HTMLElement[] {
@@ -558,38 +566,32 @@ function looksLikeYokomitsuProductElement(element: HTMLElement): boolean {
   return /producto-detalle|cod\.?\s*yokomitsu|c[o\u00f3]digo|sku|oem|precio|\$\s*\d/i.test(`${text} ${hrefs}`);
 }
 
-function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, options: { detail?: boolean } = {}): ProductRecord[] {
+function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, options: { detail?: boolean; documentRoot?: HTMLElement } = {}): ProductRecord[] {
   const text = elementText(card) ?? '';
   const sourceUrl = firstNormalizedAttribute(card, [
     'a[href*="producto-detalle"]',
     'a[href*="producto"]',
     'a[href]',
   ], 'href', baseUrl);
-  const productName = firstElementText(card, [
-    '.product-title',
-    '.producto-titulo',
-    '.nombre',
-    '.name',
-    '.descripcion',
-    'h1',
-    'h2',
-    'h3',
-    'h4',
-    'a[href*="producto-detalle"]',
-    'a[href*="producto"]',
-  ]) ?? labelValue(text, ['Producto', 'Descripcion', 'Descripci\u00f3n']);
+  const productName = sanitizeYokomitsuProductName(selectYokomitsuProductName(card, options.documentRoot, Boolean(options.detail))
+    ?? labelValue(text, ['Producto', 'Descripcion', 'Descripci\u00f3n']))
+    ?? deriveYokomitsuProductNameFromSourceUrl(sourceUrl);
   const sku = cleanText(card.getAttribute('data-codprod'))
-    ?? labelValue(text, ['Cod. Yokomitsu', 'C\u00f3d. Yokomitsu', 'Codigo Yokomitsu', 'C\u00f3digo Yokomitsu', 'SKU', 'Codigo', 'C\u00f3digo']);
+    ?? labeledValue(card, ['Cod. Yokomitsu', 'C\u00f3d. Yokomitsu', 'Codigo Yokomitsu', 'C\u00f3digo Yokomitsu', 'SKU', 'Codigo', 'C\u00f3digo']);
   const rawPrice = firstElementText(card, ['.price', '.precio', '[class*="price"]', '[class*="precio"]'])
     ?? text.match(/(?:US\$|\$U|\$|UYU|USD)\s*\d[\d.,]*(?:\s*\+?\s*IVA)?/i)?.[0];
-  const imageUrls = extractYokomitsuProductImageUrls(card, baseUrl, Boolean(options.detail));
-  const referencia = labelValue(text, ['OEM', 'Referencia', 'Ref']);
-  const vehicleBrand = labelValue(text, ['Marca Vehiculo', 'Marca Veh\u00edculo', 'Vehiculo Marca', 'Veh\u00edculo Marca']);
-  const vehicleModel = labelValue(text, ['Modelo', 'Modelo Vehiculo', 'Modelo Veh\u00edculo']);
-  const proximaLlegada = labelValue(text, ['Proxima llegada', 'Pr\u00f3xima llegada']);
-  const procedencia = labelValue(text, ['Procedencia']);
+  const imageUrls = extractYokomitsuProductImageUrls(card, baseUrl, Boolean(options.detail), options.documentRoot);
+  const referencia = labeledValue(card, ['OEM', 'Referencia', 'Ref']);
+  const visibleBrand = labeledValue(card, ['Marca']);
+  const vehicleBrand = labeledValue(card, ['Marca Vehiculo', 'Marca Veh\u00edculo', 'Vehiculo Marca', 'Veh\u00edculo Marca'])
+    ?? visibleBrand;
+  const vehicleModel = labeledValue(card, ['Modelo', 'Modelo Vehiculo', 'Modelo Veh\u00edculo']);
+  const proximaLlegada = labeledValue(card, ['Proxima llegada', 'Pr\u00f3xima llegada']);
+  const procedencia = labeledValue(card, ['Procedencia']);
   const availability = inferVisibleAvailability(text);
   const stockStatus = availability;
+  const compatibleBrands = uniqueStrings([vehicleBrand]);
+  const compatibleModels = uniqueStrings([vehicleModel]);
 
   if (!productName && !sku) return [];
 
@@ -597,14 +599,16 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, optio
     productName,
     sourceUrl: sourceUrl ?? baseUrl,
     sku,
-    brand: labelValue(text, ['Marca']),
+    brand: visibleBrand,
     price: normalizeYokomitsuPrice(rawPrice),
     currency: inferYokomitsuCurrency(rawPrice),
     availability,
     description: options.detail ? extractYokomitsuDetailDescription(card) : undefined,
     imageUrl: imageUrls[0],
     imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-    category: labelValue(text, ['Categoria', 'Categor\u00eda', 'Rubro']),
+    category: sanitizeYokomitsuCategoryValue(labeledValue(card, ['Categoria', 'Categor\u00eda', 'Rubro'])),
+    compatibleBrands,
+    compatibleModels,
     attributes: compactAttributes({ referencia, vehicleBrand, vehicleModel, proximaLlegada, procedencia, stockStatus }),
     provider: 'Yokomitsu',
     extractedAt: new Date().toISOString(),
@@ -646,26 +650,160 @@ function smallestTextContainer(candidates: HTMLElement[]): HTMLElement {
 function closestYokomitsuProductCard(element: HTMLElement): HTMLElement | undefined {
   let current: HTMLElement | undefined = element;
   let best: HTMLElement | undefined;
-
   while (current) {
     const text = elementText(current) ?? '';
-    const productLinks = current.querySelectorAll('a[href*="producto-detalle"]').length;
-
-    if (productLinks > 1) break;
-
-    if (
-      productLinks === 1 &&
-      looksLikeYokomitsuProductElement(current) &&
-      text.length <= 3_000
-    ) {
-      best = current;
-    }
-
+    if (looksLikeYokomitsuProductElement(current) && text.length <= 3_000) best = current;
     const parent: unknown = current.parentNode;
     current = isHtmlElementLike(parent) ? parent : undefined;
   }
-
   return best;
+}
+
+function selectYokomitsuProductName(card: HTMLElement, documentRoot: HTMLElement | undefined, detail: boolean): string | undefined {
+  if (!detail) {
+    return firstElementText(card, [
+      '.product-title',
+      '.producto-titulo',
+      '.nombre',
+      '.name',
+      '.descripcion',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'a[href*="producto-detalle"]',
+      'a[href*="producto"]',
+    ]);
+  }
+
+  const candidates = collectYokomitsuDetailNameCandidates(card, documentRoot);
+  if (candidates.length === 0) return undefined;
+
+  const base = firstElementText(card, ['h1', 'h2', '.product-title', '.producto-titulo', '.nombre', '.name'])
+    ?? candidates[0];
+  return candidates
+    .map((candidate, index) => ({
+      candidate,
+      score: scoreYokomitsuProductNameCandidate(candidate, base, index),
+    }))
+    .sort((left, right) => right.score - left.score)[0].candidate;
+}
+
+function collectYokomitsuDetailNameCandidates(card: HTMLElement, documentRoot: HTMLElement | undefined): string[] {
+  const selectorCandidates = [
+    '.producto-detalle .nombre',
+    '.producto-detalle .name',
+    '.producto-detalle .descripcion',
+    '.product-detail .name',
+    '.product-detail .description',
+    '.detalle-producto .nombre',
+    '.detalle-producto .descripcion',
+    '[class*="producto"] [class*="nombre"]',
+    '[class*="producto"] [class*="descripcion"]',
+    '[class*="product"] [class*="name"]',
+    '[class*="product"] [class*="description"]',
+    '[class*="tag"]',
+    '.tag',
+    'h1',
+    'h2',
+    'h3',
+  ].flatMap((selector) => card.querySelectorAll(selector).flatMap(productNameTextsFromElement).map(elementText));
+
+  const smallTextCandidates = card.querySelectorAll('span, li, p, div, a')
+    .flatMap(productNameTextsFromElement)
+    .map(elementText)
+    .filter((text) => {
+      const length = text?.length ?? 0;
+      return length >= 8 && length <= 180 && /[A-Z0-9]/.test(text ?? '');
+    });
+
+  const metaCandidates = documentRoot ? [
+    documentRoot.querySelector('meta[property="og:title"]')?.getAttribute('content'),
+    documentRoot.querySelector('meta[name="og:title"]')?.getAttribute('content'),
+    documentRoot.querySelector('title')?.text,
+  ] : [];
+
+  return uniqueStrings([...selectorCandidates, ...smallTextCandidates, ...metaCandidates]
+    .map(sanitizeYokomitsuProductNameCandidate)
+    .filter((candidate): candidate is string => {
+      if (!candidate) return false;
+      return isLikelyYokomitsuProductNameCandidate(candidate);
+    }));
+}
+
+function productNameTextsFromElement(element: HTMLElement): HTMLElement[] {
+  const childElements = element.querySelectorAll('*');
+  if (childElements.length === 0) return [element];
+  const leafChildren = childElements.filter((child) => child.querySelectorAll('*').length === 0);
+  return leafChildren.length > 0 ? leafChildren : [element];
+}
+
+function sanitizeYokomitsuProductNameCandidate(value: string | undefined): string | undefined {
+  return sanitizeYokomitsuProductName(value);
+}
+
+export function sanitizeYokomitsuProductName(value: string | undefined): string | undefined {
+  const text = cleanText(value)
+    ?.replace(/\s*-\s*YOKOMITSU\s*$/i, '')
+    .replace(/\s*[\u2013-]\s*yokomitsuparts\.com\.uy\s*$/i, '')
+    .replace(/['\u2019](?=(?:19|20)\d{2}\s*-\s*(?:$|\D))/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return undefined;
+  if (!isLikelyYokomitsuProductNameCandidate(text)) return undefined;
+  return text;
+}
+
+export function deriveYokomitsuProductNameFromSourceUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value, YOKOMITSU_BASE_URL);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const detailIndex = parts.findIndex((part) => part.toLowerCase() === 'producto-detalle');
+    const slug = detailIndex >= 0 ? parts[detailIndex + 3] : parts.at(-1);
+    if (!slug || /^\d+$/.test(slug)) return undefined;
+    const decoded = decodeURIComponent(slug)
+      .replace(/(\d)-(?=\d|$)/g, '$1YOKOMITSUYEARDASHTOKEN')
+      .replace(/[-_]+/g, ' ')
+      .replace(/YOKOMITSUYEARDASHTOKEN/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return sanitizeYokomitsuProductName(decoded.toUpperCase());
+  } catch {
+    return undefined;
+  }
+}
+
+function isLikelyYokomitsuProductNameCandidate(value: string): boolean {
+  if (/^(?:inicio|home|catalogo|categor[ií]as?|productos?|ver\s+detalle|ver\s+producto|detalle|comprar|consultar|stock|precio|marca|modelo|procedencia|oem|tags?)$/i.test(value)) {
+    return false;
+  }
+  if (/function\s*\(|\$\.ajax|recaptcha|grecaptcha|cookie|login|password|navbar|footer/i.test(value)) return false;
+  if (value.length < 4 || value.length > 180) return false;
+  return /[A-ZÁÉÍÓÚÑ0-9]/.test(value);
+}
+
+function scoreYokomitsuProductNameCandidate(candidate: string, base: string | undefined, index: number): number {
+  const normalizedCandidate = normalizeComparableText(candidate);
+  const normalizedBase = normalizeComparableText(base ?? '');
+  let score = Math.max(0, 100 - index);
+
+  if (normalizedBase && normalizedCandidate === normalizedBase) score += 30;
+  if (normalizedBase && normalizedCandidate.startsWith(normalizedBase) && normalizedCandidate.length > normalizedBase.length) score += 140;
+  if (normalizedBase && normalizedCandidate.includes(normalizedBase) && normalizedCandidate.length > normalizedBase.length) score += 90;
+
+  const extraWords = normalizedBase
+    ? normalizedCandidate.split(' ').filter((word) => word && !normalizedBase.split(' ').includes(word)).length
+    : normalizedCandidate.split(' ').length;
+  score += Math.min(extraWords, 12) * 8;
+
+  if (/\b(?:19|20)\d{2}(?:\s*[-/]\s*(?:\d{2,4})?)?/i.test(candidate)) score += 55;
+  if (/\b(?:derecho|izquierdo|delantero|trasero|hatchback|sedan|c\/|s\/|c\s*\/|s\s*\/|con|sin|rejilla|rotula|agj|agujero|agujeros|manual|electrico|eléctrico)\b/i.test(candidate)) score += 45;
+  if (/\b(?:rio|soluto|accent|corolla|sentra|corsa|hilux|sail|onix|hb20|tucson|sportage|cerato|picanto)\b/i.test(candidate)) score += 35;
+  if (/^[A-ZÁÉÍÓÚÑ0-9\s/'./-]+$/.test(candidate)) score += 10;
+  if (/^(?:marca|modelo|procedencia|oem|c[oó]d\.?\s*yokomitsu)\b/i.test(candidate)) score -= 200;
+
+  return score;
 }
 
 function extractYokomitsuDetailDescription(card: HTMLElement): string | undefined {
@@ -697,33 +835,125 @@ function sanitizeYokomitsuDescription(value: string | undefined): string | undef
   return text;
 }
 
-function extractYokomitsuProductImageUrls(card: HTMLElement, baseUrl: string, detail: boolean): string[] {
+function extractYokomitsuProductImageUrls(card: HTMLElement, baseUrl: string, detail: boolean, documentRoot?: HTMLElement): string[] {
+  if (detail) {
+    return collectYokomitsuDetailGalleryUrls(documentRoot ?? card, baseUrl);
+  }
+
   const galleryRoots = detail
     ? card.querySelectorAll('.galeria, .gallery, .product-gallery, .producto-galeria, [class*="galer"], [class*="gallery"], .carousel, .slider')
     : [];
   const roots = galleryRoots.length > 0 ? galleryRoots : [card];
-  return uniqueStrings(roots.flatMap((root) => root.querySelectorAll('img')
-    .flatMap((image) => [
-      image.getAttribute('src'),
-      image.getAttribute('data-src'),
-      image.getAttribute('data-original'),
-      image.getAttribute('data-lazy'),
-      image.getAttribute('data-zoom-image'),
-    ])
+  const candidates = roots.flatMap((root) => [
+    ...root.querySelectorAll('[style], [data-bg], [data-background], [data-background-image], [data-image], [data-full], [data-large], [data-large-image]')
+      .flatMap((element) => elementImageCandidates(element)),
+    ...root.querySelectorAll('img, source').flatMap((image) => imageAttributeCandidates(image)),
+    ...root.querySelectorAll('a[href]').map((link) => link.getAttribute('href')),
+  ]);
+  const galleryUrls = uniqueStrings(candidates
     .flatMap((value) => normalizeUrl(value ? cleanText(value) : undefined, baseUrl))
-    .filter(isAllowedYokomitsuProductImageUrl)));
+    .filter(isAllowedYokomitsuProductImageUrl));
+  return galleryUrls;
+}
+
+function collectYokomitsuDetailGalleryUrls(root: HTMLElement, baseUrl: string): string[] {
+  const html = root.toString();
+  const unescapedHtml = html.replace(/\\\//g, '/');
+  const rawCandidates = [
+    ...root.querySelectorAll('[href], [src], [srcset], [data-src], [data-srcset], [data-zoom-image], [data-image], [data-full], [data-large], [data-large-image], [data-background-image], [style]')
+      .flatMap((element) => [
+        element.getAttribute('href'),
+        ...imageAttributeCandidates(element),
+        ...elementImageCandidates(element),
+      ]),
+    ...Array.from(html.matchAll(/(?:https?:\/\/[^"'()<>\s]+|\/(?:v2\/)?upload\/productsGalleries\/[^"'()<>\s]+)/gi))
+      .map((match) => match[0]),
+    ...Array.from(unescapedHtml.matchAll(/(?:https?:\/\/[^"'()<>\s]+|\/(?:v2\/)?upload\/productsGalleries\/[^"'()<>\s]+)/gi))
+      .map((match) => match[0]),
+  ];
+
+  return uniqueStrings(rawCandidates
+    .flatMap((value) => normalizeUrl(value ? cleanText(value) : undefined, baseUrl))
+    .filter(isYokomitsuDetailGalleryImageUrl));
 }
 
 function isAllowedYokomitsuProductImageUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    const path = decodeURIComponent(url.pathname);
+    const path = decodeURIComponent(url.pathname).toLowerCase();
     if (UI_IMAGE_PATTERN.test(path)) return false;
-    if (!/\.(?:png|jpe?g|webp)(?:$|\?)/i.test(path)) return false;
-    return PRODUCT_IMAGE_PATH_PATTERN.test(path);
+    if (!PRODUCT_IMAGE_PATH_PATTERN.test(path)) return false;
+    if (/\.(?:png|jpe?g|webp)(?:$|\?)/i.test(path)) return true;
+    return PRODUCT_IMAGE_DYNAMIC_PATH_PATTERN.test(path) && url.search.length > 0;
   } catch {
     return false;
   }
+}
+
+function isYokomitsuDetailGalleryImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const path = decodeURIComponent(url.pathname).toLowerCase();
+    if (!YOKOMITSU_DETAIL_GALLERY_PATH_PATTERN.test(path)) return false;
+    if (UI_IMAGE_PATTERN.test(path)) return false;
+    return /\.(?:png|jpe?g|webp)(?:$|\?)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
+function imageAttributeCandidates(element: HTMLElement): Array<string | undefined> {
+  return [
+    element.getAttribute('src'),
+    element.getAttribute('data-src'),
+    element.getAttribute('data-original'),
+    element.getAttribute('data-lazy'),
+    element.getAttribute('data-zoom-image'),
+    element.getAttribute('data-image'),
+    element.getAttribute('data-full'),
+    element.getAttribute('data-large'),
+    element.getAttribute('data-large-image'),
+    ...parseSrcsetCandidates(element.getAttribute('srcset')),
+    ...parseSrcsetCandidates(element.getAttribute('data-srcset')),
+  ];
+}
+
+function elementImageCandidates(element: HTMLElement): Array<string | undefined> {
+  return [
+    element.getAttribute('data-bg'),
+    element.getAttribute('data-background'),
+    element.getAttribute('data-background-image'),
+    element.getAttribute('data-image'),
+    element.getAttribute('data-full'),
+    element.getAttribute('data-large'),
+    element.getAttribute('data-large-image'),
+    ...extractCssUrlCandidates(element.getAttribute('style')),
+  ];
+}
+
+function extractCssUrlCandidates(value: string | undefined | null): string[] {
+  const raw = value ?? '';
+  const matches = raw.matchAll(/url\((['"]?)(.*?)\1\)/gi);
+  return Array.from(matches)
+    .map((match) => cleanText(match[2]))
+    .filter((candidate): candidate is string => Boolean(candidate));
+}
+
+function parseSrcsetCandidates(value: string | undefined | null): string[] {
+  const raw = cleanText(value ?? undefined);
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((candidate) => cleanText(candidate.trim().split(/\s+/)[0]))
+    .filter((candidate): candidate is string => Boolean(candidate));
+}
+
+function sanitizeYokomitsuCategoryValue(value: string | undefined): string | undefined {
+  const cleaned = cleanText(value);
+  if (!cleaned) return undefined;
+  if (INVALID_CATEGORY_PATTERN.test(cleaned)) return undefined;
+  if (/did not find value .* in vlookup evaluation/i.test(cleaned)) return undefined;
+  return cleaned;
 }
 
 function uniqueElements(values: HTMLElement[]): HTMLElement[] {
@@ -734,19 +964,31 @@ function isHtmlElementLike(value: unknown): value is HTMLElement {
   return Boolean(value && typeof value === 'object' && 'querySelectorAll' in value && 'text' in value);
 }
 
-function labelValue(text: string, labels: string[]): string | undefined {
+function labelValue(text: string, labels: string[], allowLooseLabels = false): string | undefined {
   const prepared = text.replace(/\s+/g, ' ').trim();
   if (!prepared) return undefined;
 
   for (const label of labels) {
-    const value = readBoundedLabelValue(prepared, label);
+    const value = readBoundedLabelValue(prepared, label, allowLooseLabels);
     if (value) return value;
   }
   return undefined;
 }
 
-function readBoundedLabelValue(text: string, label: string): string | undefined {
-  const labelMatch = new RegExp(`${escapeRegex(label)}\\s*:`, 'i').exec(text);
+function labeledValue(root: HTMLElement, labels: string[]): string | undefined {
+  const smallNodes = root.querySelectorAll('span, li, p, div, td, th, strong, b')
+    .filter((element) => (elementText(element)?.length ?? Number.MAX_SAFE_INTEGER) <= 250);
+  for (const element of smallNodes) {
+    const text = elementText(element);
+    if (!text) continue;
+    const value = labelValue(text, labels, true);
+    if (value) return value;
+  }
+  return labelValue(elementText(root) ?? '', labels);
+}
+
+function readBoundedLabelValue(text: string, label: string, allowLooseLabels: boolean): string | undefined {
+  const labelMatch = (allowLooseLabels ? labelBoundaryPattern(label) : labelReadPattern(label)).exec(text);
   if (!labelMatch) return undefined;
 
   const valueStart = labelMatch.index + labelMatch[0].length;
@@ -759,7 +1001,7 @@ function readBoundedLabelValue(text: string, label: string): string | undefined 
 
 function firstKnownBoundaryIndex(value: string): number | undefined {
   const boundaries = [
-    ...KNOWN_LABELS.map((label) => new RegExp(`${escapeRegex(label)}\\s*:`, 'i')),
+    ...KNOWN_LABELS.map(labelBoundaryPattern),
     /(?:US\$|\$U|\$|UYU|USD)\s*\d/i,
     /Comprar\b/i,
     new RegExp(KNOWN_STATUS_PATTERN.source, 'i'),
@@ -780,6 +1022,14 @@ function isValidLabeledValue(value: string | undefined): value is string {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function labelBoundaryPattern(label: string): RegExp {
+  return new RegExp(`(?:^|\\s)${escapeRegex(label)}(?:\\s*:\\s*|\\s+(?=\\S))`, 'i');
+}
+
+function labelReadPattern(label: string): RegExp {
+  return new RegExp(`(?:^|\\s)${escapeRegex(label)}\\s*:\\s*|^${escapeRegex(label)}\\s+(?=\\S)`, 'i');
 }
 
 function firstElementText(root: HTMLElement, selectors: string[]): string | undefined {
@@ -935,12 +1185,21 @@ function normalizeKey(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '').toLowerCase();
 }
 
+function normalizeComparableText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function normalizeHostname(value: string): string {
   return value.trim().toLowerCase().replace(/^www\./, '');
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values));
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function compactAttributes(values: Record<string, string | undefined>): Record<string, string> | undefined {
