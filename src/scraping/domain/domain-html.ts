@@ -752,14 +752,7 @@ function extractSelvirListProducts(root: HTMLElement, pageUrl: string, provider:
     }
 
     const rawPrice = extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card);
-    const imageUrls = uniqueStrings(
-      ['src', 'data-src', 'data-lazy-src', 'srcset']
-        .flatMap((attribute) => card.querySelectorAll('img').map((image) => cleanText(image.getAttribute(attribute))))
-        .filter((value): value is string => Boolean(value))
-        .flatMap((value) => value.split(',').map((part) => part.trim().split(/\s+/)[0]))
-        .map((value) => normalizeUrl(value, pageUrl))
-        .filter((value): value is string => Boolean(value)),
-    );
+    const imageUrls = extractSelvirListingImageUrls(card, pageUrl);
 
     seen.add(sourceUrl);
     products.push({
@@ -1313,6 +1306,7 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, ['.product-info-brand', '.brand', '.copete_ficha']));
   const description = firstNonEmpty(selectText(root, ['#tab-description', '.woocommerce-product-details__short-description', '.summary p', 'meta[name="description"]']));
+  const imageUrls = extractSelvirDetailImageUrls(root, pageUrl);
 
   return {
     productName: title,
@@ -1320,9 +1314,8 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
     currency: priceText ? inferCurrency(priceText) : undefined,
     brand: extractBrandFromText(brandText),
     description,
-    imageUrl:
-      normalizeUrl(firstNonEmpty(attributeValues(root, ['figure img', '.woocommerce-product-gallery img', 'img'], 'src')), pageUrl)
-      ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
     sourceUrl: pageUrl,
     availability:
       availability === 'in_stock'
@@ -1337,6 +1330,64 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractSelvirListingImageUrls(card: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const image of card.querySelectorAll('img')) {
+    urls.push(
+      largestSrcsetCandidate(image.getAttribute('srcset')) ?? '',
+      image.getAttribute('data-src') ?? '',
+      image.getAttribute('data-lazy-src') ?? '',
+      image.getAttribute('src') ?? '',
+    );
+  }
+
+  return uniqueStrings(
+    urls
+      .map((value) => validSelvirImageUrl(value, pageUrl))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function extractSelvirDetailImageUrls(root: HTMLElement, pageUrl: string): string[] {
+  const gallery = root.querySelector('.woocommerce-product-gallery');
+  const urls: string[] = [];
+
+  if (gallery) {
+    urls.push(
+      ...attributeValues(gallery, ['a.product-zoom-link[href]'], 'href'),
+      ...attributeValues(gallery, ['picture source[srcset]'], 'srcset').map(largestSrcsetCandidate).filter((value): value is string => Boolean(value)),
+      ...attributeValues(gallery, ['img.wp-post-image[src]'], 'src'),
+    );
+  }
+
+  urls.push(firstAttributeValue(root, ['meta[property="og:image"]'], 'content') ?? '');
+
+  return uniqueStrings(
+    urls
+      .map((value) => validSelvirImageUrl(value, pageUrl))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function validSelvirImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const fixedValue = value?.replace(/^https?:\/\/(?:www\.)?selvir\.com\.uy\/(https?:\/\/.+)$/i, '$1');
+  const url = normalizeUrl(fixedValue, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const comparable = url.toLowerCase();
+  if (/(?:producto3\.gif|logo|favicon|whatsapp|placeholder|no-image|sin-imagen|header|footer|icon)/i.test(comparable)) {
+    return undefined;
+  }
+  if (!/\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  return url;
 }
 
 function findSelvirCardContainer(anchor: HTMLElement): HTMLElement {
