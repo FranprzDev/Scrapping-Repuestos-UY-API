@@ -829,7 +829,7 @@ export class DomainProvider implements ScrapingProvider {
       }
 
       for (let page = 1; collected.length < maxItems; page += 1) {
-        const ajaxUrl = buildChapareiAjaxPageUrl(firstResponse.finalUrl, page);
+        const ajaxUrl = buildChapareiAjaxPageUrl(firstResponse.finalUrl, page, firstResponse.body);
         let ajaxResponse = await session.fetch(ajaxUrl);
 
         if (!ajaxResponse.body.trim()) {
@@ -992,6 +992,13 @@ export class DomainProvider implements ScrapingProvider {
     const contextualBrandLabel =
       extractChapareiBrandLabelFromUrl(response.finalUrl, parsedBrands)
       ?? extractChapareiBrandLabelFromUrl(sourceUrl, parsedBrands);
+    if (hasChapareiFilteredAjaxContext(response.body)) {
+      return [{
+        sourceUrl: response.finalUrl,
+        brandLabel: contextualBrandLabel,
+      }];
+    }
+
     const canonicalBrandUrl = extractChapareiCanonicalBrandUrl(response.body, response.finalUrl);
     if (canonicalBrandUrl || contextualBrandLabel) {
       return [{
@@ -1648,7 +1655,12 @@ function mergeChapareiCookies(current: string | undefined, setCookieHeader: stri
   return Array.from(jar.entries()).map(([key, value]) => `${key}=${value}`).join('; ');
 }
 
-function buildChapareiAjaxPageUrl(pageUrl: string, page: number): string {
+export function buildChapareiAjaxPageUrl(pageUrl: string, page: number, html?: string): string {
+  const embeddedUrl = html ? extractChapareiEmbeddedAjaxPageUrl(html, pageUrl, page) : undefined;
+  if (embeddedUrl) {
+    return embeddedUrl;
+  }
+
   const url = new URL(pageUrl);
   url.pathname = '/productos/includes/cargar_pagina_dinamica.php';
   url.searchParams.set('nro_pag', String(page));
@@ -1663,6 +1675,43 @@ function buildChapareiAjaxPageUrl(pageUrl: string, page: number): string {
   }
 
   return url.toString();
+}
+
+export function extractChapareiEmbeddedAjaxPageUrl(html: string, baseUrl: string, page: number): string | undefined {
+  const rawTemplate = html.match(/url_load\s*=\s*"([^"]+)"/)?.[1];
+  if (!rawTemplate) {
+    return undefined;
+  }
+
+  const decodedTemplate = rawTemplate
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/&amp;/gi, '&')
+    .replace(/\[nro_pag\]/g, String(page));
+
+  try {
+    return new URL(decodedTemplate, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function hasChapareiFilteredAjaxContext(html: string): boolean {
+  const ajaxUrl = extractChapareiEmbeddedAjaxPageUrl(html, 'https://www.chaparei.com/productos/', 1);
+  if (!ajaxUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(ajaxUrl);
+    return Boolean(
+      cleanText(parsed.searchParams.get('c') ?? undefined)
+      || cleanText(parsed.searchParams.get('t') ?? undefined)
+      || cleanText(parsed.searchParams.get('st') ?? undefined),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isChapareiBrandHubUrl(url: string): boolean {

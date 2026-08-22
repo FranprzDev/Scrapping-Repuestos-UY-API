@@ -16,10 +16,12 @@ import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellablePr
 import {
   applyChapareiContextBrand,
   applyGrFrenosContextBrand,
+  buildChapareiAjaxPageUrl,
   buildSelvirArchivePageUrl,
   cleanSelvirLabel,
   extractAcesurProductsByRubro,
   extractChapareiBrandLabelFromUrl,
+  extractChapareiEmbeddedAjaxPageUrl,
   extractSelvirArchiveSummary,
   extractTaxitorPaginationSummary,
   parseSelvirAjaxResponse,
@@ -688,6 +690,29 @@ test('extrae marcas Chaparei desde el select de value numerico', () => {
       sourceUrl: 'https://www.chaparei.com/productos/?m=195',
     },
   ]);
+});
+
+test('arma paginacion AJAX de Chaparei desde url_load embebido con modelo/categoria', () => {
+  const html = `
+    <script>
+      var url_load = "\\/productos\\/includes\\/cargar_pagina_dinamica.php?nro_pag=[nro_pag]\\u0026m=189\\u0026c=4232\\u0026t=\\u0026st=\\u0026561784_8100145151=\\u0026zona=0\\u0026order=255\\u0026mo=1";
+    </script>
+  `;
+
+  const url = buildChapareiAjaxPageUrl('https://www.chaparei.com/catalogo/renault/oroch-2016-21/', 2, html);
+  assert.equal(
+    url,
+    'https://www.chaparei.com/productos/includes/cargar_pagina_dinamica.php?nro_pag=2&m=189&c=4232&t=&st=&561784_8100145151=&zona=0&order=255&mo=1',
+  );
+  assert.equal(extractChapareiEmbeddedAjaxPageUrl(html, 'https://www.chaparei.com/catalogo/renault/oroch-2016-21/', 1)?.includes('c=4232'), true);
+});
+
+test('mantiene fallback de paginacion AJAX Chaparei para paginas sin url_load', () => {
+  const url = buildChapareiAjaxPageUrl('https://www.chaparei.com/productos/?m=189', 3);
+  assert.equal(
+    url,
+    'https://www.chaparei.com/productos/includes/cargar_pagina_dinamica.php?m=189&nro_pag=3&zona=0&order=255&mo=1',
+  );
 });
 
 test('resuelve la marca contextual de Chaparei desde el brandUrl y la aplica al producto', () => {
