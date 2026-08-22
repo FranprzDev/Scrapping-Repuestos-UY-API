@@ -255,8 +255,7 @@ export const DOMAIN_RULES: DomainRule[] = [
     ],
   },
 },
-{
-  id: 'cymaco',
+{ id: 'cymaco',
     hostnames: ['cymaco.com.uy', 'www.cymaco.com.uy'],
     seedUrls: ['https://cymaco.com.uy/catalogo'],
     preferredMethod: 'http',
