@@ -1098,18 +1098,47 @@ test('extrae tarjetas Selvir reales sin mezclar titulo y precio entre productos'
         productName: '10 BROCHES GM 86-1Y0143',
         price: '153',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0143/',
-        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
-        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
+        imageUrl: undefined,
+        imageUrls: undefined,
       },
       {
         productName: '10 BROCHES GM 86-1Y0144',
         price: '182',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0144/',
-        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
-        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
+        imageUrl: undefined,
+        imageUrls: undefined,
       },
     ],
   );
+});
+
+test('prioriza imagen util de srcset en listados Selvir y descarta producto3', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/product-category/carroceria/');
+  assert.ok(rule);
+
+  const html = `
+    <article class="product-item-container">
+      <a href="/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/">
+        <div class="product-image">
+          <img
+            src="https://www.selvir.com.uy/images/producto3.gif"
+            data-src="https://www.selvir.com.uy/images/producto3.gif"
+            data-lazy-src="https://www.selvir.com.uy/images/producto3.gif"
+            srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-small.jpg 300w, https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg 800w">
+        </div>
+        <div class="product-info">
+          <div class="product-info-title">BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)</div>
+          <div class="product-info-price"><span class="price-number">$3.426</span></div>
+          <button>Comprar</button>
+        </div>
+      </a>
+    </article>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/product-category/carroceria/', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg');
+  assert.equal(products[0].imageUrls?.includes('https://www.selvir.com.uy/images/producto3.gif'), false);
 });
 
 test('limpia nombres y precios de listados Selvir', () => {
@@ -1186,6 +1215,60 @@ test('extrae el precio correcto del detalle Selvir y no toma relacionados', () =
   assert.equal(products[0].productName, 'BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)');
   assert.equal(products[0].price, '3.426');
   assert.equal(products[0].sourceUrl, 'https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/');
+});
+
+test('extrae imagen real de ficha Selvir sin mezclar relacionados ni producto3', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/');
+  assert.ok(rule);
+
+  const html = `
+    <html>
+      <head>
+        <meta property="og:image" content="https://www.selvir.com.uy/https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-og.jpg">
+      </head>
+      <body>
+        <main>
+          <div class="woocommerce-product-gallery">
+            <figure class="woocommerce-product-gallery__wrapper">
+              <div class="woocommerce-product-gallery__image--placeholder">
+                <a href="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg" class="product-zoom-link">
+                  <picture>
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.webp" type="image/webp">
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg" type="image/jpeg">
+                    <img src="https://www.selvir.com.uy/images/producto3.gif" class="wp-post-image" alt="BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)">
+                  </picture>
+                </a>
+              </div>
+            </figure>
+          </div>
+          <h1 class="product-info-title">BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)</h1>
+          <div class="product-info-price"><span class="price-number">$3.426</span></div>
+          <button>Añadir al carrito</button>
+        </main>
+        <section class="related products">
+          <article>
+            <a href="/product/relacionado/" class="product-zoom-link">
+              <img src="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2025/10/14/1/41710.jpg">
+            </a>
+            <div class="product-info-title">OTRO PRODUCTO</div>
+            <span class="price-number">$1.782</span>
+          </article>
+        </section>
+      </body>
+    </html>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg');
+  assert.ok(products[0].imageUrl?.endsWith('/25333.jpg'));
+  assert.equal(products[0].imageUrl?.includes('producto3.gif'), false);
+  assert.deepEqual(products[0].imageUrls, [
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.webp',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-og.jpg',
+  ]);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('41710.jpg')), false);
 });
 
 test('ignora links de categoria Selvir al extraer productos', () => {
