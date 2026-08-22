@@ -2,6 +2,8 @@ import { ProductRecord } from '../interfaces/scraping.types';
 import { PostgresService } from '../jobs/postgres.service';
 import {
   FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES,
+  FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES_BY_SITE,
+  FamilcarCymacoSite,
   FamilcarCymacoBackfillRow,
   FamilcarCymacoBackfillStore,
 } from './familcar-cymaco-image-backfill';
@@ -15,9 +17,10 @@ type CandidateRow = {
 export class PostgresFamilcarCymacoImageBackfillStore implements FamilcarCymacoBackfillStore {
   constructor(private readonly postgresService: PostgresService) {}
 
-  async findCandidates(limit?: number): Promise<FamilcarCymacoBackfillRow[]> {
-    const params: unknown[] = [...FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES];
-    const whereClause = FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES
+  async findCandidates(limit?: number, site?: FamilcarCymacoSite): Promise<FamilcarCymacoBackfillRow[]> {
+    const prefixes = site ? FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES_BY_SITE[site] : FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES;
+    const params: unknown[] = [...prefixes];
+    const whereClause = prefixes
       .map((_, index) => `source_url LIKE $${index + 1} || '%'`)
       .join(' OR ');
     const limitClause = typeof limit === 'number' ? `LIMIT $${params.length + 1}` : '';
