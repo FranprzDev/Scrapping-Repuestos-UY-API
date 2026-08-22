@@ -25,7 +25,8 @@
     "site:create": "tsx scripts/site-create.ts",
     "yokomitsu:diagnose": "tsx scripts/yokomitsu-diagnostic.ts",
     "yokomitsu:scrape": "tsx scripts/yokomitsu-scrape.ts",
-    "repuestosavenida:images:backfill": "node dist/scraping/backfills/repuestosavenida-image-backfill.cli.js"
+    "repuestosavenida:images:backfill": "node dist/scraping/backfills/repuestosavenida-image-backfill.cli.js",
+    "familcar-cymaco:images:backfill": "node dist/scraping/backfills/familcar-cymaco-image-backfill.cli.js"
   },
   "engines": {
     "node": ">=20.11"
