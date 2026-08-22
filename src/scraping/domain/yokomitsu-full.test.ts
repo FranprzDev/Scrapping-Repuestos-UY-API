@@ -6,6 +6,7 @@ import {
   calculateYokomitsuTotalPages,
   createEmptyYokomitsuCheckpoint,
   discoverYokomitsuCategoriesFromHtml,
+  mergeYokomitsuProduct,
   parseYokomitsuScrapeArgs,
   runYokomitsuFullCatalog,
   sanitizeYokomitsuCheckpoint,
@@ -14,9 +15,11 @@ import {
 } from './yokomitsu-full';
 import {
   YOKOMITSU_FRONT_COOKIE_NAME,
+  extractYokomitsuProductDetailFromHtml,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_SEARCH_ENDPOINT,
 } from './yokomitsu';
+import type { ProductRecord } from '../interfaces/scraping.types';
 import {
   YOKOMITSU_HTTP_LOGIN_URL,
   YOKOMITSU_PROCESS_LOGIN_ENDPOINT,
@@ -52,6 +55,20 @@ test('Yokomitsu full descubre categorias jerarquicas y URLs /productos sanitizad
   assert.ok(categories.some((category) => category.id_category === '10' && category.id_subcategory === '20'));
   assert.ok(categories.some((category) => category.id_category === '10' && category.id_subcategory === '20' && category.id_subsubcategory === '30'));
   assert.ok(categories.some((category) => category.id_subsubcategory === '999' && category.url?.includes('/productos/toyota/corolla/999/cremallera')));
+});
+
+test('Yokomitsu full descarta nombres de categoria invalidos tipo hoja de calculo', () => {
+  const categories = discoverYokomitsuCategoriesFromHtml(`
+    <nav>
+      <a data-id_category="10">#N/A</a>
+      <a data-id_category="11">#N/A (Did not find value '6115522201' in VLOOKUP evaluation.)</a>
+      <a data-id_category="12">Dirección</a>
+    </nav>
+  `);
+
+  assert.equal(categories.find((category) => category.id_category === '10')?.name, undefined);
+  assert.equal(categories.find((category) => category.id_category === '11')?.name, undefined);
+  assert.equal(categories.find((category) => category.id_category === '12')?.name, 'Dirección');
 });
 
 test('Yokomitsu full combina IDs correctos para load-data-search.php', () => {
@@ -284,6 +301,171 @@ test('Yokomitsu scrape CLI parsea --output con valor separado y con igual', () =
   assert.notEqual(parseYokomitsuScrapeArgs(['--output', './tmp/file.jsonl']).get('output'), 'true');
 });
 
+test('Yokomitsu merge final elimina contenido-no-disponible heredado del listing si la ficha no tiene foto real', () => {
+  const sourceUrl = 'https://yokomitsuparts.com.uy/v2/producto-detalle/rio/53098/frente-rio-2012-2016';
+  const listing = yokomitsuListing({
+    productName: 'FRENTE',
+    sourceUrl,
+    sku: '3136501333',
+    brand: 'KIA',
+    imageUrl: 'https://www.yokomitsuparts.com.uy/v2/images/contenido-no-disponible.jpg',
+    imageUrls: ['https://www.yokomitsuparts.com.uy/v2/images/contenido-no-disponible.jpg'],
+  });
+  const detail = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <title>FRENTE RIO '2012-2016' - YOKOMITSU</title>
+        <meta property="og:title" content="FRENTE RIO '2012-2016'">
+        <meta property="og:image" content="/v2/images/contenido-no-disponible.jpg">
+      </head>
+      <body>
+        <article class="producto-detalle" data-codprod="3136501333">
+          <h1>FRENTE</h1>
+          <h2>FRENTE RIO '2012-2016'</h2>
+          <div>CONTENIDO NO DISPONIBLE</div>
+          <img src="/v2/images/contenido-no-disponible.jpg">
+          <img src="/v2/images/logo-yokomitsu.png">
+          <img src="/v2/images/icon-fono.svg">
+          <span>Cód. Yokomitsu: 3136501333</span>
+          <span>Marca KIA Modelo RIO</span>
+          <strong class="precio">$3.406 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, sourceUrl);
+  assert.ok(detail);
+  assert.equal(detail.imageUrl, undefined);
+  assert.equal(detail.imageUrls, undefined);
+
+  const finalProduct = mergeYokomitsuProduct(listing, detail);
+
+  assert.equal(finalProduct.productName, "FRENTE RIO '2012-2016'");
+  assert.equal(finalProduct.imageUrl, undefined);
+  assert.equal(finalProduct.imageUrls, undefined);
+  assert.equal(finalProduct.sku, '3136501333');
+  assert.deepEqual(finalProduct.compatibleBrands, ['KIA']);
+  assert.deepEqual(finalProduct.compatibleModels, ['RIO']);
+});
+
+test('Yokomitsu merge final conserva productsGalleries embebidas en HTML escapado de la ficha', () => {
+  const sourceUrl = 'https://yokomitsuparts.com.uy/v2/producto-detalle/rio/47930/paragolpe-delantero-hatchback-rio-2012-2014';
+  const listing = yokomitsuListing({
+    productName: 'PARAGOLPE DELANTERO',
+    sourceUrl,
+    sku: '3136502934',
+    brand: 'KIA',
+    imageUrl: 'https://www.yokomitsuparts.com.uy/v2/images/contenido-no-disponible.jpg',
+    imageUrls: ['https://www.yokomitsuparts.com.uy/v2/images/contenido-no-disponible.jpg'],
+  });
+  const detail = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <title>PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014' - YOKOMITSU</title>
+        <meta property="og:title" content="PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014'">
+      </head>
+      <body>
+        <article class="producto-detalle" data-codprod="3136502934">
+          <h1>PARAGOLPE DELANTERO</h1>
+          <h2>PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014'</h2>
+          <script>
+            window.productGallery = [
+              "\\/v2\\/upload\\/productsGalleries\\/img\\/CRKI112012.jpg",
+              "\\/v2\\/upload\\/productsGalleries\\/img\\/CRKI112012_1.jpg",
+              "\\/v2\\/upload\\/productsGalleries\\/img\\/CRKI112012_2.jpg"
+            ];
+          </script>
+          <img src="/v2/images/contenido-no-disponible.jpg">
+          <span>Cód. Yokomitsu: 3136502934</span>
+          <span>Marca KIA Modelo RIO</span>
+          <strong class="precio">$9.221 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, sourceUrl);
+  assert.ok(detail);
+  assert.equal(detail.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012.jpg');
+  assert.deepEqual(detail.imageUrls, [
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012_1.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012_2.jpg',
+  ]);
+
+  const finalProduct = mergeYokomitsuProduct(listing, detail);
+
+  assert.equal(finalProduct.productName, "PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014'");
+  assert.equal(finalProduct.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012.jpg');
+  assert.deepEqual(finalProduct.imageUrls, [
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012_1.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012_2.jpg',
+  ]);
+  assert.equal(finalProduct.imageUrls.some((url) => /contenido-no-disponible|logo|icon/i.test(url)), false);
+});
+
+test('Yokomitsu merge final conserva SKU marca y compatibilidad del listing si el detail no los aporta', () => {
+  const sourceUrl = 'https://yokomitsuparts.com.uy/v2/producto-detalle/rio/47930/paragolpe-delantero-hatchback-rio-2012-2014';
+  const listing = yokomitsuListing({
+    productName: 'PARAGOLPE DELANTERO HATCHBACK RIO 2012-2014',
+    sourceUrl,
+    sku: '3136502934',
+    brand: 'KIA',
+    compatibleBrands: ['Kia'],
+    compatibleModels: ['RIO'],
+    attributes: {
+      vehicleBrand: 'KIA',
+      vehicleModel: 'RIO',
+    },
+  });
+  const detail = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <title>PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014' - YOKOMITSU</title>
+      </head>
+      <body>
+        <article class="producto-detalle">
+          <h1>ver detalle</h1>
+          <h2>PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014'</h2>
+          <img src="/v2/upload/productsGalleries/img/CRKI112012.jpg">
+          <strong class="precio">$9.221 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, sourceUrl);
+  assert.ok(detail);
+  assert.equal(detail.sku, undefined);
+  assert.equal(detail.brand, undefined);
+  assert.equal(detail.compatibleBrands?.length ?? 0, 0);
+  assert.equal(detail.compatibleModels?.length ?? 0, 0);
+
+  const finalProduct = mergeYokomitsuProduct(listing, detail);
+
+  assert.equal(finalProduct.productName, "PARAGOLPE DELANTERO HATCHBACK RIO '2012-2014'");
+  assert.equal(finalProduct.sku, '3136502934');
+  assert.equal(finalProduct.brand, 'KIA');
+  assert.deepEqual(finalProduct.compatibleBrands, ['Kia']);
+  assert.deepEqual(finalProduct.compatibleModels, ['RIO']);
+  assert.equal(finalProduct.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI112012.jpg');
+});
+
+test('Yokomitsu merge final no persiste Ver detalle y usa el slug si no hay titulo util', () => {
+  const sourceUrl = 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/picanto/43606/puntero-izquierdo-ctr-picanto-2012-';
+  const listing = yokomitsuListing({
+    productName: 'ver detalle',
+    sourceUrl,
+    attributes: {
+      referencia: '56820-1Y500',
+      procedencia: 'COREA',
+    },
+  });
+
+  const finalProduct = mergeYokomitsuProduct(listing, undefined);
+
+  assert.equal(finalProduct.productName, 'PUNTERO IZQUIERDO CTR PICANTO 2012-');
+  assert.equal(finalProduct.imageUrl, undefined);
+  assert.equal(finalProduct.imageUrls, undefined);
+  assert.equal(finalProduct.attributes?.referencia, '56820-1Y500');
+});
+
 interface FakeFullOptions {
   homeHtml: string;
   totals: Record<string, number>;
@@ -351,6 +533,14 @@ function categoryMenuHtml(): string {
 
 function sanitizedCredentials() {
   return { username: 'SANITIZED_RUT', password: 'SANITIZED_PASSWORD' };
+}
+
+function yokomitsuListing(patch: Partial<ProductRecord>): ProductRecord {
+  return {
+    provider: 'Yokomitsu',
+    extractedAt: '2026-08-21T00:00:00.000Z',
+    ...patch,
+  };
 }
 
 function leafKey(id_category?: string, id_subcategory?: string, id_subsubcategory?: string): string {

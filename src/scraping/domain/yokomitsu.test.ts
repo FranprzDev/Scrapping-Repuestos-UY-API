@@ -410,8 +410,8 @@ test('Yokomitsu detalle no contamina descripcion ni imagenes con assets globales
           <article class="producto-detalle" data-codprod="YK-DETAIL-1">
             <h1>Cremallera direccion Toyota Corolla</h1>
             <div class="product-gallery">
-              <img src="/v2/img/yokomitsu/yok-detail-1.jpg">
-              <img data-zoom-image="/v2/img/yokomitsu/yok-detail-1-alt.webp">
+              <img src="/v2/upload/productsGalleries/img/yok-detail-1.jpg">
+              <img data-zoom-image="/v2/upload/productsGalleries/img/yok-detail-1-alt.webp">
               <img src="/images/loading.gif">
             </div>
             <section class="descripcion-producto">Cremallera hidraulica nueva para aplicacion sanitizada.</section>
@@ -441,14 +441,14 @@ test('Yokomitsu detalle no contamina descripcion ni imagenes con assets globales
   assert.equal(product.description?.includes('$.ajax'), false);
   assert.equal(product.description?.includes('<script'), false);
   assert.equal(product.description?.includes('Texto global del menu'), false);
-  assert.equal(product.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1.jpg');
+  assert.equal(product.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/yok-detail-1.jpg');
   assert.deepEqual(product.imageUrls, [
-    'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1.jpg',
-    'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-detail-1-alt.webp',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/yok-detail-1.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/yok-detail-1-alt.webp',
   ]);
   assert.equal(product.category, undefined);
-  assert.equal(product.compatibleBrands, undefined);
-  assert.equal(product.compatibleModels, undefined);
+  assert.deepEqual(product.compatibleBrands, ['DemoBrand']);
+  assert.deepEqual(product.compatibleModels, ['Corolla']);
 });
 
 test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', () => {
@@ -457,6 +457,7 @@ test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', 
       <h1>Pieza sin descripcion real</h1>
       <img src="/images/logo.png">
       <img src="/images/icon-fono.svg">
+      <img src="/v2/images/contenido-no-disponible.jpg">
       <div class="descripcion">function init(){ $.ajax('/x'); } Menu global Catalogo Contacto</div>
       <span>C\u00f3d. Yokomitsu: YK-DETAIL-EMPTY</span>
       <strong class="precio">$3.406 +IVA</strong>
@@ -469,6 +470,245 @@ test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', 
   assert.equal(product.imageUrls, undefined);
   assert.equal(product.sku, 'YK-DETAIL-EMPTY');
   assert.equal(product.price, '3406');
+});
+
+test('Yokomitsu ficha con varias productsGalleries usa solo galeria real y conserva orden', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <meta property="og:image" content="/v2/upload/productsGalleries/img/CRKI111201_2.jpg">
+        <meta property="og:image" content="/v2/images/logotipo-empresa.png">
+      </head>
+      <body>
+        <img src="/v2/images/logo.png">
+        <article class="producto-detalle" data-codprod="YK-IMG-1">
+          <h1>PARAGOLPE DELANTERO</h1>
+          <div class="tags">
+            <span>PARAGOLPE DELANTERO C/REJILLA S/ AGJ SOLUTO '2021-</span>
+            <span>PARAGOLPE DELANTERO</span>
+          </div>
+          <picture class="product-gallery">
+            <source srcset="/v2/upload/productsGalleries/img/CRKI111201.jpg 400w, /v2/upload/productsGalleries/img/CRKI111201_1.jpg 1200w">
+            <img
+              src="/v2/images/placeholder.png"
+              data-srcset="/v2/upload/productsGalleries/img/CRKI111201_2.jpg 1x, /v2/upload/productsGalleries/img/CRKI111201_2.jpg 2x"
+              data-zoom-image="/v2/upload/productsGalleries/img/CRKI111201_1.jpg">
+          </picture>
+          <span>C\u00f3d. Yokomitsu: YK-IMG-1</span>
+          <span>Marca KIA Modelo SOLUTO</span>
+          <strong class="precio">$3.406 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/kia/soluto/3/paragolpe-delantero');
+
+  assert.ok(product);
+  assert.equal(product.productName, 'PARAGOLPE DELANTERO C/REJILLA S/ AGJ SOLUTO 2021-');
+  assert.equal(product.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI111201.jpg');
+  assert.deepEqual(product.imageUrls, [
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI111201.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI111201_1.jpg',
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/CRKI111201_2.jpg',
+  ]);
+  assert.equal(product.imageUrls?.some((url) => /logo|placeholder|logotipo/i.test(url)), false);
+});
+
+test('Yokomitsu ficha sin foto real no guarda contenido-no-disponible como imagen', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head>
+        <meta property="og:image" content="/v2/images/contenido-no-disponible.jpg">
+      </head>
+      <body>
+        <article class="producto-detalle" data-codprod="YK-NO-IMG-1">
+          <h1>FRENTE RIO 2012-2016</h1>
+          <div class="contenido">CONTENIDO NO DISPONIBLE</div>
+          <img src="/v2/images/contenido-no-disponible.jpg">
+          <img src="/v2/images/icon-fono.svg">
+          <img src="/v2/images/logo-yokomitsu.png">
+          <div style="background-image: url('/v2/images/fondo-home.jpg')"></div>
+          <script>grecaptcha.execute('LOGIN')</script>
+          <span>C\u00f3d. Yokomitsu: YK-NO-IMG-1</span>
+          <strong class="precio">$1.234 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/kia/rio/4/frente-rio');
+
+  assert.ok(product);
+  assert.equal(product.productName, 'FRENTE RIO 2012-2016');
+  assert.equal(product.imageUrl, undefined);
+  assert.equal(product.imageUrls, undefined);
+});
+
+test('Yokomitsu detalle no acepta imagenes genericas fuera de productsGalleries', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <body>
+        <article class="producto-detalle" data-codprod="YK-BG-1">
+          <h1>Producto con imagenes diferidas</h1>
+          <div class="galeria">
+            <a href="/v2/producto-detalle/demo/7/no-es-imagen">Ficha</a>
+            <div class="slide" data-background-image="/v2/upload/productos/img/soluto-frente.jpg"></div>
+            <div class="thumb" style="background-image: url('/v2/upload/productsGalleries/img/soluto-lateral.webp')"></div>
+            <img data-image="/v2/ajax/product-image.php?id=123">
+            <img src="/images/icon-fono.svg">
+            <img src="/v2/images/loading.gif">
+          </div>
+          <span>C\u00f3d. Yokomitsu: YK-BG-1</span>
+          <strong class="precio">$3.406 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/demo/7/imagenes-diferidas');
+
+  assert.ok(product);
+  assert.equal(product.imageUrl, 'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/soluto-lateral.webp');
+  assert.deepEqual(product.imageUrls, [
+    'https://www.yokomitsuparts.com.uy/v2/upload/productsGalleries/img/soluto-lateral.webp',
+  ]);
+  assert.equal(product.imageUrls?.some((url) => /icon|loading|producto-detalle/i.test(url)), false);
+});
+
+test('Yokomitsu selecciona titulo especifico relacionado y no el H1 generico', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <html>
+      <head><title>PARAGOLPE DELANTERO - YOKOMITSU</title></head>
+      <body>
+        <article class="producto-detalle" data-codprod="YK-TITLE-1">
+          <h1>PARAGOLPE DELANTERO</h1>
+          <section class="informacion-producto">
+            <h2>PARAGOLPE DELANTERO C/REJILLA S/ AGJ SOLUTO '2021-</h2>
+          </section>
+          <div class="tags">
+            <span>PARAGOLPE DELANTERO C/REJILLA S/ AGJ SOLUTO '2021-</span>
+            <span>PARAGOLPE DELANTERO</span>
+          </div>
+          <span>C\u00f3d. Yokomitsu: YK-TITLE-1</span>
+          <span>Marca KIA Modelo SOLUTO</span>
+          <strong class="precio">$9.221 +IVA</strong>
+        </article>
+      </body>
+    </html>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/kia/soluto/9/paragolpe');
+
+  assert.ok(product);
+  assert.equal(product.productName, 'PARAGOLPE DELANTERO C/REJILLA S/ AGJ SOLUTO 2021-');
+  assert.equal(product.brand, 'KIA');
+  assert.deepEqual(product.compatibleBrands, ['KIA']);
+  assert.deepEqual(product.compatibleModels, ['SOLUTO']);
+});
+
+test('Yokomitsu prefiere BASTIDOR DERECHO C/ROTULA RIO 2018- sobre BASTIDOR', () => {
+  const product = extractYokomitsuProductDetailFromHtml(`
+    <article class="producto-detalle" data-codprod="YK-TITLE-2">
+      <h1>BASTIDOR</h1>
+      <ul class="tags">
+        <li>BASTIDOR</li>
+        <li>BASTIDOR DERECHO C/ROTULA RIO 2018-</li>
+      </ul>
+      <span>C\u00f3d. Yokomitsu: YK-TITLE-2</span>
+      <span>Marca KIA Modelo RIO</span>
+      <strong class="precio">$3.406 +IVA</strong>
+    </article>
+  `, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/kia/rio/10/bastidor');
+
+  assert.ok(product);
+  assert.equal(product.productName, 'BASTIDOR DERECHO C/ROTULA RIO 2018-');
+});
+
+test('Yokomitsu extrae Marca y Modelo visibles sin dos puntos como compatibilidad', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto" data-codprod="YK-SOLUTO">
+        <a href="/v2/producto-detalle/kia/soluto/88/pieza-soluto"><h3>Pieza para Soluto</h3></a>
+        <span>C\u00f3d. Yokomitsu YK-SOLUTO</span>
+        <span>Marca KIA Modelo SOLUTO</span>
+        <span>Procedencia CHINA</span>
+        <strong class="precio">$9.221 +IVA</strong>
+      </article>
+    `,
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].sku, 'YK-SOLUTO');
+  assert.equal(products[0].brand, 'KIA');
+  assert.equal(products[0].attributes?.vehicleBrand, 'KIA');
+  assert.equal(products[0].attributes?.vehicleModel, 'SOLUTO');
+  assert.deepEqual(products[0].compatibleBrands, ['KIA']);
+  assert.deepEqual(products[0].compatibleModels, ['SOLUTO']);
+  assert.equal(products[0].attributes?.procedencia, 'CHINA');
+});
+
+test('Yokomitsu mantiene campos con dos puntos y publica compatibilidad vehicular', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto" data-codprod="YK-COMPAT-1">
+        <a href="/v2/producto-detalle/kia/rio/89/pieza-rio"><h3>Pieza para Rio</h3></a>
+        <span>C\u00f3d. Yokomitsu: YK-COMPAT-1</span>
+        <span>Marca: KIA</span>
+        <span>Modelo: RIO</span>
+        <strong class="precio">$3.406 +IVA</strong>
+      </article>
+    `,
+  });
+
+  assert.equal(products[0].brand, 'KIA');
+  assert.deepEqual(products[0].compatibleBrands, ['KIA']);
+  assert.deepEqual(products[0].compatibleModels, ['RIO']);
+});
+
+test('Yokomitsu no usa textos de accion como productName desde registros JSON', () => {
+  const products = extractYokomitsuProductsFromJson({
+    items: [{
+      detalle: 'ver detalle',
+      codigo: '3136502934',
+      precio: '$9.221 +IVA',
+      url: '/v2/producto-detalle/rio/47930/paragolpe-delantero-hatchback-rio-2012-2014',
+    }],
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'PARAGOLPE DELANTERO HATCHBACK RIO 2012-2014');
+  assert.equal(products[0].sku, '3136502934');
+  assert.equal(products[0].sourceUrl, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/rio/47930/paragolpe-delantero-hatchback-rio-2012-2014');
+});
+
+test('Yokomitsu deriva nombre desde slug si la card solo expone Ver detalle', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto">
+        <a href="/v2/producto-detalle/picanto/43606/puntero-izquierdo-ctr-picanto-2012-">Ver detalle</a>
+        <span>OEM: 56820-1Y500</span>
+      </article>
+    `,
+  });
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'PUNTERO IZQUIERDO CTR PICANTO 2012-');
+  assert.equal(products[0].sourceUrl, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/picanto/43606/puntero-izquierdo-ctr-picanto-2012-');
+});
+
+test('Yokomitsu ignora categorias invalidas de formula sin borrar categorias legitimas', () => {
+  const products = extractYokomitsuProductsFromJson({
+    data: `
+      <article class="producto" data-codprod="YK-CAT-1">
+        <a href="/v2/producto-detalle/demo/5/categoria-invalida"><h3>Producto categoria invalida</h3></a>
+        <span>C\u00f3d. Yokomitsu: YK-CAT-1</span>
+        <span>Categor\u00eda: #N/A (Did not find value '6115522201' in VLOOKUP evaluation.)</span>
+        <strong class="precio">$1.234 +IVA</strong>
+      </article>
+      <article class="producto" data-codprod="YK-CAT-2">
+        <a href="/v2/producto-detalle/demo/6/categoria-valida"><h3>Producto categoria valida</h3></a>
+        <span>C\u00f3d. Yokomitsu: YK-CAT-2</span>
+        <span>Categor\u00eda: Direcci\u00f3n / Cremalleras</span>
+        <strong class="precio">$1.234 +IVA</strong>
+      </article>
+    `,
+  });
+
+  assert.equal(products[0].category, undefined);
+  assert.equal(products[1].category, 'Direcci\u00f3n / Cremalleras');
 });
 
 test('Yokomitsu corta campos etiquetados antes de otra etiqueta o estado', () => {
