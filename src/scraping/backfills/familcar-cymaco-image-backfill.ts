@@ -12,6 +12,17 @@ export const FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES = [
   'https://cymaco.com.uy/catalogo/',
 ] as const;
 
+export const FAMILCAR_CYMACO_PRODUCT_URL_PREFIXES_BY_SITE: Record<FamilcarCymacoSite, readonly string[]> = {
+  familcar: [
+    'https://www.familcar.com/catalogo/',
+    'https://familcar.com/catalogo/',
+  ],
+  cymaco: [
+    'https://www.cymaco.com.uy/catalogo/',
+    'https://cymaco.com.uy/catalogo/',
+  ],
+};
+
 const LOGO_SEGMENT_PATTERN = /(^|[/_.-])logo([/_.-]|$)/i;
 const INVALID_IMAGE_PATTERN = /(?:logomarca|favicon|brand|branding|header|footer|banner|placeholder|no-image|sin-imagen|whatsapp|facebook|instagram|iconos?|icons?|cocarda|cocardas|descuentos?|promocion|promociones|promo|oferta|medios?[-_]?pago|creditoydebito|assets\/commerce)/i;
 const PRODUCT_IMAGE_EXTENSION_PATTERN = /\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i;
@@ -23,7 +34,7 @@ export interface FamilcarCymacoBackfillRow {
 }
 
 export interface FamilcarCymacoBackfillStore {
-  findCandidates(limit?: number): Promise<FamilcarCymacoBackfillRow[]>;
+  findCandidates(limit?: number, site?: FamilcarCymacoSite): Promise<FamilcarCymacoBackfillRow[]>;
   updateImages(id: string, product: ProductRecord): Promise<void>;
 }
 
@@ -35,6 +46,7 @@ export interface FamilcarCymacoBackfillFetchResult {
 export interface FamilcarCymacoImageBackfillOptions {
   apply?: boolean;
   limit?: number;
+  site?: FamilcarCymacoSite;
   store: FamilcarCymacoBackfillStore;
   fetchProductHtml: (sourceUrl: string) => Promise<FamilcarCymacoBackfillFetchResult>;
 }
@@ -57,6 +69,7 @@ export interface FamilcarCymacoImageBackfillItem {
 export interface FamilcarCymacoImageBackfillSummary {
   dryRun: boolean;
   limit?: number;
+  site?: FamilcarCymacoSite;
   totalCandidates: number;
   currentLogoOrPlaceholder: number;
   newValidImage: number;
@@ -70,8 +83,10 @@ export interface FamilcarCymacoImageBackfillSummary {
 export async function runFamilcarCymacoImageBackfill(
   options: FamilcarCymacoImageBackfillOptions,
 ): Promise<FamilcarCymacoImageBackfillSummary> {
+  assertValidFamilcarCymacoSite(options.site);
+
   const dryRun = options.apply !== true;
-  const candidates = await options.store.findCandidates(options.limit);
+  const candidates = await options.store.findCandidates(options.limit, options.site);
   const items: FamilcarCymacoImageBackfillItem[] = [];
 
   for (const row of candidates) {
@@ -133,7 +148,19 @@ export async function runFamilcarCymacoImageBackfill(
     }
   }
 
-  return summarizeBackfill(dryRun, options.limit, candidates.length, items);
+  return summarizeBackfill(dryRun, options.limit, options.site, candidates.length, items);
+}
+
+export function parseFamilcarCymacoBackfillSite(value: string | undefined): FamilcarCymacoSite | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === 'familcar' || value === 'cymaco') {
+    return value;
+  }
+
+  throw new Error(`Invalid --site value "${value}". Expected "familcar" or "cymaco".`);
 }
 
 export function identifyFamilcarCymacoSourceUrl(value: string | undefined): FamilcarCymacoSite | undefined {
@@ -233,12 +260,14 @@ function reasonForResult(wouldUpdate: boolean, newImageValid: boolean, dryRun: b
 function summarizeBackfill(
   dryRun: boolean,
   limit: number | undefined,
+  site: FamilcarCymacoSite | undefined,
   totalCandidates: number,
   items: FamilcarCymacoImageBackfillItem[],
 ): FamilcarCymacoImageBackfillSummary {
   return {
     dryRun,
     ...(limit !== undefined ? { limit } : {}),
+    ...(site !== undefined ? { site } : {}),
     totalCandidates,
     currentLogoOrPlaceholder: items.filter((item) => item.currentImageInvalid).length,
     newValidImage: items.filter((item) => item.newImageValid).length,
@@ -248,6 +277,12 @@ function summarizeBackfill(
     errors: items.filter((item) => item.error).length,
     items,
   };
+}
+
+function assertValidFamilcarCymacoSite(site: FamilcarCymacoSite | undefined): void {
+  if (site !== undefined && site !== 'familcar' && site !== 'cymaco') {
+    throw new Error(`Invalid --site value "${site}". Expected "familcar" or "cymaco".`);
+  }
 }
 
 function canonicalProductUrl(value?: string): string | undefined {

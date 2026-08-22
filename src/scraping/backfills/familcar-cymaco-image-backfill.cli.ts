@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { fetchHtml } from '../domain/http-client';
 import { PostgresService } from '../jobs/postgres.service';
 import { PostgresFamilcarCymacoImageBackfillStore } from './familcar-cymaco-image-backfill-postgres';
-import { runFamilcarCymacoImageBackfill } from './familcar-cymaco-image-backfill';
+import { parseFamilcarCymacoBackfillSite, runFamilcarCymacoImageBackfill } from './familcar-cymaco-image-backfill';
 
 const args = new Map(process.argv.slice(2).map((arg) => {
   const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2);
@@ -16,6 +16,8 @@ if (args.has('help')) {
   console.log([
     'Uso:',
     '  pnpm run familcar-cymaco:images:backfill -- --limit=20',
+    '  pnpm run familcar-cymaco:images:backfill -- --site=familcar',
+    '  pnpm run familcar-cymaco:images:backfill -- --site=cymaco --limit=5',
     '  pnpm run familcar-cymaco:images:backfill -- --limit=20 --apply',
     '',
     'Por defecto corre en dry-run. --apply habilita escritura real.',
@@ -23,11 +25,13 @@ if (args.has('help')) {
   process.exit(0);
 }
 
+const site = parseFamilcarCymacoBackfillSite(args.get('site'));
 const postgresService = new PostgresService();
 
 runFamilcarCymacoImageBackfill({
   apply,
   limit,
+  site,
   store: new PostgresFamilcarCymacoImageBackfillStore(postgresService),
   fetchProductHtml: async (sourceUrl) => {
     const response = await fetchHtml(sourceUrl);
