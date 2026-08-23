@@ -149,12 +149,22 @@ export class CatalogScrapingService {
         let extracted = await this.scrapingService.runTask('extract', extractPayload);
         const extractedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
         const rule = findDomainRule(url);
-        const mergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, extractedProducts), rule);
+
+        const refreshedProducts = extractedProducts;
+
+        const refreshedMergedProducts =
+          rule?.id === 'leoradiadores'
+            ? qualityGate(extracted.normalizedProducts, rule)
+            : qualityGate(
+                mergeProducts(extracted.normalizedProducts, refreshedProducts),
+                rule,
+              );
+
+        const mergedProducts = refreshedMergedProducts;
+
         this.logger.log(
           `[run:${runId}] site_extract site=${url} crawlProvider=${crawlProvider} extractProvider=${extracted.provider} targetUrls=${targetUrls.length} rawProducts=${extractedProducts.length} normalizedProducts=${extracted.normalizedProducts.length} mergedProducts=${mergedProducts.length}`,
         );
-        const refreshedProducts = collectExtractedProducts(extracted.raw, extracted.provider, url);
-        const refreshedMergedProducts = qualityGate(mergeProducts(extracted.normalizedProducts, refreshedProducts), rule);
         if (refreshedMergedProducts.length === 0) {
           this.logger.warn(
             `[run:${runId}] site_empty site=${url} crawlProvider=${crawlProvider} extractProvider=${extracted.provider} targetUrls=${targetUrls.length} rawProducts=${refreshedProducts.length} normalizedProducts=${extracted.normalizedProducts.length}`,
