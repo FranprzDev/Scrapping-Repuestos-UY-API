@@ -1437,8 +1437,10 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
-  const imageUrls = rule.id === 'repuestosavenida'
-    ? extractRepuestosAvenidaImages(root, pageUrl)
+ const imageUrls = rule.id === 'repuestosavenida'
+  ? extractRepuestosAvenidaImages(root, pageUrl)
+  : rule.id === 'diegoradiadores'
+    ? extractDiegoRadiadoresImages(root, pageUrl)
     : isFenicioRule(rule)
       ? extractFenicioDetailImages(root, pageUrl)
       : uniqueStrings(
@@ -1732,6 +1734,31 @@ function validFenicioProductImageUrl(value: string | undefined, pageUrl: string)
   }
 
   return url;
+}
+
+function extractDiegoRadiadoresImages(root: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const selector of [
+    'img.wp-post-image',
+    'img[data-large_image]',
+    '.woocommerce-product-gallery img',
+  ]) {
+    queryAll(root, selector).forEach((element) => {
+      urls.push(...imageCandidatesFromElement(element, pageUrl));
+    });
+  }
+
+  const ogImage = normalizeUrl(
+    firstAttributeValue(root, ['meta[property="og:image"]'], 'content'),
+    pageUrl,
+  );
+
+  if (ogImage) {
+    urls.push(ogImage);
+  }
+
+  return uniqueStrings(urls);
 }
 
 function imageCandidatesFromElement(element: HTMLElement, pageUrl: string): string[] {
