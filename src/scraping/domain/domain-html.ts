@@ -1429,10 +1429,16 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     return undefined;
   }
 
-  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
-  if (/(404|page not found|not found|pagina no encontrada|p[aÃ¡]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
-    return undefined;
-  }
+const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+const pageTitle = cleanText(firstElementText(root, ['title']) ?? '');
+const mainHeading = cleanText(firstElementText(root, ['h1']) ?? '');
+
+if (
+  /(404|page not found|pagina no encontrada|p[a\u00e1]gina no encontrada|no se ha podido encontrar)/i.test(pageTitle ?? '')
+  || /^(404|page not found|pagina no encontrada|p[a\u00e1]gina no encontrada|no se ha podido encontrar)$/i.test(mainHeading ?? '')
+) {
+  return undefined;
+}
   const availabilityText = collectAvailabilityText(root);
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
