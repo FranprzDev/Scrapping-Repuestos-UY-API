@@ -28,6 +28,7 @@ import {
   buildAcesurEndpoint,
   parseAcesurFilterOptions,
   parseAcesurApi,
+  normalizeAcesurPrice,
   buildAcesurProductUrl,
 } from '../providers/domain.provider';
 
@@ -2491,6 +2492,13 @@ test('Acesur sigue con el siguiente rubro si uno falla', async () => {
   assert.equal(products.length, 1);
   assert.equal(products[0].productName, 'Producto MOTOR');
   assert.match(warns.join('\n'), /Acesur rubro fallido rubro=FRENO/);
+});
+
+test('normaliza precios Acesur con tres decimales sin tratarlos como miles', () => {
+  assert.equal(normalizeAcesurPrice('829.934'), '829.93');
+  assert.equal(normalizeAcesurPrice('787.661'), '787.66');
+  assert.equal(normalizeAcesurPrice('1207.48'), '1207.48');
+  assert.equal(normalizeAcesurPrice('680,27'), '680,27');
 });
 
 test('Acesur permite seleccionar rubros y reporta progreso acumulado', async () => {
