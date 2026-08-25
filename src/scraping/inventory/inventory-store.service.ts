@@ -191,13 +191,36 @@ export class InventoryStoreService implements OnModuleInit {
       sql,
       params,
     );
-    return rows.rows.map(mapInventoryRow);
+    return this.enrichImageAssets(rows.rows);
   }
 
   async getFilteredPage(filters: InventoryQueryFilters = {}, pagination: InventoryQueryPagination = {}): Promise<StoredProduct[]> {
     const { sql, params } = buildInventoryQuery(filters, pagination);
     const rows = await this.postgresService.query<InventoryRow>(sql, params);
-    return rows.rows.map(mapInventoryRow);
+    return this.enrichImageAssets(rows.rows);
+  }
+
+  private async enrichImageAssets(rows: InventoryRow[]): Promise<StoredProduct[]> {
+    if (rows.length === 0) return [];
+    const assets = await this.postgresService.query<{ inventory_id: string; asset_id: string }>(
+      'SELECT DISTINCT ON (inventory_id) inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at',
+      [rows.map((row) => row.id)],
+    );
+    const byInventory = new Map(assets.rows.map((asset) => [asset.inventory_id, asset.asset_id]));
+    return rows.map((row) => {
+      const assetId = byInventory.get(row.id);
+      if (!assetId) return mapInventoryRow(row);
+      return mapInventoryRow({
+        ...row,
+        product: {
+          ...row.product,
+          sourceImageUrl: row.product.sourceImageUrl ?? row.product.imageUrl,
+          imageUrl: `/api/image-assets/${assetId}`,
+          imageUrls: [`/api/image-assets/${assetId}`],
+          imageStatus: 'completed',
+        },
+      });
+    });
   }
 
   async countAll(): Promise<number> {
@@ -633,13 +656,12 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
         SELECT
           id,
           site,
-          product || CASE WHEN relay.asset_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sourceImageUrl', COALESCE(product->>'sourceImageUrl', product->>'imageUrl'), 'imageUrl', '/api/image-assets/' || relay.asset_id::text, 'imageUrls', jsonb_build_array('/api/image-assets/' || relay.asset_id::text), 'imageStatus', 'completed') END AS product,
+          product,
           created_at,
           updated_at,
           last_seen_at,
           ${normalizedPriceSqlExpression()} AS price_sort
         FROM scraping_inventory
-        LEFT JOIN LATERAL (SELECT ia.id AS asset_id FROM image_assets ia WHERE ia.inventory_id = scraping_inventory.id ORDER BY ia.created_at LIMIT 1) relay ON TRUE
         ${whereClause}
       )
       SELECT id, site, product, created_at, updated_at, last_seen_at
@@ -649,9 +671,8 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
       ${offset !== undefined ? `OFFSET $${params.length}` : ''}
     `
       : `
-      SELECT id, site, product || CASE WHEN relay.asset_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sourceImageUrl', COALESCE(product->>'sourceImageUrl', product->>'imageUrl'), 'imageUrl', '/api/image-assets/' || relay.asset_id::text, 'imageUrls', jsonb_build_array('/api/image-assets/' || relay.asset_id::text), 'imageStatus', 'completed') END AS product, created_at, updated_at, last_seen_at
+      SELECT id, site, product, created_at, updated_at, last_seen_at
       FROM scraping_inventory
-      LEFT JOIN LATERAL (SELECT ia.id AS asset_id FROM image_assets ia WHERE ia.inventory_id = scraping_inventory.id ORDER BY ia.created_at LIMIT 1) relay ON TRUE
       ${whereClause}
       ORDER BY ${orderBy}
       ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}

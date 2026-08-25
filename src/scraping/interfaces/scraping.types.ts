@@ -26,6 +26,8 @@ export interface ProductRecord {
   stock?: string;
   sourceUrl?: string;
   imageUrl?: string;
+  sourceImageUrl?: string;
+  imageStatus?: 'pending' | 'completed' | 'failed';
   imageUrls?: string[];
   imagePath?: string;
   compatibleVehicles?: string[];
