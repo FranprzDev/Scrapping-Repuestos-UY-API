@@ -11,10 +11,12 @@ import { PlaywrightProvider } from './scraping/providers/playwright.provider';
 import { ScrapingController } from './scraping/scraping.controller';
 import { ScrapingSchedulerService } from './scraping/scraping.scheduler';
 import { ScrapingService } from './scraping/scraping.service';
+import { ImageRelayController } from './image-relay/image-relay.controller';
+import { ImageRelayService } from './image-relay/image-relay.service';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
-  controllers: [ScrapingController],
+  controllers: [ScrapingController, ImageRelayController],
   providers: [
     ScrapingService,
     CatalogScrapingService,
@@ -26,6 +28,7 @@ import { ScrapingService } from './scraping/scraping.service';
     PostgresService,
     JobQueueService,
     ScrapingSchedulerService,
+    ImageRelayService,
   ],
 })
 export class AppModule {}

@@ -10,12 +10,17 @@ services:
     environment:
       PORT: 3000
       CUSTOM_PROVIDER_DOMAINS: ${CUSTOM_PROVIDER_DOMAINS:-}
+      IMAGE_STORAGE_ROOT: /data/images
+      IMAGE_RELAY_ENABLED: ${IMAGE_RELAY_ENABLED:-false}
+      IMAGE_RELAY_ALLOWED_SITES: ${IMAGE_RELAY_ALLOWED_SITES:-selvir.com.uy,acesur.uy,chaparei.com}
+      IMAGE_WORKER_TOKEN: ${IMAGE_WORKER_TOKEN:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-repuestos_uy}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./output:/app/output
+      - ./output/images:/data/images
 
   postgres:
     image: postgres:16-alpine
