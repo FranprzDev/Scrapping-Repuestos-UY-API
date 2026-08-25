@@ -80,6 +80,21 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
     requestDelay: 500,
   }),
   existingSite({
+    id: 'gebamotors',
+    label: 'Geba Motors',
+    hostname: 'gebamotors.com.uy',
+    seedUrls: ['https://gebamotors.com.uy/shop/'],
+    platform: 'woocommerce',
+    productUrlPatterns: [/\/producto\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [/\/(?:shop|Categoria|categoria|product-category)(?:\/|\?|$)/i],
+    paginationStrategy: {
+      type: 'next-link',
+      selector: 'a.next.page-numbers[href], a[rel="next"]',
+      maxPages: 100,
+    },
+    requestDelay: 500,
+  }),
+  existingSite({
     id: 'autopartesgil',
     label: 'Autopartes Gil',
     hostname: 'autopartesgil.com',
