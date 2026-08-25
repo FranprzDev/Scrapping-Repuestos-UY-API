@@ -352,7 +352,7 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
         if (!productName || ignoredNameRegex.test(productName)) return undefined;
         const price = pickPrice(container);
         const compatibleBrands = Array.from(
-          new Set((text(container.textContent).match(/(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd)/gi) ?? []).map((value) => value.trim())),
+          new Set((text(container.textContent).match(/(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd|lifan)/gi) ?? []).map((value) => value.trim())),
         );
         return {
           productName,
@@ -375,7 +375,7 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
         .filter((entry): entry is [string, string] => Boolean(entry)),
     );
     const compatibleBrands = Array.from(
-      new Set((bodyText.match(/(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd)/gi) ?? []).map((value) => value.trim())),
+      new Set((bodyText.match(/(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd|lifan)/gi) ?? []).map((value) => value.trim())),
     );
     const shippingInfo = bodyText
       .split(/(?<=[.!?])\s+/)
@@ -405,6 +405,33 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
             },
           ]
         : [];
+    const isGebaMotors = (() => {
+      try {
+        return new URL(url).hostname.replace(/^www\./i, '').toLowerCase() === 'gebamotors.com.uy';
+      } catch {
+        return false;
+      }
+    })();
+
+    if (isGebaMotors && /\/producto\/[^/?#]+\/?$/i.test(new URL(url).pathname)) {
+      return [...collectStructuredData(), ...detailedRecord].filter((product) => {
+        const name = text(product.productName).toLowerCase();
+        const source = text(product.sourceUrl);
+
+        if (!name) return false;
+
+        if (/^(leer m[aá]s|ir al contenido|🔍|\+598|carrocer[ií]a y accesorios|embrague y frenos|motor y refrigeraci[oó]n|suspensi[oó]n y direcci[oó]n)$/i.test(name)) {
+          return false;
+        }
+
+        if (source && !/\/producto\/[^/?#]+\/?$/i.test(source) && source !== url) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
     return [...collectStructuredData(), ...linkedCards, ...detailedRecord];
   }, pageUrl);
 
