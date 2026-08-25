@@ -414,24 +414,82 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
     })();
 
     if (isGebaMotors && /\/producto\/[^/?#]+\/?$/i.test(new URL(url).pathname)) {
-      return [...collectStructuredData(), ...detailedRecord].filter((product) => {
-        const name = text(product.productName).toLowerCase();
-        const source = text(product.sourceUrl);
+      const productRoot =
+        document.querySelector('.summary.entry-summary') ||
+        document.querySelector('.product.type-product') ||
+        document.querySelector('main') ||
+        document.body;
 
-        if (!name) return false;
+      const productName =
+        normalizeName(document.querySelector('h1.product_title')?.textContent) ||
+        normalizeName(document.querySelector('h1.entry-title')?.textContent) ||
+        pageHeading;
 
-        if (/^(leer m[aá]s|ir al contenido|🔍|\+598|carrocer[ií]a y accesorios|embrague y frenos|motor y refrigeraci[oó]n|suspensi[oó]n y direcci[oó]n)$/i.test(name)) {
-          return false;
-        }
+      const productPrice =
+        text(document.querySelector('.summary .price .woocommerce-Price-amount')?.textContent) ||
+        text(document.querySelector('.summary .price')?.textContent).match(priceRegex)?.[0] ||
+        pickPrice(productRoot);
 
-        if (source && !/\/producto\/[^/?#]+\/?$/i.test(source) && source !== url) {
-          return false;
-        }
+      const galleryLink =
+        document.querySelector('.woocommerce-product-gallery__image a')?.getAttribute('href');
 
-        return true;
-      });
+      const galleryImage =
+        document.querySelector('.woocommerce-product-gallery__image img')?.getAttribute('data-large_image') ||
+        document.querySelector('.woocommerce-product-gallery__image img')?.getAttribute('src');
+
+      const productImage =
+        absoluteUrl(galleryLink) ||
+        absoluteUrl(galleryImage) ||
+        absoluteUrl(document.querySelector('meta[property="og:image"]')?.getAttribute('content'));
+
+      const shortDescription = text(
+        document.querySelector('.woocommerce-product-details__short-description')?.textContent,
+      );
+
+      const tabDescription = text(
+        document.querySelector('#tab-description, .woocommerce-Tabs-panel--description')?.textContent,
+      );
+
+      const productText = [
+        productName,
+        shortDescription,
+        tabDescription,
+        text(productRoot.textContent),
+      ].filter(Boolean).join(' ');
+
+      const gebaBrands = Array.from(
+        new Set(
+          (
+            productText.match(
+              /(?:toyota|nissan|fiat|ford|volkswagen|vw|renault|peugeot|citroen|hyundai|kia|chevrolet|suzuki|mazda|mitsubishi|chery|geely|byd|lifan)/gi,
+            ) ?? []
+          ).map((value) => value.trim()),
+        ),
+      );
+
+      if (!productName) {
+        return [];
+      }
+
+      return [
+        {
+          productName,
+          price: productPrice,
+          sourceUrl: url,
+          imageUrl: productImage,
+          category: text(
+            document.querySelector(
+              '.woocommerce-breadcrumb a:last-of-type, [class*="breadcrumb"] a:last-child',
+            )?.textContent,
+          ),
+          description: shortDescription || tabDescription,
+          compatibleBrands: gebaBrands.join('|'),
+          attributes: Object.keys(attributes).length ? JSON.stringify(attributes) : undefined,
+          availability: pickAvailability(productRoot),
+          stock: pickAvailability(productRoot) === 'out_of_stock' ? '0' : undefined,
+        },
+      ];
     }
-
     return [...collectStructuredData(), ...linkedCards, ...detailedRecord];
   }, pageUrl);
 
