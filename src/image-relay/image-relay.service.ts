@@ -84,8 +84,8 @@ export class ImageRelayService {
     return imageUrls.length;
   }
 
-  async claim(workerId: string): Promise<ImageJob | undefined> {
-    this.authenticate(workerId);
+  async claim(token: string, workerId: string): Promise<ImageJob | undefined> {
+    this.authenticate(token);
 
     const result = await this.db.query<ImageJob>(
       `
@@ -126,8 +126,8 @@ export class ImageRelayService {
     return job;
   }
 
-  async heartbeat(jobId: string, workerId: string): Promise<{ id: string; state: string }> {
-    this.authenticate(workerId);
+  async heartbeat(jobId: string, token: string, workerId: string): Promise<{ id: string; state: string }> {
+    this.authenticate(token);
 
     const result = await this.db.query(
       `
@@ -149,11 +149,12 @@ export class ImageRelayService {
 
   async upload(
     jobId: string,
+    token: string,
     workerId: string,
     contentTypeHeader: string | undefined,
     request: NodeJS.ReadableStream,
   ): Promise<UploadMetadata & { jobId: string }> {
-    this.authenticate(workerId);
+    this.authenticate(token);
     const contentType = this.normalizeContentType(contentTypeHeader);
     const job = await this.getJob(jobId);
 
@@ -201,8 +202,8 @@ export class ImageRelayService {
     return { jobId, ...metadata };
   }
 
-  async complete(jobId: string, workerId: string, body: Record<string, unknown>): Promise<unknown> {
-    this.authenticate(workerId);
+  async complete(jobId: string, token: string, workerId: string, body: Record<string, unknown>): Promise<unknown> {
+    this.authenticate(token);
     const job = await this.getJob(jobId);
 
     if (job.status === 'completed') {
@@ -252,8 +253,8 @@ export class ImageRelayService {
     return asset.rows[0];
   }
 
-  async fail(jobId: string, workerId: string, error: unknown): Promise<{ id: string; status: string }> {
-    this.authenticate(workerId);
+  async fail(jobId: string, token: string, workerId: string, error: unknown): Promise<{ id: string; status: string }> {
+    this.authenticate(token);
     const job = await this.getJob(jobId);
     this.assertJobOwner(job, workerId);
 
@@ -376,9 +377,9 @@ export class ImageRelayService {
     return result.rows[0];
   }
 
-  private authenticate(workerId: string): void {
+  private authenticate(token: string): void {
     const expectedToken = process.env.IMAGE_WORKER_TOKEN;
-    if (!expectedToken || workerId !== expectedToken) {
+    if (!expectedToken || token !== expectedToken) {
       throw new UnauthorizedException('Token de worker invalido');
     }
   }
