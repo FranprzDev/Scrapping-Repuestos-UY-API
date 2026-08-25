@@ -147,6 +147,23 @@ export class ImageRelayService {
     return { id: jobId, state: 'processing' };
   }
 
+  async status(jobId: string, token: string, workerId: string): Promise<unknown> {
+    this.authenticate(token);
+    const job = await this.getJob(jobId);
+    this.assertJobOwner(job, workerId);
+    return {
+      id: job.id,
+      state: job.status,
+      upload: job.upload_storage_key
+        ? {
+            bytes: job.upload_bytes,
+            sha256: job.upload_sha256,
+            contentType: job.upload_content_type,
+          }
+        : undefined,
+    };
+  }
+
   async upload(
     jobId: string,
     token: string,
@@ -163,6 +180,10 @@ export class ImageRelayService {
     }
     this.assertJobOwner(job, workerId);
 
+    if (job.upload_storage_key) {
+      await fs.rm(join(this.storageRoot, job.upload_storage_key), { force: true });
+    }
+
     const startedAt = Date.now();
     const uploadKey = `.staging/${jobId}/${randomUUID()}.tmp`;
     const temporaryPath = join(this.storageRoot, uploadKey);
@@ -176,7 +197,7 @@ export class ImageRelayService {
       throw error;
     }
 
-    await this.db.query(
+    const persistedUpload = await this.db.query(
       `
       UPDATE image_jobs
       SET upload_storage_key = $2,
@@ -186,9 +207,15 @@ export class ImageRelayService {
           upload_started_at = NOW(),
           updated_at = NOW()
       WHERE id = $1 AND status = 'processing' AND claimed_by = $6
+      RETURNING id
       `,
       [jobId, metadata.storageKey, metadata.bytes, metadata.sha256, metadata.contentType, workerId],
     );
+
+    if (!persistedUpload.rows[0]) {
+      await fs.rm(temporaryPath, { force: true });
+      throw new UnauthorizedException('El lease del worker expiró durante el upload');
+    }
 
     this.logEvent('image_upload_received', {
       jobId,

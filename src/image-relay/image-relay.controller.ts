@@ -16,6 +16,8 @@ export class ImageRelayController {
   upload(@Param('id') id: string, @Headers('authorization') auth: string, @Headers('x-worker-id') workerId: string, @Headers('content-type') type: string, @Req() req: any) { return this.relay.upload(id, this.credentials(auth, workerId).token, this.credentials(auth, workerId).workerId, type, req); }
   @Post('image-jobs/:id/heartbeat')
   heartbeat(@Param('id') id: string, @Headers('authorization') auth: string, @Headers('x-worker-id') workerId: string) { return this.relay.heartbeat(id, this.credentials(auth, workerId).token, this.credentials(auth, workerId).workerId); }
+  @Get('image-jobs/:id/status')
+  status(@Param('id') id: string, @Headers('authorization') auth: string, @Headers('x-worker-id') workerId: string) { return this.relay.status(id, this.credentials(auth, workerId).token, this.credentials(auth, workerId).workerId); }
   @Post('image-jobs/:id/complete')
   complete(@Param('id') id: string, @Headers('authorization') auth: string, @Headers('x-worker-id') workerId: string, @Body() body: any) { return this.relay.complete(id, this.credentials(auth, workerId || body?.workerId).token, this.credentials(auth, workerId || body?.workerId).workerId, body); }
   @Post('image-jobs/:id/fail')
