@@ -1186,6 +1186,27 @@ export function buildSelvirArchivePageUrl(baseUrl: string, page: number): string
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
   return new URL(`page/${page}/`, normalizedBase).toString();
 }
+export function normalizeAcesurPrice(value?: string): string | undefined {
+  const normalized = normalizePriceValue(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  // Acesur devuelve algunos precios con 3 decimales.
+  // Ejemplo: 829.934 significa $829,934, no $829.934 (miles).
+  if (/^\d+\.\d{3}$/.test(normalized)) {
+    const parsed = Number(normalized);
+
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+
+    return parsed.toFixed(2);
+  }
+
+  return normalized;
+}
 
 export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domain'): { totalRecords?: number; products: ProductRecord[] } {
   const parsed = JSON.parse(body) as { cantidad_registros?: string; productos?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
@@ -1205,7 +1226,7 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
 
       accumulator.push({
         productName: String(item.descripcion_corta ?? '').trim() || String(item.descripcion_larga ?? '').trim(),
-        price: rawPrice ? normalizePriceValue(rawPrice) : undefined,
+        price: rawPrice ? normalizeAcesurPrice(rawPrice) : undefined,
         currency: inferCurrency(String(item.moneda ?? '$')),
         brand: String(item.marca ?? '').trim() || undefined,
         category: [item.rubro, item.subrubro].filter(Boolean).join(' / ') || undefined,
