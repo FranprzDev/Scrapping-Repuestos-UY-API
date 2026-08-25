@@ -1,5 +1,5 @@
 import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
-import { ProductRecord } from '../interfaces/scraping.types';
+import { ImageStatus, ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
@@ -206,21 +206,31 @@ export class InventoryStoreService implements OnModuleInit {
       'SELECT DISTINCT ON (inventory_id) inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at',
       [rows.map((row) => row.id)],
     );
-    const byInventory = new Map(assets.rows.map((asset) => [asset.inventory_id, asset.asset_id]));
-    return rows.map((row) => {
-      const assetId = byInventory.get(row.id);
-      if (!assetId) return mapInventoryRow(row);
-      return mapInventoryRow({
+    const assetByInventoryId = new Map<string, string>();
+    for (const asset of assets.rows) {
+      assetByInventoryId.set(asset.inventory_id, asset.asset_id);
+    }
+
+    const products: StoredProduct[] = [];
+    for (const row of rows) {
+      const assetId = assetByInventoryId.get(row.id);
+      if (!assetId) {
+        products.push(mapInventoryRow(row));
+        continue;
+      }
+
+      products.push(mapInventoryRow({
         ...row,
         product: {
           ...row.product,
           sourceImageUrl: row.product.sourceImageUrl ?? row.product.imageUrl,
           imageUrl: `/api/image-assets/${assetId}`,
           imageUrls: [`/api/image-assets/${assetId}`],
-          imageStatus: 'completed',
+          imageStatus: ImageStatus.Completed,
         },
-      });
-    });
+      }));
+    }
+    return products;
   }
 
   async countAll(): Promise<number> {
