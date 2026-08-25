@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
@@ -6,6 +6,7 @@ import { fetchHtml } from '../domain/http-client';
 import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
+import { ImageRelayService } from '../../image-relay/image-relay.service';
 
 export interface StoredProduct extends Omit<ProductRecord, 'price'> {
   price?: number;
@@ -79,7 +80,7 @@ export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
   private readonly vehicleBrandBackfillChunkSize = 500;
 
-  constructor(@Inject(PostgresService) private readonly postgresService: PostgresService) {}
+  constructor(@Inject(PostgresService) private readonly postgresService: PostgresService, @Optional() private readonly imageRelayService?: ImageRelayService) {}
 
   async onModuleInit(): Promise<void> {
     await this.postgresService.ensureCatalogTables();
@@ -166,6 +167,10 @@ export class InventoryStoreService implements OnModuleInit {
           vehicleBrands: brandsBySourceUrl.get(row.sourceUrl) ?? [],
         })),
       );
+      await Promise.all(upserted.rows.map((row) => {
+        const item = chunk.find((candidate) => candidate.sourceUrl === row.sourceUrl);
+        return item ? this.imageRelayService?.enqueueForInventory(row.id, item.site, JSON.parse(item.product) as ProductRecord) : 0;
+      }));
     }
 
     const totalForSite = await this.countBySite(site);
@@ -628,12 +633,13 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
         SELECT
           id,
           site,
-          product,
+          product || CASE WHEN relay.asset_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sourceImageUrl', COALESCE(product->>'sourceImageUrl', product->>'imageUrl'), 'imageUrl', '/api/image-assets/' || relay.asset_id::text, 'imageUrls', jsonb_build_array('/api/image-assets/' || relay.asset_id::text), 'imageStatus', 'completed') END AS product,
           created_at,
           updated_at,
           last_seen_at,
           ${normalizedPriceSqlExpression()} AS price_sort
         FROM scraping_inventory
+        LEFT JOIN LATERAL (SELECT ia.id AS asset_id FROM image_assets ia WHERE ia.inventory_id = scraping_inventory.id ORDER BY ia.created_at LIMIT 1) relay ON TRUE
         ${whereClause}
       )
       SELECT id, site, product, created_at, updated_at, last_seen_at
@@ -643,8 +649,9 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
       ${offset !== undefined ? `OFFSET $${params.length}` : ''}
     `
       : `
-      SELECT id, site, product, created_at, updated_at, last_seen_at
+      SELECT id, site, product || CASE WHEN relay.asset_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sourceImageUrl', COALESCE(product->>'sourceImageUrl', product->>'imageUrl'), 'imageUrl', '/api/image-assets/' || relay.asset_id::text, 'imageUrls', jsonb_build_array('/api/image-assets/' || relay.asset_id::text), 'imageStatus', 'completed') END AS product, created_at, updated_at, last_seen_at
       FROM scraping_inventory
+      LEFT JOIN LATERAL (SELECT ia.id AS asset_id FROM image_assets ia WHERE ia.inventory_id = scraping_inventory.id ORDER BY ia.created_at LIMIT 1) relay ON TRUE
       ${whereClause}
       ORDER BY ${orderBy}
       ${limit !== undefined ? `LIMIT $${params.length - (offset !== undefined ? 1 : 0)}` : ''}
