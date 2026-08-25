@@ -69,23 +69,39 @@ export function extractShopifyProducts(
     const price = normalizePriceValue(rawPrice);
 
     if (!productName || !handle || !price) {
-      return [];
-    }
+  return [];
+}
 
-    return [{
-      productName,
-      price,
-      currency: 'UYU',
-      brand: cleanText(typeof product.vendor === 'string' ? product.vendor : undefined),
-      sku: cleanText(typeof selectedVariant?.sku === 'string' ? selectedVariant.sku : undefined),
-      category: cleanText(typeof product.product_type === 'string' ? product.product_type : undefined),
-      description: cleanText(typeof product.body_html === 'string' ? stripHtml(product.body_html) : undefined),
-      imageUrl: normalizeUrl(typeof product.images?.[0]?.src === 'string' ? product.images[0].src : undefined, baseUrl),
-      sourceUrl: new URL(`/products/${handle}`, baseUrl).toString(),
-      availability: selectedVariant?.available === false ? 'out_of_stock' : 'in_stock',
-      extractedAt: new Date().toISOString(),
-      provider,
-    }];
+const imageUrls = (product.images ?? [])
+  .map((image) =>
+    normalizeUrl(
+      typeof image?.src === 'string' ? image.src : undefined,
+      baseUrl,
+    ),
+  )
+  .filter((url): url is string => Boolean(url))
+  .filter((url) =>
+    !(
+      baseUrl.includes('leoradiadores.com.uy')
+      && /LEO_RADIADORES_SIGAN_AL_LIDER/i.test(url)
+    )
+  );
+
+return [{
+  productName,
+  price,
+  currency: 'UYU',
+  brand: cleanText(typeof product.vendor === 'string' ? product.vendor : undefined),
+  sku: cleanText(typeof selectedVariant?.sku === 'string' ? selectedVariant.sku : undefined),
+  category: cleanText(typeof product.product_type === 'string' ? product.product_type : undefined),
+  description: cleanText(typeof product.body_html === 'string' ? stripHtml(product.body_html) : undefined),
+  imageUrl: imageUrls[0],
+imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+sourceUrl: new URL(`/products/${handle}`, baseUrl).toString(),
+  availability: selectedVariant?.available === false ? 'out_of_stock' : 'in_stock',
+  extractedAt: new Date().toISOString(),
+  provider,
+}];
   });
 
   return { products, received: rawProducts.length };
@@ -158,9 +174,9 @@ export function extractFenicioProducts(
       currency: inferCurrency(rawPrice) ?? 'UYU',
       brand: commercialBrand,
       sku,
-      imageUrl: imageUrls[0],
-      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-      sourceUrl,
+imageUrl: imageUrls[0],
+imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+sourceUrl,
       availability: available ? 'in_stock' : 'out_of_stock',
       compatibleBrands: mergeCompatibleBrands(undefined, contextBrand ? [contextBrand] : undefined),
       extractedAt: new Date().toISOString(),

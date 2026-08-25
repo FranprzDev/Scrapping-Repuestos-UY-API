@@ -4,8 +4,10 @@ import { readFileSync } from 'node:fs';
 import { ProductRecord } from '../interfaces/scraping.types';
 import { PostgresFamilcarCymacoImageBackfillStore } from './familcar-cymaco-image-backfill-postgres';
 import {
+  FamilcarCymacoSite,
   FamilcarCymacoBackfillRow,
   FamilcarCymacoBackfillStore,
+  parseFamilcarCymacoBackfillSite,
   runFamilcarCymacoImageBackfill,
 } from './familcar-cymaco-image-backfill';
 
@@ -79,6 +81,88 @@ test('Familcar/Cymaco image backfill dry-run does not write and reports pending 
   assert.equal(store.updates.length, 0);
   assert.equal(summary.items[0].newImageUrl, familcarProductImage);
   assert.equal(summary.items[0].reason, 'would_update');
+});
+
+test('Familcar/Cymaco image backfill --site=familcar never selects Cymaco', async () => {
+  const store = new MemoryBackfillStore([
+    row('familcar-1', familcarUrl, { productName: 'Tapa de cilindros 1', imageUrl: familcarLogoUrl, sourceUrl: familcarUrl }),
+    row('cymaco-1', cymacoUrl, { productName: 'Amortiguador Fiat', imageUrl: cymacoLogoUrl, sourceUrl: cymacoUrl }),
+    row('familcar-2', 'https://familcar.com/catalogo/rotula-fiat_123_123', { productName: 'Rotula Fiat', imageUrl: familcarLogoUrl, sourceUrl: 'https://familcar.com/catalogo/rotula-fiat_123_123' }),
+  ]);
+  const fetches: string[] = [];
+
+  const summary = await runFamilcarCymacoImageBackfill({
+    site: 'familcar',
+    store,
+    fetchProductHtml: async (sourceUrl) => {
+      fetches.push(sourceUrl);
+      return { finalUrl: sourceUrl, body: productHtml(sourceUrl, familcarProductImage) };
+    },
+  });
+
+  assert.deepEqual(fetches, [
+    familcarUrl,
+    'https://familcar.com/catalogo/rotula-fiat_123_123',
+  ]);
+  assert.equal(summary.site, 'familcar');
+  assert.equal(summary.totalCandidates, 2);
+  assert.equal(summary.items.every((item) => item.site === 'familcar'), true);
+});
+
+test('Familcar/Cymaco image backfill --site=cymaco never selects Familcar', async () => {
+  const secondCymacoUrl = 'https://www.cymaco.com.uy/catalogo/bomba-de-agua-fiat_999_001';
+  const store = new MemoryBackfillStore([
+    row('familcar-1', familcarUrl, { productName: 'Tapa de cilindros', imageUrl: familcarLogoUrl, sourceUrl: familcarUrl }),
+    row('cymaco-1', cymacoUrl, { productName: 'Amortiguador Fiat', imageUrl: cymacoLogoUrl, sourceUrl: cymacoUrl }),
+    row('cymaco-2', secondCymacoUrl, { productName: 'Bomba de agua Fiat', imageUrl: cymacoLogoUrl, sourceUrl: secondCymacoUrl }),
+  ]);
+  const fetches: string[] = [];
+
+  const summary = await runFamilcarCymacoImageBackfill({
+    site: 'cymaco',
+    store,
+    fetchProductHtml: async (sourceUrl) => {
+      fetches.push(sourceUrl);
+      return { finalUrl: sourceUrl, body: productHtml(sourceUrl, cymacoProductImage) };
+    },
+  });
+
+  assert.deepEqual(fetches, [cymacoUrl, secondCymacoUrl]);
+  assert.equal(summary.site, 'cymaco');
+  assert.equal(summary.totalCandidates, 2);
+  assert.equal(summary.items.every((item) => item.site === 'cymaco'), true);
+});
+
+test('Familcar/Cymaco image backfill --site=familcar --limit=5 limits after selecting Familcar', async () => {
+  const rows = Array.from({ length: 8 }, (_, index) => {
+    const sourceUrl = `https://www.familcar.com/catalogo/producto-${index}_P${index}_P${index}`;
+    return row(`familcar-${index}`, sourceUrl, {
+      productName: `Producto Familcar ${index}`,
+      imageUrl: familcarLogoUrl,
+      sourceUrl,
+    });
+  });
+  const store = new MemoryBackfillStore([
+    ...rows,
+    row('cymaco-1', cymacoUrl, { productName: 'Amortiguador Fiat', imageUrl: cymacoLogoUrl, sourceUrl: cymacoUrl }),
+  ]);
+  const fetches: string[] = [];
+
+  const summary = await runFamilcarCymacoImageBackfill({
+    site: 'familcar',
+    limit: 5,
+    store,
+    fetchProductHtml: async (sourceUrl) => {
+      fetches.push(sourceUrl);
+      return { finalUrl: sourceUrl, body: productHtml(sourceUrl, familcarProductImage) };
+    },
+  });
+
+  assert.equal(summary.site, 'familcar');
+  assert.equal(summary.limit, 5);
+  assert.equal(summary.totalCandidates, 5);
+  assert.equal(fetches.length, 5);
+  assert.equal(fetches.some((sourceUrl) => sourceUrl.includes('cymaco')), false);
 });
 
 test('Familcar/Cymaco image backfill apply updates only image fields in the product payload', async () => {
@@ -213,13 +297,77 @@ test('Postgres Familcar/Cymaco image store selects target source URLs and update
   assert.doesNotMatch(queries[1].sql, /\bname\b|\bprice\b|\bstock\b|\bsource_url\b|\bcategory\b|\bdescription\b|\bsku\b/i);
 });
 
+test('Postgres Familcar/Cymaco image store filters by Familcar site only', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const postgres = {
+    query: async (sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+  const store = new PostgresFamilcarCymacoImageBackfillStore(postgres as any);
+
+  await store.findCandidates(undefined, 'familcar');
+
+  assert.match(queries[0].sql, /source_url LIKE \$1 \|\| '%'/);
+  assert.match(queries[0].sql, /source_url LIKE \$2 \|\| '%'/);
+  assert.doesNotMatch(queries[0].sql, /source_url LIKE \$3 \|\| '%'/);
+  assert.deepEqual(queries[0].params, [
+    'https://www.familcar.com/catalogo/',
+    'https://familcar.com/catalogo/',
+  ]);
+});
+
+test('Postgres Familcar/Cymaco image store filters by Cymaco site only', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const postgres = {
+    query: async (sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+  const store = new PostgresFamilcarCymacoImageBackfillStore(postgres as any);
+
+  await store.findCandidates(5, 'cymaco');
+
+  assert.deepEqual(queries[0].params, [
+    'https://www.cymaco.com.uy/catalogo/',
+    'https://cymaco.com.uy/catalogo/',
+    5,
+  ]);
+  assert.doesNotMatch(queries[0].sql, /familcar\.com/);
+});
+
+test('Familcar/Cymaco image backfill invalid --site fails before reading or writing', async () => {
+  const store = new MemoryBackfillStore([
+    row('familcar-1', familcarUrl, { productName: 'Tapa de cilindros', imageUrl: familcarLogoUrl, sourceUrl: familcarUrl }),
+  ]);
+
+  await assert.rejects(
+    runFamilcarCymacoImageBackfill({
+      site: 'repuestosavenida' as FamilcarCymacoSite,
+      apply: true,
+      store,
+      fetchProductHtml: async () => ({ finalUrl: familcarUrl, body: productHtml(familcarUrl, familcarProductImage) }),
+    }),
+    /Invalid --site value "repuestosavenida"/,
+  );
+
+  assert.equal(store.findCalls.length, 0);
+  assert.equal(store.updates.length, 0);
+  assert.throws(() => parseFamilcarCymacoBackfillSite('otro'), /Expected "familcar" or "cymaco"/);
+});
+
 class MemoryBackfillStore implements FamilcarCymacoBackfillStore {
   readonly updates: Array<{ id: string; product: ProductRecord }> = [];
+  readonly findCalls: Array<{ limit?: number; site?: FamilcarCymacoSite }> = [];
 
   constructor(private readonly rows: FamilcarCymacoBackfillRow[]) {}
 
-  async findCandidates(limit?: number): Promise<FamilcarCymacoBackfillRow[]> {
-    return typeof limit === 'number' ? this.rows.slice(0, limit) : this.rows;
+  async findCandidates(limit?: number, site?: FamilcarCymacoSite): Promise<FamilcarCymacoBackfillRow[]> {
+    this.findCalls.push({ limit, site });
+    const scopedRows = site ? this.rows.filter((item) => item.sourceUrl.includes(site === 'familcar' ? 'familcar.com' : 'cymaco.com.uy')) : this.rows;
+    return typeof limit === 'number' ? scopedRows.slice(0, limit) : scopedRows;
   }
 
   async updateImages(id: string, product: ProductRecord): Promise<void> {

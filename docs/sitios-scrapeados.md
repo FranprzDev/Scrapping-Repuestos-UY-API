@@ -24,6 +24,14 @@ Estos son los sitios que hoy damos por bien scrapeados y que conviene reutilizar
   - URL base: `https://www.multishop.com.uy/`
   - Cobertura: catálogo Shopify JSON paginado, variantes, precio, stock, SKU, imagen y categoría
 
+- `Diego Radiadores`
+  - URL base: `https://diegoradiadores.com.uy/tienda/`
+  - Cobertura: catálogo WooCommerce paginado, detalle de producto, precio, SKU, stock e imagen
+
+- `Leo Radiadores`
+  - URL base: `https://www.leoradiadores.com.uy/collections/all`
+  - Cobertura: catálogo Shopify JSON paginado, variantes, precio, stock, SKU, imagen y categoría
+
 - `Cymaco`
   - URL base: `https://cymaco.com.uy/catalogo`
   - Cobertura: 110 marcas compatibles, paginación Fenicio `js=1&pag=N`, productos únicos y relaciones producto-marca

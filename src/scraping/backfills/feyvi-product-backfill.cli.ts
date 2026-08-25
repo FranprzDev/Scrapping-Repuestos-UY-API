@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { fetchHtml } from '../domain/http-client';
 import { PostgresService } from '../jobs/postgres.service';
-import { PostgresFamilcarCymacoImageBackfillStore } from './familcar-cymaco-image-backfill-postgres';
-import { parseFamilcarCymacoBackfillSite, runFamilcarCymacoImageBackfill } from './familcar-cymaco-image-backfill';
+import { PostgresFeyviProductBackfillStore } from './feyvi-product-backfill-postgres';
+import { runFeyviProductBackfill } from './feyvi-product-backfill';
 
 const args = new Map(process.argv.slice(2).map((arg) => {
   const [key, value = 'true'] = arg.replace(/^--/, '').split('=', 2);
@@ -10,29 +10,33 @@ const args = new Map(process.argv.slice(2).map((arg) => {
 }));
 
 const apply = args.get('apply') === 'true';
+const dryRun = args.get('dry-run') === 'true';
 const limit = positiveInt(args.get('limit'));
 
 if (args.has('help')) {
   console.log([
     'Uso:',
-    '  pnpm run familcar-cymaco:images:backfill -- --limit=20',
-    '  pnpm run familcar-cymaco:images:backfill -- --site=familcar',
-    '  pnpm run familcar-cymaco:images:backfill -- --site=cymaco --limit=5',
-    '  pnpm run familcar-cymaco:images:backfill -- --limit=20 --apply',
+    '  pnpm run feyvi:products:backfill -- --dry-run',
+    '  pnpm run feyvi:products:backfill -- --limit=20',
+    '  pnpm run feyvi:products:backfill -- --limit=5 --apply',
+    '  pnpm run feyvi:products:backfill -- --apply',
     '',
     'Por defecto corre en dry-run. --apply habilita escritura real.',
   ].join('\n'));
   process.exit(0);
 }
 
-const site = parseFamilcarCymacoBackfillSite(args.get('site'));
+if (apply && dryRun) {
+  console.error('No combines --dry-run con --apply.');
+  process.exit(1);
+}
+
 const postgresService = new PostgresService();
 
-runFamilcarCymacoImageBackfill({
+runFeyviProductBackfill({
   apply,
   limit,
-  site,
-  store: new PostgresFamilcarCymacoImageBackfillStore(postgresService),
+  store: new PostgresFeyviProductBackfillStore(postgresService),
   fetchProductHtml: async (sourceUrl) => {
     const response = await fetchHtml(sourceUrl);
     return {

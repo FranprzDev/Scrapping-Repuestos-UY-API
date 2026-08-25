@@ -1,4 +1,4 @@
-﻿import type { ProductRecord } from '../interfaces/scraping.types';
+import type { ProductRecord } from '../interfaces/scraping.types';
 import { parse, type HTMLElement } from 'node-html-parser';
 import {
   authenticateYokomitsuHttpSession,
@@ -9,7 +9,10 @@ import {
 } from './yokomitsu-auth';
 import {
   extractYokomitsuProductDetailFromHtml,
+  filterYokomitsuDetailGalleryImageUrls,
+  deriveYokomitsuProductNameFromSourceUrl,
   parseYokomitsuSearchResponseFull,
+  sanitizeYokomitsuProductName,
   YOKOMITSU_BASE_URL,
   YOKOMITSU_LOGIN_URL,
   YOKOMITSU_SEARCH_ENDPOINT,
@@ -21,6 +24,7 @@ export const YOKOMITSU_FULL_VIEW = 'grid';
 
 export interface YokomitsuFullScrapeOptions {
   credentials: YokomitsuCredentials;
+  maxProducts?: number;
   outputProduct?: (product: ProductRecord) => Promise<void>;
   checkpoint?: YokomitsuFullCheckpoint;
   onCheckpoint?: (checkpoint: YokomitsuFullCheckpoint) => Promise<void>;
@@ -293,6 +297,7 @@ export async function runYokomitsuFullCatalog(
   const concurrency = clampInteger(options.concurrency ?? 3, 1, 4);
   const retries = options.retries ?? 2;
   const retryDelayMs = options.retryDelayMs ?? 750;
+  const maxProducts = options.maxProducts;
   const limitations: string[] = [];
   const categoryCoverage: YokomitsuCategoryCoverage[] = [];
   let sessionRenewed = false;
@@ -360,15 +365,9 @@ export async function runYokomitsuFullCatalog(
     return response;
   };
 
-  console.log('production-yokomitsu stage=auth-start');
   await login();
-  console.log('production-yokomitsu stage=auth-ok');
-
-  console.log('production-yokomitsu stage=home-start');
   const home = await getAuthenticatedHome();
-  console.log(`production-yokomitsu stage=home-ok status=${home.status} bodyLength=${home.body.length}`);
   const discoveredCategories = mergeCategories(checkpoint.discoveredCategories, discoverYokomitsuCategoriesFromHtml(home.body, YOKOMITSU_BASE_URL));
-  console.log(`production-yokomitsu stage=discovery-ok categories=${discoveredCategories.length}`);
   checkpoint.discoveryMethod = 'category-tree';
   checkpoint.discoveredCategories = discoveredCategories;
   checkpoint.counters.categoriesDiscovered = countCategories(discoveredCategories);
@@ -394,9 +393,7 @@ export async function runYokomitsuFullCatalog(
         duplicateUrls: 0,
       };
       categoryCoverage.push(coverage);
-      console.log(`production-yokomitsu stage=category-start name=${category.name} key=${category.key}`);
       const firstPage = await catalogWithSession(category, 1);
-      console.log(`production-yokomitsu stage=category-response name=${category.name} status=${firstPage.response.status} bodyLength=${firstPage.response.body.length}`);
       const firstSummary = parseYokomitsuSearchResponseFull(firstPage.response.body, { ...category, page: 1, register: pageSize, view: YOKOMITSU_FULL_VIEW }, YOKOMITSU_BASE_URL);
       if (!firstSummary) {
         checkpoint.counters.errors += 1;
@@ -444,22 +441,30 @@ export async function runYokomitsuFullCatalog(
     }
   }
 
-  await runPool(discoveredProducts, concurrency, async (entry) => {
+    const productsToProcess =
+    maxProducts && maxProducts > 0
+      ? discoveredProducts.slice(0, maxProducts)
+      : discoveredProducts;
+
+  if (maxProducts && discoveredProducts.length > productsToProcess.length) {
+    limitations.push(
+      `product processing limited to ${productsToProcess.length} of ${discoveredProducts.length} discovered products`,
+    );
+  }
+
+  await runPool(productsToProcess, concurrency, async (entry) => {
     if (processedKeys.has(entry.key)) {
       checkpoint.counters.duplicates += 1;
       return;
     }
     try {
       const sourceUrl = entry.listing.sourceUrl;
-      console.log(`production-yokomitsu product-start key=${entry.key} url=${sourceUrl ?? 'none'}`);
       const detail = sourceUrl ? await detailWithSession(sourceUrl) : undefined;
-      console.log(`production-yokomitsu product-detail key=${entry.key} status=${detail?.status ?? 'none'} bodyLength=${detail?.body.length ?? 0}`);
       const detailProduct = detail && sourceUrl
         ? extractYokomitsuProductDetailFromHtml(detail.body, sourceUrl, YOKOMITSU_BASE_URL)
         : undefined;
       const product = mergeYokomitsuProduct(entry.listing, detailProduct);
       checkpoint.counters.productsProcessed += 1;
-      console.log(`production-yokomitsu product-done key=${entry.key} processed=${checkpoint.counters.productsProcessed} valid=${checkpoint.counters.validProducts}`);
       if (isValidYokomitsuProduct(product)) {
         checkpoint.counters.validProducts += 1;
         await options.outputProduct?.(product);
@@ -751,17 +756,37 @@ function countSubcategories(categories: YokomitsuCategoryRef[]): number {
     .map((category) => [category.id_category, category.id_subcategory].filter(Boolean).join(':'))).size;
 }
 
-function mergeYokomitsuProduct(listing: ProductRecord, detail?: ProductRecord): ProductRecord {
-  if (!detail) return listing;
+export function mergeYokomitsuProduct(listing: ProductRecord, detail?: ProductRecord): ProductRecord {
+  const imageUrls = detail
+    ? filterYokomitsuDetailGalleryImageUrls([...(detail.imageUrls ?? []), detail.imageUrl])
+    : filterYokomitsuDetailGalleryImageUrls([...(listing.imageUrls ?? []), listing.imageUrl]);
+  const listingProductName = sanitizeYokomitsuProductName(listing.productName);
+  const fallbackProductName = deriveYokomitsuProductNameFromSourceUrl(detail?.sourceUrl ?? listing.sourceUrl);
+  if (!detail) {
+    return {
+      ...listing,
+      productName: listingProductName ?? fallbackProductName,
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+      imageUrl: imageUrls[0],
+    };
+  }
+  const detailProductName = sanitizeYokomitsuProductName(detail.productName);
+  const compatibleBrands = uniqueStrings([...(listing.compatibleBrands ?? []), ...(detail.compatibleBrands ?? [])]);
+  const compatibleModels = uniqueStrings([...(listing.compatibleModels ?? []), ...(detail.compatibleModels ?? [])]);
   return {
     ...listing,
     ...detail,
+    productName: detailProductName ?? listingProductName ?? fallbackProductName,
+    sku: detail.sku ?? listing.sku,
+    brand: detail.brand ?? listing.brand,
+    compatibleBrands,
+    compatibleModels,
     attributes: {
       ...(listing.attributes ?? {}),
       ...(detail.attributes ?? {}),
     },
-    imageUrls: uniqueStrings([...(listing.imageUrls ?? []), listing.imageUrl, ...(detail.imageUrls ?? []), detail.imageUrl]),
-    imageUrl: detail.imageUrl ?? listing.imageUrl,
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    imageUrl: imageUrls?.[0],
     sourceUrl: detail.sourceUrl ?? listing.sourceUrl,
     provider: 'Yokomitsu',
     extractedAt: detail.extractedAt || listing.extractedAt,
@@ -865,7 +890,13 @@ function cleanParam(value: string | undefined | null): string | undefined {
 function sanitizeCategoryName(value: string | undefined): string | undefined {
   const cleaned = value?.replace(/\s+/g, ' ').trim();
   if (!cleaned || containsSecretMarker(cleaned)) return undefined;
+  if (isInvalidYokomitsuCategoryName(cleaned)) return undefined;
   return cleaned.slice(0, 120);
+}
+
+function isInvalidYokomitsuCategoryName(value: string): boolean {
+  return /^(?:#N\/A|#VALUE!|#REF!|#DIV\/0!|#ERROR!)(?:\b|\s|\(|$)/i.test(value)
+    || /did not find value .* in vlookup evaluation/i.test(value);
 }
 
 function sanitizeCategoryUrl(value: string | undefined): string | undefined {
@@ -891,6 +922,3 @@ function secretPattern(): RegExp {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-
-

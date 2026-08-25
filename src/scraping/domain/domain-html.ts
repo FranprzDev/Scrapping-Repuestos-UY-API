@@ -115,6 +115,9 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
     const card = findCardContainer(anchor);
     const cardText = cleanText(card.text) ?? '';
     if (isSemanticProductLink(href, cardText, rule)) {
+      if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+        return;
+      }
       productLinks.add(href);
       return;
     }
@@ -191,6 +194,12 @@ function isChapareiSemanticCategoryLink(href: string, cardText: string): boolean
 
 export function extractProductsFromHtml(html: string, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const root = parse(html);
+
+  if (rule.id === 'selvir' && /\/product\//i.test(pageUrl)) {
+    const detailProduct = extractSelvirDetailProduct(root, pageUrl, provider, rule);
+    return detailProduct ? [detailProduct] : extractJsonLdProducts(root, pageUrl, provider);
+  }
+
   const candidates: ProductRecord[] = [];
 
   candidates.push(...extractJsonLdProducts(root, pageUrl, provider));
@@ -280,6 +289,10 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
 
 export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
   const root = parse(html);
+  return extractCompatibilityFromRoot(root);
+}
+
+function extractCompatibilityFromRoot(root: HTMLElement): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
   const vehicleTexts = new Set<string>();
   const brands = new Set<string>();
   const models = new Set<string>();
@@ -352,11 +365,13 @@ export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 
   }
 
   for (const group of root.querySelectorAll('.ty-product-feature-group')) {
-    const groupLabel = cleanText(group.querySelector('.ty-subheader, .ty-product-feature__label')?.text);
+    const groupLabel = cleanText(group.querySelector('.ty-subheader, .ty-product-feature__label, h3')?.text);
     if (normalizeCompatibilityLabel(groupLabel) !== 'modelo') continue;
 
     for (const feature of group.querySelectorAll('.ty-product-feature')) {
-      const brand = cleanText(feature.querySelector('.ty-product-feature__label')?.text)?.replace(/\s*:\s*$/, '');
+      const label = feature.querySelector('.ty-product-feature__label')?.clone() as HTMLElement | undefined;
+      label?.querySelectorAll('.ty-help-info, .hidden').forEach((element) => element.remove());
+      const brand = cleanText(label?.text)?.replace(/\s*:\s*$/, '');
       if (!brand || /^(fabricante|marca|modelo)$/i.test(brand)) continue;
       const values = feature.querySelectorAll('.ty-product-feature__multiple-item').map((item) => cleanText(item.text)).filter((value): value is string => Boolean(value));
       if (values.length === 0) continue;
@@ -658,6 +673,10 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
+    if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+      return;
+    }
+
     if (rule.id === 'selvir' && !isSelvirProductCard(href, card, cardText)) {
       return;
     }
@@ -682,12 +701,19 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
+    const imageUrls = rule.id === 'feyvi'
+      ? extractFeyviImages(card, pageUrl)
+      : uniqueStrings([
+          normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
+        ].filter((value): value is string => Boolean(value)));
+
     products.push({
       productName,
       price: normalizePriceValue(rawPrice),
       currency: inferCurrency(rawPrice),
       description: cleanText(firstElementText(card, ['p'])),
-      imageUrl: normalizeUrl(firstAttributeValue(card, ['img'], 'src') ?? firstAttributeValue(card, ['img'], 'data-src'), pageUrl),
+      imageUrl: imageUrls[0],
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       sourceUrl: href,
       availability:
         resolveAvailability(cardText, rule) === 'in_stock'
@@ -732,14 +758,7 @@ function extractSelvirListProducts(root: HTMLElement, pageUrl: string, provider:
     }
 
     const rawPrice = extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card);
-    const imageUrls = uniqueStrings(
-      ['src', 'data-src', 'data-lazy-src', 'srcset']
-        .flatMap((attribute) => card.querySelectorAll('img').map((image) => cleanText(image.getAttribute(attribute))))
-        .filter((value): value is string => Boolean(value))
-        .flatMap((value) => value.split(',').map((part) => part.trim().split(/\s+/)[0]))
-        .map((value) => normalizeUrl(value, pageUrl))
-        .filter((value): value is string => Boolean(value)),
-    );
+    const imageUrls = extractSelvirListingImageUrls(card, pageUrl);
 
     seen.add(sourceUrl);
     products.push({
@@ -1293,6 +1312,7 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, ['.product-info-brand', '.brand', '.copete_ficha']));
   const description = firstNonEmpty(selectText(root, ['#tab-description', '.woocommerce-product-details__short-description', '.summary p', 'meta[name="description"]']));
+  const imageUrls = extractSelvirDetailImageUrls(root, pageUrl);
 
   return {
     productName: title,
@@ -1300,9 +1320,8 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
     currency: priceText ? inferCurrency(priceText) : undefined,
     brand: extractBrandFromText(brandText),
     description,
-    imageUrl:
-      normalizeUrl(firstNonEmpty(attributeValues(root, ['figure img', '.woocommerce-product-gallery img', 'img'], 'src')), pageUrl)
-      ?? normalizeUrl(firstAttributeValue(root, ['meta[property="og:image"]'], 'content'), pageUrl),
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
     sourceUrl: pageUrl,
     availability:
       availability === 'in_stock'
@@ -1317,6 +1336,64 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractSelvirListingImageUrls(card: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const image of card.querySelectorAll('img')) {
+    urls.push(
+      largestSrcsetCandidate(image.getAttribute('srcset')) ?? '',
+      image.getAttribute('data-src') ?? '',
+      image.getAttribute('data-lazy-src') ?? '',
+      image.getAttribute('src') ?? '',
+    );
+  }
+
+  return uniqueStrings(
+    urls
+      .map((value) => validSelvirImageUrl(value, pageUrl))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function extractSelvirDetailImageUrls(root: HTMLElement, pageUrl: string): string[] {
+  const gallery = root.querySelector('.woocommerce-product-gallery');
+  const urls: string[] = [];
+
+  if (gallery) {
+    urls.push(
+      ...attributeValues(gallery, ['a.product-zoom-link[href]'], 'href'),
+      ...attributeValues(gallery, ['picture source[srcset]'], 'srcset').map(largestSrcsetCandidate).filter((value): value is string => Boolean(value)),
+      ...attributeValues(gallery, ['img.wp-post-image[src]'], 'src'),
+    );
+  }
+
+  urls.push(firstAttributeValue(root, ['meta[property="og:image"]'], 'content') ?? '');
+
+  return uniqueStrings(
+    urls
+      .map((value) => validSelvirImageUrl(value, pageUrl))
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function validSelvirImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const fixedValue = value?.replace(/^https?:\/\/(?:www\.)?selvir\.com\.uy\/(https?:\/\/.+)$/i, '$1');
+  const url = normalizeUrl(fixedValue, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const comparable = url.toLowerCase();
+  if (/(?:producto3\.gif|logo|favicon|whatsapp|placeholder|no-image|sin-imagen|header|footer|icon)/i.test(comparable)) {
+    return undefined;
+  }
+  if (!/\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  return url;
 }
 
 function findSelvirCardContainer(anchor: HTMLElement): HTMLElement {
@@ -1342,22 +1419,34 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     return undefined;
   }
 
+  if (rule.id === 'feyvi') {
+    return extractFeyviDetailProduct(root, pageUrl, provider, rule);
+  }
+
   const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
   const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
   if (!title) {
     return undefined;
   }
 
-  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
-  if (/(404|page not found|not found|pagina no encontrada|p[aÃ¡]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
-    return undefined;
-  }
+const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+const pageTitle = cleanText(firstElementText(root, ['title']) ?? '');
+const mainHeading = cleanText(firstElementText(root, ['h1']) ?? '');
+
+if (
+  /(404|page not found|pagina no encontrada|p[a\u00e1]gina no encontrada|no se ha podido encontrar)/i.test(pageTitle ?? '')
+  || /^(404|page not found|pagina no encontrada|p[a\u00e1]gina no encontrada|no se ha podido encontrar)$/i.test(mainHeading ?? '')
+) {
+  return undefined;
+}
   const availabilityText = collectAvailabilityText(root);
   const availability = resolveDetailAvailability(root, availabilityText, rule);
   const brandText = firstNonEmpty(selectText(root, rule.detailSelectors?.brand ?? []));
   const skuText = firstNonEmpty(selectText(root, rule.detailSelectors?.sku ?? []));
-  const imageUrls = rule.id === 'repuestosavenida'
-    ? extractRepuestosAvenidaImages(root, pageUrl)
+ const imageUrls = rule.id === 'repuestosavenida'
+  ? extractRepuestosAvenidaImages(root, pageUrl)
+  : rule.id === 'diegoradiadores'
+    ? extractDiegoRadiadoresImages(root, pageUrl)
     : isFenicioRule(rule)
       ? extractFenicioDetailImages(root, pageUrl)
       : uniqueStrings(
@@ -1399,6 +1488,119 @@ function extractDetailProduct(root: HTMLElement, pageUrl: string, provider: Prov
     extractedAt: new Date().toISOString(),
     provider,
   };
+}
+
+function extractFeyviDetailProduct(root: HTMLElement, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord | undefined {
+  const title = firstNonEmpty(selectText(root, rule.detailSelectors?.title ?? ['h1']));
+  if (!title) {
+    return undefined;
+  }
+
+  const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
+  const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
+    return undefined;
+  }
+
+  const availabilityText = collectAvailabilityText(root);
+  const availability = resolveDetailAvailability(root, availabilityText, rule);
+  const compatibility = extractCompatibilityFromRoot(root);
+  const imageUrls = extractFeyviImages(root, pageUrl);
+  const brand = extractFeyviBrand(root);
+  const skuText = firstNonEmpty([
+    firstAttributeValue(root, ['meta[itemprop="sku"]'], 'content'),
+    ...selectText(root, rule.detailSelectors?.sku ?? []),
+  ]);
+
+  return {
+    productName: title,
+    price: normalizePriceValue(rawPrice),
+    currency: inferCurrency(rawPrice),
+    brand,
+    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1] ?? skuText),
+    description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    ...compatibility,
+    sourceUrl: pageUrl,
+    availability:
+      availability === 'in_stock'
+        ? 'in_stock'
+        : availability === 'out_of_stock'
+          ? 'out_of_stock'
+          : resolveAvailability(pageText, rule) === 'in_stock'
+            ? 'in_stock'
+            : resolveAvailability(pageText, rule) === 'out_of_stock'
+              ? 'out_of_stock'
+              : undefined,
+    extractedAt: new Date().toISOString(),
+    provider,
+  };
+}
+
+function extractFeyviBrand(root: HTMLElement): string | undefined {
+  const jsonLdBrand = firstNonEmpty(extractJsonLdProducts(root, 'https://www.feyvi.com.uy/', 'domain').map((product) => product.brand));
+  if (jsonLdBrand) {
+    return jsonLdBrand;
+  }
+
+  for (const feature of root.querySelectorAll('.ty-product-feature, .ty-control-group')) {
+    const label = normalizeCompatibilityLabel(feature.querySelector('.ty-product-feature__label, .ty-control-group__label, .abt-yt-feature-name')?.text);
+    if (label !== 'fabricante') {
+      continue;
+    }
+
+    const clone = feature.clone() as HTMLElement;
+    clone.querySelector('.ty-product-feature__label, .ty-control-group__label, .abt-yt-feature-name')?.remove();
+    clone.querySelectorAll('input, label').forEach((element) => element.remove());
+    const value = cleanText(clone.text);
+    if (value) {
+      return value;
+    }
+  }
+
+  return firstAttributeValue(root, ['meta[itemprop="brand"]'], 'content');
+}
+
+function extractFeyviImages(root: HTMLElement, pageUrl: string): string[] {
+  const primary = uniqueStrings([
+    ...attributeValues(root, ['.ty-product-img .cm-image-previewer[href]', '[id^="product_images_"] .cm-image-previewer[href]'], 'href'),
+    ...queryAll(root, '.ty-product-img img, [id^="product_images_"] img, .ty-grid-list__image .abt-single-image img, .ty-grid-list__image img').flatMap((element) => imageCandidatesFromElement(element, pageUrl)),
+  ])
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  const jsonLdImages = extractJsonLdImageUrls(root, pageUrl)
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  const ogImages = attributeValues(root, ['meta[property="og:image"], meta[name="twitter:image"]'], 'content')
+    .map((value) => validFeyviImageUrl(value, pageUrl))
+    .filter((value): value is string => Boolean(value));
+
+  return uniqueStrings([...primary, ...jsonLdImages, ...ogImages]);
+}
+
+function validFeyviImageUrl(value: string | undefined, pageUrl: string): string | undefined {
+  const url = normalizeUrl(value, pageUrl);
+  if (!url) {
+    return undefined;
+  }
+
+  const lowered = url.toLowerCase();
+  if (!/\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(url)) {
+    return undefined;
+  }
+
+  if (/logo|favicon|placeholder|no-image|sin-imagen|loader|sprite|banner|promo|medios?[-_]?pago|visa|mastercard|whatsapp|facebook|instagram|abt__yt_mwi__icon|design\/themes|\/icons?\//i.test(lowered)) {
+    return undefined;
+  }
+
+  if (!/\/images\/(?:thumbnails\/\d+\/\d+\/)?detailed\//i.test(lowered)) {
+    return undefined;
+  }
+
+  return url;
 }
 
 function extractRepuestosAvenidaImages(root: HTMLElement, pageUrl: string): string[] {
@@ -1538,6 +1740,31 @@ function validFenicioProductImageUrl(value: string | undefined, pageUrl: string)
   }
 
   return url;
+}
+
+function extractDiegoRadiadoresImages(root: HTMLElement, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const selector of [
+    'img.wp-post-image',
+    'img[data-large_image]',
+    '.woocommerce-product-gallery img',
+  ]) {
+    queryAll(root, selector).forEach((element) => {
+      urls.push(...imageCandidatesFromElement(element, pageUrl));
+    });
+  }
+
+  const ogImage = normalizeUrl(
+    firstAttributeValue(root, ['meta[property="og:image"]'], 'content'),
+    pageUrl,
+  );
+
+  if (ogImage) {
+    urls.push(ogImage);
+  }
+
+  return uniqueStrings(urls);
 }
 
 function imageCandidatesFromElement(element: HTMLElement, pageUrl: string): string[] {

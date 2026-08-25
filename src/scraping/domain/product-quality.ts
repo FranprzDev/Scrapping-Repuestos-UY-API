@@ -14,6 +14,7 @@ const INVALID_PRODUCT_NAMES = new Set([
   'ver mas',
   'ver más',
   'comprar',
+'your connection needs to be verified before you can proceed',
 ]);
 const INVALID_PRODUCT_NAME_PATTERNS = [
   /^ordenar por$/i,

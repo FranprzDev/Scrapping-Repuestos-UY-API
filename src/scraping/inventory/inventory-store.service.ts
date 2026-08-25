@@ -1,11 +1,12 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
-import { ProductRecord } from '../interfaces/scraping.types';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { ImageStatus, ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
 import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
+import { ImageRelayService } from '../../image-relay/image-relay.service';
 
 export interface StoredProduct extends Omit<ProductRecord, 'price'> {
   price?: number;
@@ -79,7 +80,7 @@ export class InventoryStoreService implements OnModuleInit {
   private readonly upsertChunkSize = 100;
   private readonly vehicleBrandBackfillChunkSize = 500;
 
-  constructor(@Inject(PostgresService) private readonly postgresService: PostgresService) {}
+  constructor(@Inject(PostgresService) private readonly postgresService: PostgresService, @Optional() private readonly imageRelayService?: ImageRelayService) {}
 
   async onModuleInit(): Promise<void> {
     await this.postgresService.ensureCatalogTables();
@@ -166,6 +167,10 @@ export class InventoryStoreService implements OnModuleInit {
           vehicleBrands: brandsBySourceUrl.get(row.sourceUrl) ?? [],
         })),
       );
+      await Promise.all(upserted.rows.map((row) => {
+        const item = chunk.find((candidate) => candidate.sourceUrl === row.sourceUrl);
+        return item ? this.imageRelayService?.enqueueForInventory(row.id, item.site, JSON.parse(item.product) as ProductRecord) : 0;
+      }));
     }
 
     const totalForSite = await this.countBySite(site);
@@ -186,13 +191,46 @@ export class InventoryStoreService implements OnModuleInit {
       sql,
       params,
     );
-    return rows.rows.map(mapInventoryRow);
+    return this.enrichImageAssets(rows.rows);
   }
 
   async getFilteredPage(filters: InventoryQueryFilters = {}, pagination: InventoryQueryPagination = {}): Promise<StoredProduct[]> {
     const { sql, params } = buildInventoryQuery(filters, pagination);
     const rows = await this.postgresService.query<InventoryRow>(sql, params);
-    return rows.rows.map(mapInventoryRow);
+    return this.enrichImageAssets(rows.rows);
+  }
+
+  private async enrichImageAssets(rows: InventoryRow[]): Promise<StoredProduct[]> {
+    if (rows.length === 0) return [];
+    const assets = await this.postgresService.query<{ inventory_id: string; asset_id: string }>(
+      'SELECT DISTINCT ON (inventory_id) inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at',
+      [rows.map((row) => row.id)],
+    );
+    const assetByInventoryId = new Map<string, string>();
+    for (const asset of assets.rows) {
+      assetByInventoryId.set(asset.inventory_id, asset.asset_id);
+    }
+
+    const products: StoredProduct[] = [];
+    for (const row of rows) {
+      const assetId = assetByInventoryId.get(row.id);
+      if (!assetId) {
+        products.push(mapInventoryRow(row));
+        continue;
+      }
+
+      products.push(mapInventoryRow({
+        ...row,
+        product: {
+          ...row.product,
+          sourceImageUrl: row.product.sourceImageUrl ?? row.product.imageUrl,
+          imageUrl: `/api/image-assets/${assetId}`,
+          imageUrls: [`/api/image-assets/${assetId}`],
+          imageStatus: ImageStatus.Completed,
+        },
+      }));
+    }
+    return products;
   }
 
   async countAll(): Promise<number> {

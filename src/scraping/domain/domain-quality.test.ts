@@ -16,10 +16,12 @@ import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellablePr
 import {
   applyChapareiContextBrand,
   applyGrFrenosContextBrand,
+  buildChapareiAjaxPageUrl,
   buildSelvirArchivePageUrl,
   cleanSelvirLabel,
   extractAcesurProductsByRubro,
   extractChapareiBrandLabelFromUrl,
+  extractChapareiEmbeddedAjaxPageUrl,
   extractSelvirArchiveSummary,
   extractTaxitorPaginationSummary,
   parseSelvirAjaxResponse,
@@ -691,6 +693,29 @@ test('extrae marcas Chaparei desde el select de value numerico', () => {
   ]);
 });
 
+test('arma paginacion AJAX de Chaparei desde url_load embebido con modelo/categoria', () => {
+  const html = `
+    <script>
+      var url_load = "\\/productos\\/includes\\/cargar_pagina_dinamica.php?nro_pag=[nro_pag]\\u0026m=189\\u0026c=4232\\u0026t=\\u0026st=\\u0026561784_8100145151=\\u0026zona=0\\u0026order=255\\u0026mo=1";
+    </script>
+  `;
+
+  const url = buildChapareiAjaxPageUrl('https://www.chaparei.com/catalogo/renault/oroch-2016-21/', 2, html);
+  assert.equal(
+    url,
+    'https://www.chaparei.com/productos/includes/cargar_pagina_dinamica.php?nro_pag=2&m=189&c=4232&t=&st=&561784_8100145151=&zona=0&order=255&mo=1',
+  );
+  assert.equal(extractChapareiEmbeddedAjaxPageUrl(html, 'https://www.chaparei.com/catalogo/renault/oroch-2016-21/', 1)?.includes('c=4232'), true);
+});
+
+test('mantiene fallback de paginacion AJAX Chaparei para paginas sin url_load', () => {
+  const url = buildChapareiAjaxPageUrl('https://www.chaparei.com/productos/?m=189', 3);
+  assert.equal(
+    url,
+    'https://www.chaparei.com/productos/includes/cargar_pagina_dinamica.php?m=189&nro_pag=3&zona=0&order=255&mo=1',
+  );
+});
+
 test('resuelve la marca contextual de Chaparei desde el brandUrl y la aplica al producto', () => {
   const brands = [
     { brandId: '157', brandLabel: 'ALFA ROMEO' },
@@ -1074,18 +1099,47 @@ test('extrae tarjetas Selvir reales sin mezclar titulo y precio entre productos'
         productName: '10 BROCHES GM 86-1Y0143',
         price: '153',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0143/',
-        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
-        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
+        imageUrl: undefined,
+        imageUrls: undefined,
       },
       {
         productName: '10 BROCHES GM 86-1Y0144',
         price: '182',
         sourceUrl: 'https://www.selvir.com.uy/product/10-broches-gm-86-1y0144/',
-        imageUrl: 'https://www.selvir.com.uy/images/producto3.gif',
-        imageUrls: ['https://www.selvir.com.uy/images/producto3.gif'],
+        imageUrl: undefined,
+        imageUrls: undefined,
       },
     ],
   );
+});
+
+test('prioriza imagen util de srcset en listados Selvir y descarta producto3', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/product-category/carroceria/');
+  assert.ok(rule);
+
+  const html = `
+    <article class="product-item-container">
+      <a href="/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/">
+        <div class="product-image">
+          <img
+            src="https://www.selvir.com.uy/images/producto3.gif"
+            data-src="https://www.selvir.com.uy/images/producto3.gif"
+            data-lazy-src="https://www.selvir.com.uy/images/producto3.gif"
+            srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-small.jpg 300w, https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg 800w">
+        </div>
+        <div class="product-info">
+          <div class="product-info-title">BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)</div>
+          <div class="product-info-price"><span class="price-number">$3.426</span></div>
+          <button>Comprar</button>
+        </div>
+      </a>
+    </article>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/product-category/carroceria/', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg');
+  assert.equal(products[0].imageUrls?.includes('https://www.selvir.com.uy/images/producto3.gif'), false);
 });
 
 test('limpia nombres y precios de listados Selvir', () => {
@@ -1162,6 +1216,134 @@ test('extrae el precio correcto del detalle Selvir y no toma relacionados', () =
   assert.equal(products[0].productName, 'BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)');
   assert.equal(products[0].price, '3.426');
   assert.equal(products[0].sourceUrl, 'https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/');
+});
+
+test('extrae imagen real de ficha Selvir sin mezclar relacionados ni producto3', () => {
+  const rule = findDomainRule('https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/');
+  assert.ok(rule);
+
+  const html = `
+    <html>
+      <head>
+        <meta property="og:image" content="https://www.selvir.com.uy/https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-og.jpg">
+      </head>
+      <body>
+        <main>
+          <div class="woocommerce-product-gallery">
+            <figure class="woocommerce-product-gallery__wrapper">
+              <div class="woocommerce-product-gallery__image--placeholder">
+                <a href="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg" class="product-zoom-link">
+                  <picture>
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.webp" type="image/webp">
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg" type="image/jpeg">
+                    <img src="https://www.selvir.com.uy/images/producto3.gif" class="wp-post-image" alt="BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)">
+                  </picture>
+                </a>
+              </div>
+            </figure>
+          </div>
+          <h1 class="product-info-title">BOMBA ACEITE CITROEN-PEUGEOT 1.6 N 16v (21D)</h1>
+          <div class="product-info-price"><span class="price-number">$3.426</span></div>
+          <button>Añadir al carrito</button>
+        </main>
+        <section class="related products">
+          <article>
+            <a href="/product/relacionado/" class="product-zoom-link">
+              <img src="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2025/10/14/1/41710.jpg">
+            </a>
+            <div class="product-info-title">OTRO PRODUCTO</div>
+            <span class="price-number">$1.782</span>
+          </article>
+        </section>
+      </body>
+    </html>
+  `;
+
+  const products = qualityGate(extractProductsFromHtml(html, 'https://www.selvir.com.uy/product/bomba-aceite-citroen-peugeot-1-6-n-16v-21d/', 'domain', rule), rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg');
+  assert.ok(products[0].imageUrl?.endsWith('/25333.jpg'));
+  assert.equal(products[0].imageUrl?.includes('producto3.gif'), false);
+  assert.deepEqual(products[0].imageUrls, [
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.jpg',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333.webp',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2021/10/27/10/25333-og.jpg',
+  ]);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('41710.jpg')), false);
+});
+
+test('consolida ficha Selvir con JSON-LD sin imagen y galeria real', () => {
+  const pageUrl = 'https://www.selvir.com.uy/product/techo-pride-sedan/';
+  const rule = findDomainRule(pageUrl);
+  assert.ok(rule);
+
+  const html = `
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "TAZA RUEDA CENTRO TOYOTA HILUX 18",
+            "url": "https://www.selvir.com.uy/product/techo-pride-sedan/",
+            "offers": {
+              "priceSpecification": [
+                {
+                  "@type": "UnitPriceSpecification",
+                  "price": "364.00",
+                  "priceCurrency": "UYU"
+                }
+              ],
+              "availability": "https://schema.org/InStock"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <main>
+          <div class="woocommerce-product-gallery">
+            <figure class="woocommerce-product-gallery__wrapper">
+              <div class="woocommerce-product-gallery__image">
+                <a href="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg" class="product-zoom-link">
+                  <picture>
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.webp" type="image/webp">
+                    <source srcset="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg" type="image/jpeg">
+                    <img class="wp-post-image" src="https://www.selvir.com.uy/images/producto3.gif" alt="TAZA RUEDA CENTRO TOYOTA HILUX 18">
+                  </picture>
+                </a>
+              </div>
+            </figure>
+          </div>
+          <h1 class="product-info-title">TAZA RUEDA CENTRO TOYOTA HILUX 18</h1>
+          <div class="product-info-price"><span class="price-number">$364</span></div>
+          <button>Añadir al carrito</button>
+        </main>
+        <section class="related products">
+          <article>
+            <a href="/product/faro-relacionado/" class="product-zoom-link">
+              <img src="https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2025/10/14/1/41710.jpg">
+            </a>
+            <div class="product-info-title">FARO RELACIONADO</div>
+            <span class="price-number">$1.782</span>
+          </article>
+        </section>
+      </body>
+    </html>
+  `;
+
+  const products = extractProductsFromHtml(html, pageUrl, 'domain', rule);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productName, 'TAZA RUEDA CENTRO TOYOTA HILUX 18');
+  assert.equal(products[0].price, '364');
+  assert.equal(products[0].sourceUrl, pageUrl);
+  assert.equal(products[0].imageUrl, 'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg');
+  assert.ok(products[0].imageUrl?.endsWith('/936.jpg'));
+  assert.deepEqual(products[0].imageUrls, [
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.jpg',
+    'https://mayoristas.selvir.com.uy/wp-content/uploads/productos/2024/3/15/2//936.webp',
+  ]);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('producto3.gif')), false);
+  assert.equal(products[0].imageUrls?.some((url) => url.includes('41710.jpg')), false);
 });
 
 test('ignora links de categoria Selvir al extraer productos', () => {

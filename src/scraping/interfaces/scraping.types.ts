@@ -1,5 +1,11 @@
 export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run' | 'refresh-existing-links';
 
+export enum ImageStatus {
+  Pending = 'pending',
+  Completed = 'completed',
+  Failed = 'failed',
+}
+
 export type ProviderName = 'domain' | 'playwright' | 'custom' | 'Yokomitsu';
 
 export type ScrapingOperationPayload = Record<string, unknown>;
@@ -26,6 +32,8 @@ export interface ProductRecord {
   stock?: string;
   sourceUrl?: string;
   imageUrl?: string;
+  sourceImageUrl?: string;
+  imageStatus?: ImageStatus;
   imageUrls?: string[];
   imagePath?: string;
   compatibleVehicles?: string[];
