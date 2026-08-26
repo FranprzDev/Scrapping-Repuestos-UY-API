@@ -115,7 +115,7 @@ export function extractCandidateLinks(html: string, baseUrl: string, rule: Domai
     const card = findCardContainer(anchor);
     const cardText = cleanText(card.text) ?? '';
     if (isSemanticProductLink(href, cardText, rule)) {
-      if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+      if ((rule.id === 'feyvi' || rule.id === 'mercadodelrepuesto') && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
         return;
       }
       productLinks.add(href);
@@ -839,7 +839,7 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
       return;
     }
 
-    if (rule.id === 'feyvi' && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
+    if ((rule.id === 'feyvi' || rule.id === 'mercadodelrepuesto') && !rule.productUrlPatterns.some((pattern) => pattern.test(href))) {
       return;
     }
 
