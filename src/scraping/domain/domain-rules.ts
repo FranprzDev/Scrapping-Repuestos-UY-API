@@ -1,4 +1,4 @@
-﻿export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
+export type PreferredMethod = 'http' | 'api' | 'playwright-fallback';
 
 export interface DomainRule {
   id: string;
@@ -204,6 +204,63 @@ export const DOMAIN_RULES: DomainRule[] = [
     excludeUrlPatterns: [/\/cart/i, /\/checkout/i, /\/profile/i, /\/contact/i],
     positiveAvailabilityTexts: ['añadir al carrito', 'agregar al carrito', 'add to cart'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'no disponible'],
+  },
+  {
+    id: 'gebamotors',
+    hostnames: ['gebamotors.com.uy', 'www.gebamotors.com.uy'],
+    seedUrls: ['https://gebamotors.com.uy/shop/'],
+    preferredMethod: 'playwright-fallback',
+    preserveOutOfStock: true,
+    productUrlPatterns: [/\/producto\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [
+      /\/shop\/?$/i,
+      /\/product-category\//i,
+      /\/categoria\//i,
+      /\/page\/\d+\/?$/i,
+    ],
+    excludeUrlPatterns: [
+      /\/cart/i,
+      /\/carrito/i,
+      /\/checkout/i,
+      /\/mi-cuenta/i,
+      /\/contacto/i,
+      /\/feed/i,
+      /\/wp-admin/i,
+      /\/wp-json/i,
+    ],
+    positiveAvailabilityTexts: [
+      'agregar al carrito',
+      'añadir al carrito',
+      'comprar',
+      'disponible',
+    ],
+    negativeAvailabilityTexts: [
+      'agotado',
+      'sin stock',
+      'out of stock',
+      'no disponible',
+    ],
+    detailSelectors: {
+      title: [
+        '.product_title.entry-title',
+        'h1.product_title',
+        'h1.entry-title',
+      ],
+      price: [
+        '.summary .price .woocommerce-Price-amount',
+        '.summary .price',
+        '.price',
+      ],
+      description: [
+        '.woocommerce-product-details__short-description',
+        '#tab-description',
+        '.woocommerce-Tabs-panel--description',
+      ],
+      image: [
+        '.woocommerce-product-gallery__image img',
+        'meta[property="og:image"]',
+      ],
+    },
   },
   {
     id: 'multishop',
