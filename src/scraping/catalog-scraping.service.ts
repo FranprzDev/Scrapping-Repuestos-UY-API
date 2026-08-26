@@ -112,7 +112,13 @@ export class CatalogScrapingService {
         const crawlRaw: unknown = crawled.raw;
         crawlProvider = crawled.provider;
         crawlRequestedAt = crawled.requestedAt;
-        const targetUrls = collectTargetUrls(crawled.raw, url);
+        const discoveredTargetUrls = collectTargetUrls(crawled.raw, url);
+        const crawlRule = findDomainRule(url);
+
+        const targetUrls =
+          crawlRule?.id === 'mercadodelrepuesto'
+            ? discoveredTargetUrls.slice(0, maxProductsPerSite)
+            : discoveredTargetUrls;
 
         const extractPayload: ScrapingOperationPayload = {
           urls: targetUrls,
