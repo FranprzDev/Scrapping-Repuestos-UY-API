@@ -375,14 +375,36 @@ function extractMercadoDelRepuestoDetail(
     new Set(
       root
         .querySelectorAll('span[class*="flex-col"][class*="border"]')
-        .map((node) =>
-          cleanText(node.structuredText || node.text),
-        )
+        .map((node) => {
+          const vehicleNode = node.querySelector(
+            'span[class*="uppercase"]',
+          );
+          const yearsNode = node.querySelector(
+            'span[class*="font-mono"]',
+          );
+
+          const vehicle = cleanText(
+            vehicleNode?.structuredText || vehicleNode?.text,
+          );
+
+          const years = cleanText(
+            yearsNode?.structuredText || yearsNode?.text,
+          );
+
+          if (!vehicle) {
+            return undefined;
+          }
+
+          if (!years || /^Todos los años$/i.test(years)) {
+            return vehicle;
+          }
+
+          return `${vehicle} ${years}`;
+        })
         .filter(
           (value): value is string =>
             typeof value === 'string' && value.length > 0,
-        )
-        .filter((value) => !/^C[ÓO]D\.?/i.test(value)),
+        ),
     ),
   );
 
