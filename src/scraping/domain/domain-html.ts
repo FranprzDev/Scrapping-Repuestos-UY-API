@@ -1,4 +1,4 @@
-﻿import { HTMLElement, parse } from 'node-html-parser';
+import { HTMLElement, parse } from 'node-html-parser';
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
 import { cleanText, inferCurrency, isAllowedCatalogUrl, normalizePriceValue, resolveAvailability } from './product-quality';
@@ -195,6 +195,11 @@ function isChapareiSemanticCategoryLink(href: string, cardText: string): boolean
 export function extractProductsFromHtml(html: string, pageUrl: string, provider: ProviderName, rule: DomainRule): ProductRecord[] {
   const root = parse(html);
 
+  if (rule.id === 'mercadodelrepuesto' && /\/repuesto\/[0-9a-f-]{36}\/?$/i.test(pageUrl)) {
+    const product = extractMercadoDelRepuestoDetail(html, root, pageUrl, provider);
+    return product ? [product] : [];
+  }
+
   if (rule.id === 'selvir' && /\/product\//i.test(pageUrl)) {
     const detailProduct = extractSelvirDetailProduct(root, pageUrl, provider, rule);
     return detailProduct ? [detailProduct] : extractJsonLdProducts(root, pageUrl, provider);
@@ -285,6 +290,145 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
   }
 
   return candidates;
+}
+
+function extractMercadoDelRepuestoDetail(
+  html: string,
+  root: HTMLElement,
+  pageUrl: string,
+  provider: ProviderName,
+): ProductRecord | undefined {
+  const text = cleanText(root.structuredText || root.text) ?? '';
+
+  const productName = cleanText(
+    root.querySelector('h1')?.structuredText
+      || root.querySelector('h1')?.text,
+  );
+
+  const sku = cleanText(
+    text.match(/C[ÓO]D\.\s*([A-Z0-9._/-]+)/i)?.[1]
+      ?? text.match(/C[ÓO]DIGO\s*([A-Z0-9._/-]+)/i)?.[1],
+  );
+
+  // Next.js expone el precio numérico real, por ejemplo: "precio":30184
+  const nextPrice = html.match(
+    /\\?"precio\\?"\s*:\s*(\d+(?:\.\d+)?)/i,
+  )?.[1];
+
+  // Fallback al precio visible en pesos, antes del aproximado en USD.
+  const visiblePrice = text.match(
+    /\$\s*([\d.]+)(?=\s*≈\s*US\$)/i,
+  )?.[1];
+
+  const price = normalizeMercadoDelRepuestoUyPrice(
+    nextPrice ?? visiblePrice,
+  );
+
+  if (!productName || !price) {
+    return undefined;
+  }
+
+  const rawImages = root.querySelectorAll('img[src]')
+    .map((image) => image.getAttribute('src'))
+    .filter(
+      (value): value is string =>
+        typeof value === 'string' && value.length > 0,
+    )
+    .map((value) => {
+      try {
+        return new URL(value, pageUrl).toString();
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(
+      (value): value is string =>
+        typeof value === 'string',
+    )
+    .filter((value) => /^https?:\/\//i.test(value))
+    .filter(
+      (value) =>
+        !/(?:facebook\.com\/tr|logo-mdr|mp-logo|icon\.png)/i.test(value),
+    );
+
+  const imageUrls = Array.from(new Set(rawImages));
+
+  const preferredImage =
+    imageUrls.find((value) => /\/fotos\//i.test(value))
+    ?? imageUrls[0];
+
+  const description = cleanText(
+    text.match(
+      /Descripci[oó]n\s+([\s\S]*?)\s+Caracter[ií]sticas/i,
+    )?.[1],
+  );
+
+  const category = cleanText(
+    description?.match(/Rubro:\s*([^|]+)/i)?.[1],
+  );
+
+  const subcategory = cleanText(
+    description?.match(/Subrubro:\s*([^|]+)/i)?.[1],
+  );
+
+  const compatibleVehicles = Array.from(
+    new Set(
+      root
+        .querySelectorAll('span[class*="flex-col"][class*="border"]')
+        .map((node) =>
+          cleanText(node.structuredText || node.text),
+        )
+        .filter(
+          (value): value is string =>
+            typeof value === 'string' && value.length > 0,
+        )
+        .filter((value) => !/^C[ÓO]D\.?/i.test(value)),
+    ),
+  );
+
+  const availability = /\bDisponible\b/i.test(text)
+    ? 'disponible'
+    : /\b(?:Agotado|Sin stock|No disponible)\b/i.test(text)
+      ? 'no disponible'
+      : undefined;
+
+  return {
+    productName,
+    price,
+    currency: 'UYU',
+    sku,
+    category,
+    description,
+    availability,
+    sourceUrl: pageUrl,
+    imageUrl: preferredImage,
+    imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+    compatibleVehicles:
+      compatibleVehicles.length > 0
+        ? compatibleVehicles
+        : undefined,
+    attributes: subcategory
+      ? { subrubro: subcategory }
+      : undefined,
+    provider,
+    extractedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeMercadoDelRepuestoUyPrice(
+  value?: string,
+): string | undefined {
+  const clean = cleanText(value);
+
+  if (!clean) {
+    return undefined;
+  }
+
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(clean)) {
+    return clean.replace(/\./g, '');
+  }
+
+  return clean;
 }
 
 export function extractCompatibilityFromHtml(html: string): Pick<ProductRecord, 'compatibleVehicles' | 'compatibleBrands' | 'compatibleModels' | 'compatibleVersions'> {
