@@ -55,3 +55,9 @@ function product(patch: Partial<ProductRecord>): ProductRecord {
     ...patch,
   };
 }
+
+test('reconoce Lifan como marca de vehiculo', () => {
+  const brands = inferVehicleBrands(product({ productName: 'AMORTIGUADOR TRASERO LIFAN X50' }));
+
+  assert.deepEqual(brands.map((brand) => brand.id), ['lifan']);
+});
