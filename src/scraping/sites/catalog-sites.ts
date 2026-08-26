@@ -66,6 +66,17 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
     paginationStrategy: { type: 'page-param', param: 'page', start: 1, maxPages: 1100 },
     requestDelay: 500,
   }),
+  existingSite({
+    id: 'mercadodelrepuesto',
+    label: 'Mercado del Repuesto',
+    hostname: 'mercadodelrepuesto.com',
+    seedUrls: ['https://www.mercadodelrepuesto.com/?q=tapa%20cilindro'],
+    productUrlPatterns: [/\/repuesto\/[0-9a-f-]{36}\/?$/i],
+    categoryUrlPatterns: [/^https?:\/\/(?:www\.)?mercadodelrepuesto\.com\/\?(?=.*\bq=)/i],
+    paginationStrategy: { type: 'page-param', param: 'page', start: 1, maxPages: 1000 },
+    concurrency: 4,
+    requestDelay: 250,
+  }),
   plannedSite('lestido', 'Tienda Lestido', 'tienda.lestido.com.uy', ['https://tienda.lestido.com.uy/'], 'generic-html'),
   plannedSite('warnes', 'Warnes', 'warnes.com.uy', ['https://warnes.com.uy/'], 'generic-html'),
   existingSite({
@@ -138,9 +149,6 @@ export const CATALOG_SITES: CatalogSiteConfig[] = [
     seedUrls: ['https://autopartesmagallanes.uy/products/'],
     platform: 'woocommerce',
     productUrlPatterns: [
-      // Match URLs with -ref- or ref- pattern, but exclude archive/vehicle pages
-      // Exclude: /para-desarmar/, /restos/ (these are archive pages)
-      // Include: all other categories with -ref- or ref- in URL slug
       /^(?!.*(?:\/repuestos-de(?:-|\/)|\/restos\/repuestos-de-para-desarmar\/)).*\/[^/?#]*-ref-[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i,
       /^(?!.*(?:\/repuestos-de(?:-|\/)|\/restos\/repuestos-de-para-desarmar\/)).*\/[^/?#]*ref-[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i,
     ],
