@@ -28,6 +28,44 @@ export interface AdmittedHouse {
   hostnames: string[];
 }
 export const DOMAIN_RULES: DomainRule[] = [
+  {
+    id: 'mercadodelrepuesto',
+    hostnames: [
+      'mercadodelrepuesto.com',
+      'www.mercadodelrepuesto.com',
+    ],
+    seedUrls: [
+      'https://www.mercadodelrepuesto.com/?q=tapa%20cilindro',
+    ],
+    preferredMethod: 'http',
+    preserveOutOfStock: true,
+    productUrlPatterns: [
+      /\/repuesto\/[0-9a-f-]{36}\/?$/i,
+    ],
+    categoryUrlPatterns: [
+      /^https?:\/\/(?:www\.)?mercadodelrepuesto\.com\/\?(?=.*\bq=)/i,
+    ],
+    excludeUrlPatterns: [
+      /\/carrito/i,
+      /\/pedidos/i,
+      /\/quienes-somos/i,
+      /\/terminos-y-condiciones/i,
+    ],
+    positiveAvailabilityTexts: [
+      'disponible',
+      'agregar al carrito',
+    ],
+    negativeAvailabilityTexts: [
+      'agotado',
+      'sin stock',
+      'no disponible',
+    ],
+    detailSelectors: {
+      title: ['h1'],
+      price: ['div.text-ink.leading-none'],
+      image: ['img[src*="/fotos/"]'],
+    },
+  },
 {
   id: 'centrorepuestos',
   hostnames: ['centrorepuestos.com.uy', 'www.centrorepuestos.com.uy'],
