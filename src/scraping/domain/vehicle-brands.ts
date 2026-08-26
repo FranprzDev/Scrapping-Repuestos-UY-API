@@ -40,6 +40,7 @@ export const VEHICLE_BRANDS: VehicleBrandDefinition[] = [
   brand('dodge', 'Dodge'),
   brand('chrysler', 'Chrysler'),
   brand('geely', 'Geely'),
+  brand('lifan', 'Lifan'),
   brand('byd', 'BYD'),
   brand('audi', 'Audi'),
   brand('volvo', 'Volvo'),
