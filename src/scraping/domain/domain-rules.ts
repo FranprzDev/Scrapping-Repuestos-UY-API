@@ -27,8 +27,83 @@ export interface AdmittedHouse {
   canonicalHostname: string;
   hostnames: string[];
 }
-
 export const DOMAIN_RULES: DomainRule[] = [
+{
+  id: 'centrorepuestos',
+  hostnames: ['centrorepuestos.com.uy', 'www.centrorepuestos.com.uy'],
+  seedUrls: ['http://www.centrorepuestos.com.uy/index.php?main_page=index'],
+  preferredMethod: 'http',
+  preserveOutOfStock: true,
+
+  productUrlPatterns: [
+    /[?&]main_page=product_info(?:&|$)/i,
+    /[?&]products_id=\d+/i,
+  ],
+
+  categoryUrlPatterns: [
+    /[?&]main_page=index(?:&|$)/i,
+    /[?&]cPath=[\d_]+/i,
+  ],
+
+  excludeUrlPatterns: [
+    /main_page=shopping_cart/i,
+    /main_page=login/i,
+    /main_page=checkout/i,
+    /main_page=contact_us/i,
+    /main_page=advanced_search/i,
+  ],
+
+  positiveAvailabilityTexts: [
+    'agregar al carrito',
+    'añadir al carrito',
+    'comprar',
+    'en stock',
+    'disponible',
+  ],
+
+  negativeAvailabilityTexts: [
+    'agotado',
+    'sin stock',
+    'no disponible',
+    'out of stock',
+  ],
+
+  detailSelectors: {
+    title: [
+      'h1',
+      '.productGeneral h1',
+      '#productName',
+    ],
+
+    price: [
+      '.productPrice',
+      '.productSpecialPrice',
+      '[class*="price"]',
+      '[class*="precio"]',
+    ],
+
+    description: [
+      '#productDescription',
+      '.productGeneral',
+      '[class*="description"]',
+    ],
+
+    sku: [
+      '.productModel',
+      '[class*="model"]',
+      '[class*="codigo"]',
+      '[class*="sku"]',
+    ],
+
+    image: [
+      '#productMainImage img',
+      '.productMainImage img',
+      '.productGeneral img',
+      'main img',
+    ],
+  },
+},
+
   {
     id: 'taxitor',
     hostnames: ['taxitor.uy', 'www.taxitor.uy'],

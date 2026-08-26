@@ -33,6 +33,10 @@ import {
   parseLarriqueBrandResponse,
 } from '../domain/new-catalog-sites';
 import { cleanText, dedupeProducts, inferCurrency, mergeCompatibleBrands, normalizePriceValue, qualityGate } from '../domain/product-quality';
+import {
+  extractCentroRepuestosLinks,
+  extractCentroRepuestosProduct,
+} from '../domain/centrorepuestos';
 import { PlaywrightProvider } from './playwright.provider';
 import {
   canonicalizeYaguaronProductUrl,
@@ -350,9 +354,31 @@ export class DomainProvider implements ScrapingProvider {
           } else {
             usableProducts = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
           }
+        } else if (rule.id === 'centrorepuestos') {
+          const response = await fetchHtml(url);
+
+          const product = extractCentroRepuestosProduct(
+            response.body,
+            response.finalUrl,
+            this.name,
+          );
+
+          usableProducts = product
+            ? qualityGate([product], rule)
+            : [];
+
+          method = 'centrorepuestos-http';
         } else {
           const response = await fetchHtml(url);
-          usableProducts = qualityGate(extractProductsFromHtml(response.body, response.finalUrl, this.name, rule), rule);
+          usableProducts = qualityGate(
+            extractProductsFromHtml(
+              response.body,
+              response.finalUrl,
+              this.name,
+              rule,
+            ),
+            rule,
+          );
         }
       } catch (error) {
         this.logger.warn(`HTTP scrape fallido para ${url}: ${formatError(error)}`);
@@ -589,7 +615,7 @@ export class DomainProvider implements ScrapingProvider {
         const response = await fetchHtmlWithRetry(url);
         return extractYaguaronDetail(response.body, response.finalUrl, this.name);
       } catch (error) {
-        this.logger.warn(`No se pudo extraer ficha Yaguarón ${url}: ${formatError(error)}`);
+        this.logger.warn(`No se pudo extraer ficha YaguarÃ³n ${url}: ${formatError(error)}`);
         return undefined;
       }
     });
@@ -1094,6 +1120,77 @@ export class DomainProvider implements ScrapingProvider {
     return dedupeProducts(products).slice(0, maxItems);
   }
 
+  private async crawlCentroRepuestos(sourceUrl: string, limit: number) {
+    const queue: Array<{ url: string; depth: number }> = [
+      { url: sourceUrl, depth: 0 },
+    ];
+
+    const visited = new Set<string>();
+    const queued = new Set<string>([sourceUrl]);
+    const discoveredProducts = new Set<string>();
+
+    const pages: Array<{
+      url: string;
+      depth: number;
+      productCount: number;
+    }> = [];
+
+    while (queue.length > 0 && pages.length < limit) {
+      const current = queue.shift();
+
+      if (!current || visited.has(current.url)) {
+        continue;
+      }
+
+      visited.add(current.url);
+
+      try {
+        const response = await fetchHtml(current.url);
+
+        const links = extractCentroRepuestosLinks(
+          response.body,
+          response.finalUrl,
+        );
+
+        for (const productUrl of links.productUrls) {
+          discoveredProducts.add(productUrl);
+        }
+
+        for (const categoryUrl of links.categoryUrls) {
+          if (
+            !visited.has(categoryUrl) &&
+            !queued.has(categoryUrl) &&
+            pages.length + queue.length < limit
+          ) {
+            queued.add(categoryUrl);
+
+            queue.push({
+              url: categoryUrl,
+              depth: current.depth + 1,
+            });
+          }
+        }
+
+        pages.push({
+          url: response.finalUrl,
+          depth: current.depth,
+          productCount: links.productUrls.length,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo descubrir Centro Repuestos ${current.url}: ${formatError(error)}`,
+        );
+      }
+    }
+
+    return {
+      seedUrl: sourceUrl,
+      pages,
+      discoveredUrls: Array.from(discoveredProducts),
+      discoveryMethod: 'centrorepuestos-http',
+    };
+  }
+
   private async crawlTaxitor(sourceUrl: string, limit: number, rule: DomainRule) {
     const pages: Array<{ url: string; depth: number; productCount: number }> = [];
     const discoveredUrls: string[] = [];
@@ -1454,7 +1551,7 @@ export function extractSelvirArchiveSummary(body: string, finalUrl: string): { c
 
   const text = root.text ?? '';
   const resultsMatch =
-    text.match(/mostrando\s+\d+\s*[–-]\s*\d+\s+de\s+(\d+)\s+resultados/i)
+    text.match(/mostrando\s+\d+\s*[â€“-]\s*\d+\s+de\s+(\d+)\s+resultados/i)
     ?? text.match(/mostrando\s+los\s+(\d+)\s+resultados/i);
   if (!resultsMatch) {
     return undefined;
@@ -1503,7 +1600,7 @@ export function extractTaxitorPaginationSummary(body: string, finalUrl: string):
       nextPageUrl = href;
     }
 
-    if (rel.includes('last') || label === '»') {
+    if (rel.includes('last') || label === 'Â»') {
       lastPageUrl = href;
     }
 
@@ -1513,7 +1610,7 @@ export function extractTaxitorPaginationSummary(body: string, finalUrl: string):
       }
     }
 
-    if (!lastPageUrl && typeof pageNumber === 'number' && label === '»') {
+    if (!lastPageUrl && typeof pageNumber === 'number' && label === 'Â»') {
       lastPageUrl = href;
     }
   }
