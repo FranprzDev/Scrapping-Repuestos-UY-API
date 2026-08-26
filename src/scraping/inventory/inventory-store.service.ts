@@ -763,7 +763,7 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
   const availability = normalizeState(filters.availability);
   if (availability === 'available') {
     conditions.push(`
-      LOWER(COALESCE(product->>'availability', '')) IN ('in_stock', 'in stock', 'available', 'available now')
+      LOWER(COALESCE(product->>'availability', '')) IN ('in_stock', 'in stock', 'available', 'available now', 'disponible')
     `);
   } else if (availability === 'unavailable') {
     conditions.push(`
