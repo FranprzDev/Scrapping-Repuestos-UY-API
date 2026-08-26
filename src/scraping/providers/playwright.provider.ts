@@ -421,6 +421,7 @@ async function extractProducts(page: Page, pageUrl: string, provider: 'playwrigh
         document.body;
 
       const productName =
+        normalizeName(document.querySelector('.product_title.entry-title')?.textContent) ||
         normalizeName(document.querySelector('h1.product_title')?.textContent) ||
         normalizeName(document.querySelector('h1.entry-title')?.textContent) ||
         pageHeading;
