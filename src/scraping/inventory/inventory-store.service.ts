@@ -203,29 +203,33 @@ export class InventoryStoreService implements OnModuleInit {
   private async enrichImageAssets(rows: InventoryRow[]): Promise<StoredProduct[]> {
     if (rows.length === 0) return [];
     const assets = await this.postgresService.query<{ inventory_id: string; asset_id: string }>(
-      'SELECT DISTINCT ON (inventory_id) inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at',
+      'SELECT inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at, id',
       [rows.map((row) => row.id)],
     );
-    const assetByInventoryId = new Map<string, string>();
+    const assetIdsByInventoryId = new Map<string, string[]>();
     for (const asset of assets.rows) {
-      assetByInventoryId.set(asset.inventory_id, asset.asset_id);
+      const assetIds = assetIdsByInventoryId.get(asset.inventory_id) ?? [];
+      assetIds.push(asset.asset_id);
+      assetIdsByInventoryId.set(asset.inventory_id, assetIds);
     }
 
     const products: StoredProduct[] = [];
     for (const row of rows) {
-      const assetId = assetByInventoryId.get(row.id);
-      if (!assetId) {
+      const assetIds = assetIdsByInventoryId.get(row.id) ?? [];
+      if (assetIds.length === 0) {
         products.push(mapInventoryRow(row));
         continue;
       }
+
+      const imageUrls = assetIds.map((assetId) => `/api/image-assets/${assetId}`);
 
       products.push(mapInventoryRow({
         ...row,
         product: {
           ...row.product,
           sourceImageUrl: row.product.sourceImageUrl ?? row.product.imageUrl,
-          imageUrl: `/api/image-assets/${assetId}`,
-          imageUrls: [`/api/image-assets/${assetId}`],
+          imageUrl: imageUrls[0],
+          imageUrls,
           imageStatus: ImageStatus.Completed,
         },
       }));
