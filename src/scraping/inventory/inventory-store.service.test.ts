@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { InventoryStoreService } from './inventory-store.service';
+import { ImageStatus } from '../interfaces/scraping.types';
 import type { ProductRecord } from '../interfaces/scraping.types';
 
 test('getStats agrupa por host base y no por url completa', async () => {
@@ -95,6 +96,49 @@ test('getFilteredPage devuelve el precio como numero normalizado', async () => {
 
   assert.equal(products[0]?.price, 1290);
   assert.equal(typeof products[0]?.price, 'number');
+});
+
+test('getFilteredPage expone todas las imagenes relayed de cada producto', async () => {
+  let inventoryQuery = true;
+  const service = new InventoryStoreService({
+    async query(sql: string) {
+      if (inventoryQuery) {
+        inventoryQuery = false;
+        return {
+          rows: [{
+            id: 'inventory-1',
+            site: 'example.com',
+            product: {
+              productName: 'RECAMBIO',
+              imageUrl: 'https://example.com/original.jpg',
+              extractedAt: new Date().toISOString(),
+              provider: 'domain',
+            },
+            created_at: '2026-08-10T00:00:00.000Z',
+            updated_at: '2026-08-10T00:00:00.000Z',
+            last_seen_at: '2026-08-10T00:00:00.000Z',
+          }],
+        } as never;
+      }
+
+      assert.match(sql, /SELECT inventory_id, id AS asset_id FROM image_assets/);
+      return {
+        rows: [
+          { inventory_id: 'inventory-1', asset_id: 'asset-1' },
+          { inventory_id: 'inventory-1', asset_id: 'asset-2' },
+        ],
+      } as never;
+    },
+  } as never);
+
+  const products = await service.getFilteredPage({}, { limit: 1 });
+
+  assert.equal(products[0]?.imageUrl, '/api/image-assets/asset-1');
+  assert.deepEqual(products[0]?.imageUrls, [
+    '/api/image-assets/asset-1',
+    '/api/image-assets/asset-2',
+  ]);
+  assert.equal(products[0]?.imageStatus, ImageStatus.Completed);
 });
 
 test('getFilteredPage ordena usando la misma normalizacion de precios', async () => {
