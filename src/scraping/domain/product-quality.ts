@@ -134,7 +134,7 @@ export function inferCurrency(value?: string, explicit?: string): string | undef
     return undefined;
   }
 
-  if (/US\$|USD/i.test(value)) {
+  if (/U\s*\$|US\$|USD/i.test(value)) {
     return 'USD';
   }
 
@@ -370,6 +370,9 @@ function mergeWarnings(previous?: string[], current?: string[]): string[] | unde
 const HARD_REJECTION_WARNINGS = new Set(['invalid_name', 'external_url', 'invalid_product_url', 'non_automotive', 'invalid_page']);
 
 export function isAutomotiveProduct(product: ProductRecord, rule?: DomainRule): boolean {
+  if (rule?.allowNonAutomotive) {
+    return true;
+  }
   const sourceUrl = cleanText(product.sourceUrl);
   const evidenceParts = [
     product.productName,

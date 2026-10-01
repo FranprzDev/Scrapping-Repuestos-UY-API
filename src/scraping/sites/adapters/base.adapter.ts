@@ -230,6 +230,7 @@ export abstract class BaseCatalogAdapter implements CatalogAdapter {
       seedUrls: site.seedUrls,
       preferredMethod: 'http',
       preserveOutOfStock: site.preserveOutOfStock,
+      allowNonAutomotive: site.allowNonAutomotive,
       productUrlPatterns: site.productUrlPatterns,
       categoryUrlPatterns: site.categoryUrlPatterns,
       excludeUrlPatterns: [/\/(?:cart|carrito|checkout|mi-cuenta|account|login|contacto|blog)(?:\/|\?|$)/i],

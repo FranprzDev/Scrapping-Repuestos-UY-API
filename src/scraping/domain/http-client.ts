@@ -18,6 +18,7 @@ export interface HttpRequestInit {
   body?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  cookieJar?: Map<string, string>;
 }
 
 const HTTP_AGENT = new HttpAgent({
@@ -63,6 +64,10 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
     ...init.headers,
   };
 
+  if (init.cookieJar?.size && !headers.cookie) {
+    headers.cookie = Array.from(init.cookieJar, ([name, value]) => `${name}=${value}`).join('; ');
+  }
+
   if (method === 'POST' && !headers['content-type']) {
     headers['content-type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
   }
@@ -84,11 +89,22 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
       (res) => {
         const statusCode = res.statusCode ?? 0;
         const location = res.headers.location;
+        storeResponseCookies(init.cookieJar, res.headers['set-cookie']);
 
         if (statusCode >= 300 && statusCode < 400 && location && redirects > 0) {
           res.resume();
           const redirected = new URL(location, target);
-          resolve(requestUrl(redirected, redirects - 1, init));
+          const redirectInit = method === 'POST' && [301, 302, 303].includes(statusCode)
+            ? {
+                ...init,
+                method: 'GET' as const,
+                body: undefined,
+                headers: Object.fromEntries(
+                  Object.entries(init.headers ?? {}).filter(([name]) => !['content-type', 'content-length'].includes(name.toLowerCase())),
+                ),
+              }
+            : init;
+          resolve(requestUrl(redirected, redirects - 1, redirectInit));
           return;
         }
 
@@ -109,6 +125,19 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
     req.on('error', reject);
     req.end(body);
   });
+}
+
+function storeResponseCookies(jar: Map<string, string> | undefined, setCookie: string[] | string | undefined): void {
+  if (!jar || !setCookie) return;
+  for (const cookie of Array.isArray(setCookie) ? setCookie : [setCookie]) {
+    const pair = cookie.split(';', 1)[0];
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    const name = pair.slice(0, separator).trim();
+    const value = pair.slice(separator + 1).trim();
+    if (value) jar.set(name, value);
+    else jar.delete(name);
+  }
 }
 
 async function readResponse(stream: Readable & { headers?: Record<string, string | string[] | undefined> }): Promise<string> {
