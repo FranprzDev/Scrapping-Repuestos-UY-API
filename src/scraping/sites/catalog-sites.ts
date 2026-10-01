@@ -6,6 +6,35 @@ const defaultPagination = { type: 'next-link' } as const;
 
 export const CATALOG_SITES: CatalogSiteConfig[] = [
   existingSite({
+    id: 'romy',
+    label: 'Romy',
+    hostname: 'romy.uy',
+    seedUrls: [
+      'https://romy.uy/product-category/lotes/?orderby=price',
+      'https://romy.uy/product-category/liquidacion-post-mudanza/?orderby=price',
+      'https://romy.uy/product-category/accesorios-para-vehiculos/?orderby=price',
+      'https://romy.uy/product-category/audio-y-video/?orderby=price',
+      'https://romy.uy/product-category/pilas-y-baterias/pilas/?orderby=price',
+      'https://romy.uy/product-category/belleza-y-cuidado-personal/?orderby=price',
+      'https://romy.uy/product-category/cables-y-otros/?orderby=price&paged=1',
+      'https://romy.uy/proximos-arribos/',
+    ],
+    platform: 'woocommerce',
+    authentication: {
+      type: 'woocommerce-form',
+      loginUrl: 'https://romy.uy/mi-cuenta/',
+      usernameEnv: 'ROMY_USERNAME',
+      passwordEnv: 'ROMY_PASSWORD',
+    },
+    productUrlPatterns: [/\/producto\/[^/?#]+\/?$/i],
+    categoryUrlPatterns: [/\/product-category\//i, /\/proximos-arribos\/?(?:\?|$)/i],
+    paginationStrategy: { type: 'next-link', selector: 'a.next.page-numbers[href], a[rel="next"]', maxPages: 1000 },
+    preserveOutOfStock: true,
+    allowNonAutomotive: true,
+    concurrency: 2,
+    requestDelay: 750,
+  }),
+  existingSite({
     id: 'taxitor',
     label: 'Taxitor',
     hostname: 'taxitor.uy',
