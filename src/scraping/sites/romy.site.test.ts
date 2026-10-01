@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getCatalogSite } from './catalog-sites';
 import { extractRomyProduct } from './adapters/woocommerce.adapter';
+import { authenticateCatalogSite } from './catalog-pipeline';
+import { readFile } from 'node:fs/promises';
 
 test('Romy is enabled with authenticated WooCommerce catalog seeds', () => {
   const site = getCatalogSite('romy');
@@ -14,6 +16,53 @@ test('Romy is enabled with authenticated WooCommerce catalog seeds', () => {
   assert.ok(site.seedUrls.includes('https://romy.uy/product-category/cargadores/?orderby=price'));
   assert.ok(site.seedUrls.includes('https://romy.uy/product-category/novedades/'));
   assert.ok(site.productUrlPatterns.some((pattern) => pattern.test('https://romy.uy/producto/cargador-de-bateria-foxsur-12v-4a/')));
+});
+
+test('production catalog scripts use compiled JavaScript instead of tsx', async () => {
+  const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as { scripts: Record<string, string> };
+  assert.equal(packageJson.scripts['catalog:audit'], 'node dist/cli/catalog-command.js --mode=audit');
+  assert.equal(packageJson.scripts['catalog:run'], 'node dist/cli/catalog-command.js --mode=run');
+});
+
+test('Romy login requires environment credentials without exposing their values', async () => {
+  const site = getCatalogSite('romy');
+  assert.ok(site);
+  await assert.rejects(
+    authenticateCatalogSite(site.authentication, site.label, new Map(), { env: {} }),
+    /ROMY_USERNAME.*ROMY_PASSWORD/,
+  );
+});
+
+test('Romy login reads environment credentials and verifies the WordPress session cookie', async () => {
+  const site = getCatalogSite('romy');
+  assert.ok(site);
+  const cookieJar = new Map<string, string>();
+  const requests: Array<{ method: string; body?: string }> = [];
+
+  await authenticateCatalogSite(site.authentication, site.label, cookieJar, {
+    env: { ROMY_USERNAME: 'catalog-user', ROMY_PASSWORD: 'private-test-password' },
+    fetcher: async (url, _redirects, init) => {
+      requests.push({ method: init?.method ?? 'GET', body: init?.body });
+      if (init?.method === 'POST') {
+        cookieJar.set('wordpress_logged_in_test', 'private-session-cookie');
+        return { url, finalUrl: url, statusCode: 200, headers: {}, body: '<main>Mi cuenta</main>' };
+      }
+      return {
+        url,
+        finalUrl: url,
+        statusCode: 200,
+        headers: {},
+        body: '<form><input name="woocommerce-login-nonce" value="nonce"><input name="_wp_http_referer" value="/mi-cuenta/"></form>',
+      };
+    },
+  });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.method, 'GET');
+  assert.equal(requests[1]?.method, 'POST');
+  assert.match(requests[1]?.body ?? '', /username=catalog-user/);
+  assert.match(requests[1]?.body ?? '', /password=private-test-password/);
+  assert.equal(cookieJar.has('wordpress_logged_in_test'), true);
 });
 
 test('Romy extracts sale prices in dollars and the requested product fields', () => {
