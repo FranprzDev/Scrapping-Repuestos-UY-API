@@ -11,6 +11,12 @@ export type CatalogPlatform =
 export type CatalogAuthentication =
   | { type: 'none' }
   | { type: 'basic'; usernameEnv: string; passwordEnv: string }
+  | {
+      type: 'woocommerce-form';
+      loginUrl: string;
+      usernameEnv: string;
+      passwordEnv: string;
+    }
   | { type: 'api-key'; headerName: string; tokenEnv: string }
   | {
       type: 'oauth';
@@ -39,6 +45,7 @@ export interface CatalogSiteConfig {
   paginationStrategy: CatalogPaginationStrategy;
   priceLocale: string;
   preserveOutOfStock: boolean;
+  allowNonAutomotive?: boolean;
   concurrency: number;
   requestDelay: number;
   enabled: boolean;

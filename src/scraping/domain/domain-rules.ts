@@ -6,6 +6,7 @@ export interface DomainRule {
   seedUrls?: string[];
   preferredMethod: PreferredMethod;
   preserveOutOfStock?: boolean;
+  allowNonAutomotive?: boolean;
   productUrlPatterns: RegExp[];
   categoryUrlPatterns: RegExp[];
   excludeUrlPatterns: RegExp[];
