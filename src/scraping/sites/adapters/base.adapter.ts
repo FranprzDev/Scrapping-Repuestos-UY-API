@@ -276,7 +276,7 @@ export function auditCounts(site: CatalogSiteConfig, mode: 'discover' | 'probe' 
     productsExtracted: extraction.products.length,
     productsValid: validation.products.length,
     prices: validation.products.filter((product) => cleanText(product.price)).length,
-    sku: validation.products.filter((product) => cleanText(product.sku)).length,
+    sku: validation.products.filter((product) => isValidCatalogSku(product.sku)).length,
     images: productsWithImages,
     duplicates: discovery.duplicates + normalization.duplicates.length,
     rejected: extraction.rejected.length + validation.rejected.length,
@@ -288,6 +288,12 @@ export function auditCounts(site: CatalogSiteConfig, mode: 'discover' | 'probe' 
     pagesAudited: discovery.pagesAudited,
     productsAudited: discovery.productsAudited,
   };
+}
+
+export function isValidCatalogSku(value?: string): boolean {
+  const sku = cleanText(value);
+  if (!sku) return false;
+  return !/^(?:n\s*[/.]?\s*d|n\s*[/.]?\s*a|s[/.]?d|sin\s+(?:dato|datos|sku)|no\s+disponible|[-–—])$/i.test(sku);
 }
 
 function dedupeKey(product: ProductRecord): string | undefined {
