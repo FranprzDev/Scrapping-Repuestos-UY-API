@@ -9,7 +9,10 @@ test('Romy is enabled with authenticated WooCommerce catalog seeds', () => {
   assert.equal(site.enabled, true);
   assert.equal(site.platform, 'woocommerce');
   assert.equal(site.authentication.type, 'woocommerce-form');
-  assert.equal(site.seedUrls.length, 8);
+  assert.equal(site.seedUrls.length, 19);
+  assert.equal(new Set(site.seedUrls).size, site.seedUrls.length);
+  assert.ok(site.seedUrls.includes('https://romy.uy/product-category/cargadores/?orderby=price'));
+  assert.ok(site.seedUrls.includes('https://romy.uy/product-category/novedades/'));
   assert.ok(site.productUrlPatterns.some((pattern) => pattern.test('https://romy.uy/producto/cargador-de-bateria-foxsur-12v-4a/')));
 });
 
