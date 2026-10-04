@@ -20,6 +20,7 @@ RUN npx playwright install --with-deps chromium
 
 COPY --from=builder /app/dist ./dist
 COPY migrations ./migrations
+RUN test -f dist/cli/catalog-command.js
 
 ENV NODE_ENV=production
 ENV PORT=3000

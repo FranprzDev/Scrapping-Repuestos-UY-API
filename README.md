@@ -163,3 +163,20 @@ Los catalogos archivados se escriben en:
 - Cola externa: pendiente.
 - Observabilidad y hardening operativo: pendiente.
 - El sistema sigue en estado de preproduccion operativa hasta terminar esas fases.
+
+# Catálogo autenticado de Romy
+
+Romy se ejecuta mediante el pipeline de catálogos y conserva la sesión de WooCommerce durante todo el recorrido. Las credenciales deben configurarse únicamente como secretos del entorno:
+
+```bash
+ROMY_USERNAME=usuario_o_correo
+ROMY_PASSWORD=contraseña
+```
+
+Prueba limitada antes de habilitarlo en producción:
+
+```bash
+pnpm run catalog:audit --site=romy --max-pages=2 --max-products=10
+```
+
+Para incluirlo en el cron de producción, agregue `romy` a `PRODUCTION_CATALOG_SITE_IDS` (lista separada por comas). No guarde credenciales ni cookies en el repositorio.
