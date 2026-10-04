@@ -1,7 +1,13 @@
 import { BaseCatalogAdapter } from './base.adapter';
 import { parse, type HTMLElement } from 'node-html-parser';
 import type { ProductRecord } from '../../interfaces/scraping.types';
-import { cleanText, inferCurrency, normalizePriceValue, parsePriceNumber, resolveAvailability } from '../../domain/product-quality';
+import {
+  cleanText,
+  inferCurrency,
+  normalizePriceValue,
+  parsePriceNumber,
+  resolveAvailability,
+} from '../../domain/product-quality';
 import type { CatalogSiteConfig } from '../types';
 
 export class WooCommerceAdapter extends BaseCatalogAdapter {
@@ -41,7 +47,9 @@ export function extractRomyProduct(
     summary.querySelector('h1.product_title, h1'),
   );
 
-  if (!productName) return undefined;
+  if (!productName) {
+    return undefined;
+  }
 
   const sku = normalizeRomySku(
     nodeText(summary.querySelector('.sku')),
@@ -106,11 +114,13 @@ export function extractRomyProduct(
   const availability =
     resolveAvailability(fullText);
 
-  const colors =
-    extractColors(summary);
+  const {
+    colors,
+    colorStock,
+  } = extractRomyVariations(root);
 
-  const colorStock =
-    extractVariationStock(summary);
+  const description =
+    extractRomyDescription(root);
 
   const attributes: Record<string, string> = {
     isOffer: String(isOffer),
@@ -150,6 +160,7 @@ export function extractRomyProduct(
     ),
 
     sku,
+    description,
     availability,
 
     stock:
@@ -291,7 +302,9 @@ function extractRomyImages(
 function imageCandidates(
   image: HTMLElement | null,
 ): Array<string | undefined> {
-  if (!image) return [];
+  if (!image) {
+    return [];
+  }
 
   const srcset =
     image.getAttribute('data-srcset')
@@ -360,88 +373,194 @@ function nodeText(
   );
 }
 
-function extractColors(
+function extractRomyVariations(
   root: HTMLElement,
-): string[] {
-  const values =
+): {
+  colors: string[];
+  colorStock: Record<string, string>;
+} {
+  const colors =
+    new Map<string, string>();
+
+  const labelsByValue =
     new Map<string, string>();
 
   root
-    .querySelectorAll(
-      'select[name*="attribute_"] option',
-    )
-    .forEach((option) => {
-      const value =
-        cleanText(
-          option.getAttribute('value'),
-        );
+    .querySelectorAll('select')
+    .forEach((select) => {
+      const identity = [
+        select.getAttribute('name'),
+        select.getAttribute('id'),
+        select.getAttribute(
+          'data-attribute_name',
+        ),
+      ]
+        .filter(Boolean)
+        .join(' ');
 
-      const label =
-        nodeText(option);
-
-      if (value && label) {
-        values.set(
-          label.toLocaleLowerCase('es'),
-          label,
-        );
+      if (
+        !/colou?r|colores?/i.test(identity)
+      ) {
+        return;
       }
+
+      select
+        .querySelectorAll('option')
+        .forEach((option) => {
+          const value =
+            cleanText(
+              option.getAttribute('value'),
+            );
+
+          const label =
+            nodeText(option);
+
+          if (
+            !value
+            || !label
+            || /^(?:elige|selecciona|escoge)(?:\s+una?)?\s+opci[oó]n$/i.test(
+              label,
+            )
+          ) {
+            return;
+          }
+
+          colors.set(
+            label.toLocaleLowerCase('es'),
+            label,
+          );
+
+          labelsByValue.set(
+            normalizeVariationValue(value),
+            label,
+          );
+        });
     });
 
-  return Array.from(
-    values.values(),
-  );
+  const colorStock:
+    Record<string, string> = {};
+
+  for (
+    const variation
+    of parseRomyVariations(root)
+  ) {
+    const rawColor =
+      Object.entries(
+        variation.attributes ?? {},
+      ).find(
+        ([name]) =>
+          /colou?r|colores?/i.test(name),
+      )?.[1];
+
+    const normalizedColor =
+      cleanText(rawColor);
+
+    if (!normalizedColor) {
+      continue;
+    }
+
+    const label =
+      labelsByValue.get(
+        normalizeVariationValue(
+          normalizedColor,
+        ),
+      )
+      ?? normalizedColor;
+
+    colors.set(
+      label.toLocaleLowerCase('es'),
+      label,
+    );
+
+    colorStock[label] =
+      variation.is_in_stock !== false
+      && variation.variation_is_active !== false
+        ? 'in_stock'
+        : 'out_of_stock';
+  }
+
+  return {
+    colors:
+      Array.from(colors.values()),
+
+    colorStock,
+  };
 }
 
-function extractVariationStock(
+function parseRomyVariations(
   root: HTMLElement,
-): Record<string, string> {
+): Array<{
+  attributes?: Record<string, string>;
+  is_in_stock?: boolean;
+  variation_is_active?: boolean;
+}> {
   const encoded =
     root
       .querySelector(
-        'form.variations_form',
+        '[data-product_variations]',
       )
       ?.getAttribute(
         'data-product_variations',
       );
 
-  if (!encoded) {
-    return {};
+  if (
+    !encoded
+    || encoded === 'false'
+  ) {
+    return [];
   }
 
   try {
-    const variations =
-      JSON.parse(encoded) as Array<{
-        attributes?: Record<string, string>;
-        is_in_stock?: boolean;
-        variation_is_active?: boolean;
-      }>;
+    const parsed: unknown =
+      JSON.parse(encoded);
 
-    const stock:
-      Record<string, string> = {};
-
-    for (
-      const variation
-      of variations
-    ) {
-      const color =
-        Object.entries(
-          variation.attributes ?? {},
-        ).find(
-          ([name]) =>
-            /color/i.test(name),
-        )?.[1];
-
-      if (color) {
-        stock[color] =
-          variation.is_in_stock !== false
-          && variation.variation_is_active !== false
-            ? 'in_stock'
-            : 'out_of_stock';
-      }
-    }
-
-    return stock;
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
   } catch {
-    return {};
+    return [];
   }
+}
+
+function normalizeVariationValue(
+  value: string,
+): string {
+  return value
+    .trim()
+    .toLocaleLowerCase('es')
+    .replace(/[-_]+/g, ' ');
+}
+
+function extractRomyDescription(
+  root: HTMLElement,
+): string | undefined {
+  const description =
+    nodeText(
+      root.querySelector(
+        [
+          '#tab-description',
+          '.woocommerce-Tabs-panel--description',
+          '[role="tabpanel"][id*="description"]',
+          '.woocommerce-product-details__short-description',
+          '.product-description',
+        ].join(', '),
+      ),
+    );
+
+  if (description) {
+    return cleanText(
+      description.replace(
+        /^descripci[oó]n\s*/i,
+        '',
+      ),
+    );
+  }
+
+  return cleanText(
+    root
+      .querySelector(
+        'meta[name="description"]',
+      )
+      ?.getAttribute('content'),
+  );
 }

@@ -1,84 +1,185 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { getCatalogSite } from './catalog-sites';
+import { isValidCatalogSku } from './adapters/base.adapter';
 import { extractRomyProduct } from './adapters/woocommerce.adapter';
 import { authenticateCatalogSite } from './catalog-pipeline';
-import { readFile } from 'node:fs/promises';
-import { isValidCatalogSku } from './adapters/base.adapter';
+import { getCatalogSite } from './catalog-sites';
 
 test('Romy is enabled with authenticated WooCommerce catalog seeds', () => {
   const site = getCatalogSite('romy');
+
   assert.ok(site);
   assert.equal(site.enabled, true);
   assert.equal(site.platform, 'woocommerce');
   assert.equal(site.authentication.type, 'woocommerce-form');
   assert.equal(site.seedUrls.length, 19);
-  assert.equal(new Set(site.seedUrls).size, site.seedUrls.length);
-  assert.ok(site.seedUrls.includes('https://romy.uy/product-category/cargadores/?orderby=price'));
-  assert.ok(site.seedUrls.includes('https://romy.uy/product-category/novedades/'));
-  assert.ok(site.productUrlPatterns.some((pattern) => pattern.test('https://romy.uy/producto/cargador-de-bateria-foxsur-12v-4a/')));
+  assert.equal(
+    new Set(site.seedUrls).size,
+    site.seedUrls.length,
+  );
+
+  assert.ok(
+    site.seedUrls.includes(
+      'https://romy.uy/product-category/cargadores/?orderby=price',
+    ),
+  );
+
+  assert.ok(
+    site.seedUrls.includes(
+      'https://romy.uy/product-category/novedades/',
+    ),
+  );
+
+  assert.ok(
+    site.productUrlPatterns.some(
+      (pattern) =>
+        pattern.test(
+          'https://romy.uy/producto/cargador-de-bateria-foxsur-12v-4a/',
+        ),
+    ),
+  );
 });
 
 test('production catalog scripts use compiled JavaScript instead of tsx', async () => {
-  const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as { scripts: Record<string, string> };
-  assert.equal(packageJson.scripts['catalog:audit'], 'node dist/cli/catalog-command.js --mode=audit');
-  assert.equal(packageJson.scripts['catalog:run'], 'node dist/cli/catalog-command.js --mode=run');
+  const packageJson = JSON.parse(
+    await readFile('package.json', 'utf8'),
+  ) as {
+    scripts: Record<string, string>;
+  };
+
+  assert.equal(
+    packageJson.scripts['catalog:audit'],
+    'node dist/cli/catalog-command.js --mode=audit',
+  );
+
+  assert.equal(
+    packageJson.scripts['catalog:run'],
+    'node dist/cli/catalog-command.js --mode=run',
+  );
 });
 
 test('Romy login requires environment credentials without exposing their values', async () => {
   const site = getCatalogSite('romy');
+
   assert.ok(site);
+
   await assert.rejects(
-    authenticateCatalogSite(site.authentication, site.label, new Map(), { env: {} }),
+    authenticateCatalogSite(
+      site.authentication,
+      site.label,
+      new Map(),
+      {
+        env: {},
+      },
+    ),
     /ROMY_USERNAME.*ROMY_PASSWORD/,
   );
 });
 
 test('Romy login reads environment credentials and verifies the WordPress session cookie', async () => {
   const site = getCatalogSite('romy');
+
   assert.ok(site);
-  const cookieJar = new Map<string, string>();
-  const requests: Array<{ method: string; body?: string }> = [];
 
-  await authenticateCatalogSite(site.authentication, site.label, cookieJar, {
-    env: { ROMY_USERNAME: 'catalog-user', ROMY_PASSWORD: 'private-test-password' },
-    fetcher: async (url, _redirects, init) => {
-      requests.push({ method: init?.method ?? 'GET', body: init?.body });
+  const cookieJar =
+    new Map<string, string>();
 
-      if (init?.method === 'POST') {
-        cookieJar.set('wordpress_logged_in_test', 'private-session-cookie');
+  const requests:
+    Array<{
+      method: string;
+      body?: string;
+    }> = [];
+
+  await authenticateCatalogSite(
+    site.authentication,
+    site.label,
+    cookieJar,
+    {
+      env: {
+        ROMY_USERNAME: 'catalog-user',
+        ROMY_PASSWORD: 'private-test-password',
+      },
+
+      fetcher: async (
+        url,
+        _redirects,
+        init,
+      ) => {
+        requests.push({
+          method:
+            init?.method ?? 'GET',
+
+          body:
+            init?.body,
+        });
+
+        if (init?.method === 'POST') {
+          cookieJar.set(
+            'wordpress_logged_in_test',
+            'private-session-cookie',
+          );
+
+          return {
+            url,
+            finalUrl: url,
+            statusCode: 200,
+            headers: {},
+            body: '<main>Mi cuenta</main>',
+          };
+        }
 
         return {
           url,
           finalUrl: url,
           statusCode: 200,
           headers: {},
-          body: '<main>Mi cuenta</main>',
+          body: '<form><input name="woocommerce-login-nonce" value="nonce"><input name="_wp_http_referer" value="/mi-cuenta/"></form>',
         };
-      }
-
-      return {
-        url,
-        finalUrl: url,
-        statusCode: 200,
-        headers: {},
-        body: '<form><input name="woocommerce-login-nonce" value="nonce"><input name="_wp_http_referer" value="/mi-cuenta/"></form>',
-      };
+      },
     },
-  });
+  );
 
-  assert.equal(requests.length, 2);
-  assert.equal(requests[0]?.method, 'GET');
-  assert.equal(requests[1]?.method, 'POST');
-  assert.match(requests[1]?.body ?? '', /username=catalog-user/);
-  assert.match(requests[1]?.body ?? '', /password=private-test-password/);
-  assert.equal(cookieJar.has('wordpress_logged_in_test'), true);
+  assert.equal(
+    requests.length,
+    2,
+  );
+
+  assert.equal(
+    requests[0]?.method,
+    'GET',
+  );
+
+  assert.equal(
+    requests[1]?.method,
+    'POST',
+  );
+
+  assert.match(
+    requests[1]?.body ?? '',
+    /username=catalog-user/,
+  );
+
+  assert.match(
+    requests[1]?.body ?? '',
+    /password=private-test-password/,
+  );
+
+  assert.equal(
+    cookieJar.has(
+      'wordpress_logged_in_test',
+    ),
+    true,
+  );
 });
 
 test('Romy extracts sale prices in dollars and the requested product fields', () => {
   const product = extractRomyProduct(`
     <main>
-      <span class="onsale">¡Oferta!</span>
+      <span class="onsale">
+        ¡Oferta!
+      </span>
+
       <div class="woocommerce-product-gallery">
         <img src="https://romy.uy/cargador.jpg">
       </div>
@@ -104,21 +205,58 @@ test('Romy extracts sale prices in dollars and the requested product fields', ()
           <small>IVA Inc.</small>
         </p>
 
-        <span class="sku">var1248</span>
-        <p class="stock in-stock">Disponible</p>
+        <span class="sku">
+          var1248
+        </span>
+
+        <p class="stock in-stock">
+          Disponible
+        </p>
       </div>
     </main>
   `, 'https://romy.uy/producto/cargador-de-bateria-foxsur-12v-4a/');
 
   assert.ok(product);
-  assert.equal(product.productName, 'Cargador De Batería FOXSUR / 12V-4A');
-  assert.equal(product.sku, 'var1248');
-  assert.equal(product.price, '20.90');
-  assert.equal(product.currency, 'USD');
-  assert.equal(product.availability, 'in_stock');
-  assert.equal(product.attributes?.regularPrice, '21.90');
-  assert.equal(product.attributes?.salePrice, '20.90');
-  assert.equal(product.attributes?.isOffer, 'true');
+
+  assert.equal(
+    product.productName,
+    'Cargador De Batería FOXSUR / 12V-4A',
+  );
+
+  assert.equal(
+    product.sku,
+    'var1248',
+  );
+
+  assert.equal(
+    product.price,
+    '20.90',
+  );
+
+  assert.equal(
+    product.currency,
+    'USD',
+  );
+
+  assert.equal(
+    product.availability,
+    'in_stock',
+  );
+
+  assert.equal(
+    product.attributes?.regularPrice,
+    '21.90',
+  );
+
+  assert.equal(
+    product.attributes?.salePrice,
+    '20.90',
+  );
+
+  assert.equal(
+    product.attributes?.isOffer,
+    'true',
+  );
 });
 
 test('Romy extracts colors, per-color stock and sold-out state', () => {
@@ -137,7 +275,10 @@ test('Romy extracts colors, per-color stock and sold-out state', () => {
       is_in_stock: false,
       variation_is_active: true,
     },
-  ]).replaceAll('"', '&quot;');
+  ]).replaceAll(
+    '"',
+    '&quot;',
+  );
 
   const product = extractRomyProduct(`
     <div class="summary">
@@ -151,7 +292,9 @@ test('Romy extracts colors, per-color stock and sold-out state', () => {
         </span>
       </p>
 
-      <span class="sku">car123</span>
+      <span class="sku">
+        car123
+      </span>
 
       <p class="stock out-of-stock">
         Agotado
@@ -179,19 +322,158 @@ test('Romy extracts colors, per-color stock and sold-out state', () => {
   `, 'https://romy.uy/producto/cargador-inalambrico/');
 
   assert.ok(product);
-  assert.equal(product.stock, '0');
-  assert.equal(product.availability, 'out_of_stock');
-  assert.equal(product.attributes?.colors, 'Negro | Rojo');
+
+  assert.equal(
+    product.stock,
+    '0',
+  );
+
+  assert.equal(
+    product.availability,
+    'out_of_stock',
+  );
+
+  assert.equal(
+    product.attributes?.colors,
+    'Negro | Rojo',
+  );
 
   assert.deepEqual(
-    JSON.parse(product.attributes?.colorStock ?? '{}'),
+    JSON.parse(
+      product.attributes?.colorStock
+      ?? '{}',
+    ),
     {
       Negro: 'in_stock',
       Rojo: 'out_of_stock',
     },
   );
 
-  assert.equal(product.attributes?.isOffer, 'false');
+  assert.equal(
+    product.attributes?.isOffer,
+    'false',
+  );
+});
+
+test('Romy extracts visible colors and the full description from the camera detail layout', () => {
+  const variations = JSON.stringify([
+    {
+      attributes: {
+        attribute_pa_colores: 'celeste',
+      },
+      is_in_stock: true,
+      variation_is_active: true,
+    },
+    {
+      attributes: {
+        attribute_pa_colores: 'rosa',
+      },
+      is_in_stock: false,
+      variation_is_active: true,
+    },
+  ]).replaceAll(
+    '"',
+    '&quot;',
+  );
+
+  const product = extractRomyProduct(`
+    <main>
+      <div class="summary entry-summary">
+        <h1 class="product_title">
+          Cámara De Fotos Digital Infantil Con Diseño
+        </h1>
+
+        <p class="price">
+          <span class="woocommerce-Price-amount">
+            u$s14.90
+          </span>
+        </p>
+      </div>
+
+      <form
+        class="variations_form"
+        data-product_variations="${variations}"
+      >
+        <label for="pa_colores">
+          Colores
+        </label>
+
+        <select
+          id="pa_colores"
+          name="attribute_pa_colores"
+          data-attribute_name="attribute_pa_colores"
+        >
+          <option value="">
+            Elige una opción
+          </option>
+
+          <option value="celeste">
+            Celeste
+          </option>
+
+          <option value="rosa">
+            Rosa
+          </option>
+        </select>
+      </form>
+
+      <section
+        id="tab-description"
+        class="woocommerce-Tabs-panel woocommerce-Tabs-panel--description"
+      >
+        <h2>
+          Descripción
+        </h2>
+
+        <p>
+          Descubre la forma ideal de introducir a tus hijos en el mundo de la fotografía.
+        </p>
+
+        <ul>
+          <li>
+            Diseño robusto y ergonómico.
+          </li>
+
+          <li>
+            Doble lente para más diversión.
+          </li>
+        </ul>
+      </section>
+    </main>
+  `, 'https://romy.uy/producto/camara-de-fotos-digital-infantil-con-diseno/');
+
+  assert.ok(product);
+
+  assert.equal(
+    product.attributes?.colors,
+    'Celeste | Rosa',
+  );
+
+  assert.deepEqual(
+    JSON.parse(
+      product.attributes?.colorStock
+      ?? '{}',
+    ),
+    {
+      Celeste: 'in_stock',
+      Rosa: 'out_of_stock',
+    },
+  );
+
+  assert.match(
+    product.description ?? '',
+    /Descubre la forma ideal/,
+  );
+
+  assert.match(
+    product.description ?? '',
+    /Diseño robusto y ergonómico/,
+  );
+
+  assert.match(
+    product.description ?? '',
+    /Doble lente para más diversión/,
+  );
 });
 
 test('Romy prefers full-size gallery images and rejects non-product assets', () => {
@@ -206,7 +488,6 @@ test('Romy prefers full-size gallery images and rejects non-product assets', () 
     <main>
       <div class="woocommerce-product-gallery">
         <figure class="woocommerce-product-gallery__wrapper">
-
           <div class="woocommerce-product-gallery__image">
             <a href="https://romy.uy/wp-content/uploads/2026/09/producto-frente.jpg">
               <img
@@ -228,7 +509,6 @@ test('Romy prefers full-size gallery images and rejects non-product assets', () 
               src="https://romy.uy/wp-content/themes/romy/images/placeholder.png"
             >
           </div>
-
         </figure>
       </div>
 
@@ -294,7 +574,6 @@ test('catalog SKU metric rejects missing-value placeholders without inventing a 
 
   const product = extractRomyProduct(`
     <div class="summary">
-
       <h1 class="product_title">
         Producto sin SKU
       </h1>
@@ -310,12 +589,15 @@ test('catalog SKU metric rejects missing-value placeholders without inventing a 
       <p class="stock in-stock">
         Disponible
       </p>
-
     </div>
   `, 'https://romy.uy/producto/producto-sin-sku/');
 
   assert.ok(product);
-  assert.equal(product.sku, undefined);
+
+  assert.equal(
+    product.sku,
+    undefined,
+  );
 });
 
 test('Romy only marks a real lower sale price as an offer', () => {
@@ -364,7 +646,6 @@ test('Romy only marks a real lower sale price as an offer', () => {
       </span>
 
       <div class="summary">
-
         <h1 class="product_title">
           Producto
         </h1>
@@ -376,7 +657,6 @@ test('Romy only marks a real lower sale price as an offer', () => {
         <p class="stock in-stock">
           Disponible
         </p>
-
       </div>
     `, 'https://romy.uy/producto/producto/');
 
