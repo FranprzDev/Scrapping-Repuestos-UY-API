@@ -38,7 +38,7 @@ Los archivos `feyvi-precio-20.txt` y `Markdown pegado.md` aún no estaban dispon
 - Cinco fixtures reales: precios `681`, `71`, `7,263`, `194`, `94`; SKUs `55565098GMC`, `26278125GMC`, `22917172GMC`, `93397877GMC`, `96657229GMC`.
 - PostgreSQL temporal `feyvi_validation`: dry-run, cinco actualizaciones con respaldo, reanudación sin repetición, búsqueda/API numérica, preservación de datos en sincronización posterior, rechazo de escritura concurrente y restauración exacta.
 - Build y lint aprobados. Imagen Docker construida con la CA y el proxy de la sesión mediante un Dockerfile temporal (sin deshabilitar verificación); API del contenedor y Chromium comprobados.
-- CLI contra cinco fichas públicas en una base exclusivamente local: dry-run 5 recuperables/0 escrituras, aplicación 5/5 sin errores, reanudación 0 candidatos y 0 cambios.
+- CLI contra cinco fichas públicas en una base exclusivamente local: dry-run 5 recuperables/0 escrituras, aplicación 5/5 sin errores, reanudación 0 candidatos y 0 cambios; restauración por CLI 5/5 sin errores.
 - Suite general: 340 tests, 320 aprobados, 16 fallidos, 4 omitidos. Los 16 fallos son Taxitor/Selvir y se reprodujeron en el main original sin cambios (93 tests de domain-quality: 76 aprobados, 16 fallidos, 1 omitido). No se desactivaron ni cambiaron sus aserciones. Los omitidos incluyen pruebas live opcionales, Chromium no instalado y la integración PostgreSQL cuando no se habilita su variable de test.
 - Cliente HTTP real: Feyvi responde HTTP 200 por el proxy del entorno con TLS verificado. Se eliminó el uso previo de `rejectUnauthorized:false`; no se deshabilita confianza TLS para hacer pasar una descarga.
 
@@ -92,3 +92,9 @@ La restauración es transaccional y se bloquea si el producto o las relaciones c
 ## Publicación pendiente
 
 Revisar el cambio, obtener las cantidades reales con SELECT, incorporar las dos muestras, habilitar acceso al frontend y validar visualización/búsqueda/filtros/exportaciones. Resolver o aceptar explícitamente los fallos preexistentes de la suite. Autorizar merge/deploy y después el piloto; autorizar la actualización completa únicamente después de revisar su resultado. No se hizo ninguna publicación Mercado Libre.
+
+## PR preparado
+
+La rama `fix/feyvi-safe-recovery` está subida a `FranprzDev/Scrapping-Repuestos-UY-API`. GitHub bloqueó la creación automática con `Forbidden` en `api.github.com/graphql`; no existe un PR creado por esta intervención.
+
+Abrirlo como **Draft** desde https://github.com/FranprzDev/Scrapping-Repuestos-UY-API/pull/new/fix/feyvi-safe-recovery, base `main`, título `fix: recuperar precios y SKU de Feyvi con backfill seguro`. La descripción debe indicar que el backfill anterior omitía precio/SKU, explicar el respaldo/reanudación y referenciar este informe con los resultados de pruebas y las verificaciones de producción/frontend pendientes.
