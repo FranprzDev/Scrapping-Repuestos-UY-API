@@ -1,6 +1,6 @@
 import { ProductRecord } from '../interfaces/scraping.types';
 import { PostgresService } from '../jobs/postgres.service';
-import { FeyviBackfillRow, FeyviBackfillStore } from './feyvi-product-backfill';
+import { FeyviBackfillRow, FeyviBackfillStore, FeyviProductBackfillItem } from './feyvi-product-backfill';
 
 type CandidateRow = {
   id: string;
@@ -11,57 +11,37 @@ type CandidateRow = {
 export class PostgresFeyviProductBackfillStore implements FeyviBackfillStore {
   constructor(private readonly postgresService: PostgresService) {}
 
-  async findCandidates(limit?: number): Promise<FeyviBackfillRow[]> {
-    const params: unknown[] = [];
-    const limitClause = typeof limit === 'number' ? 'LIMIT $1' : '';
-    if (typeof limit === 'number') {
-      params.push(limit);
-    }
-
+  async findCandidates(limit = 100, afterId?: string): Promise<FeyviBackfillRow[]> {
     const result = await this.postgresService.query<CandidateRow>(
-      `
-      SELECT id, source_url, product
-      FROM scraping_inventory
-      WHERE source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/repuestos/([^/]+/){2}[^/?#]+/?$'
-      ORDER BY updated_at DESC, source_url ASC
-      ${limitClause}
-      `,
-      params,
+      `SELECT id, source_url, product FROM scraping_inventory
+       WHERE source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/repuestos/([^/]+/){2}[^/?#]+/?$'
+         AND ($2::text IS NULL OR id > $2)
+       ORDER BY id ASC LIMIT $1`, [limit, afterId ?? null],
     );
-
-    return result.rows.map((row) => ({
-      id: row.id,
-      sourceUrl: row.source_url,
-      product: row.product,
-    }));
+    return result.rows.map((row) => ({ id: row.id, sourceUrl: row.source_url, product: row.product }));
   }
 
-  async updateProductFields(id: string, product: ProductRecord): Promise<void> {
+  async updateProductFields(id: string, product: ProductRecord, previous?: ProductRecord, runId?: string): Promise<void> {
+    if (!previous || !runId) throw new Error('expected product and run-id required for backed-up recovery');
+    await this.postgresService.query('SELECT feyvi_apply_patch($1, $2::jsonb, $3::jsonb, $4)',
+      [id, JSON.stringify(previous), JSON.stringify(product), runId]);
+  }
+
+  async completedIds(runId: string): Promise<string[]> {
+    const result = await this.postgresService.query<{ inventory_id: string }>(
+      `SELECT inventory_id FROM feyvi_recovery_backups WHERE run_id = $1
+       UNION SELECT inventory_id FROM feyvi_recovery_results
+       WHERE run_id = $1 AND apply AND NOT (result ? 'error')`, [runId]);
+    return result.rows.map((row) => row.inventory_id);
+  }
+
+  async recordResult(runId: string, item: FeyviProductBackfillItem, apply: boolean): Promise<void> {
+    if (!apply) return; // A dry-run never writes even progress/error records to the database.
     await this.postgresService.query(
-      `
-      UPDATE scraping_inventory
-      SET product = product || jsonb_strip_nulls(jsonb_build_object(
-            'imageUrl', $2::text,
-            'imageUrls', to_jsonb($3::text[]),
-            'brand', $4::text,
-            'compatibleBrands', to_jsonb($5::text[]),
-            'compatibleModels', to_jsonb($6::text[]),
-            'compatibleVehicles', to_jsonb($7::text[]),
-            'compatibleVersions', to_jsonb($8::text[])
-          )),
-          updated_at = NOW()
-      WHERE id = $1
-      `,
-      [
-        id,
-        product.imageUrl ?? null,
-        product.imageUrls ?? null,
-        product.brand ?? null,
-        product.compatibleBrands ?? null,
-        product.compatibleModels ?? null,
-        product.compatibleVehicles ?? null,
-        product.compatibleVersions ?? null,
-      ],
-    );
+      `WITH event AS (
+         INSERT INTO feyvi_recovery_events(run_id,inventory_id,result) VALUES($1,$2,$3::jsonb) RETURNING id
+       ) INSERT INTO feyvi_recovery_results(run_id,inventory_id,apply,result) VALUES($1,$2,true,$3::jsonb)
+       ON CONFLICT(run_id,inventory_id,apply) DO UPDATE SET result = EXCLUDED.result, updated_at = NOW()`,
+      [runId, item.id, JSON.stringify(item)]);
   }
 }

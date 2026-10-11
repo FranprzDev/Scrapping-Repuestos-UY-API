@@ -59,7 +59,7 @@ test('Feyvi product backfill apply updates only Feyvi enrichment fields', async 
 
   assert.equal(store.updated.length, 1);
   const updated = store.updated[0].product;
-  assert.equal(updated.price, '999');
+  assert.equal(updated.price, '71');
   assert.equal(updated.sku, '26278125GMC');
   assert.equal(updated.sourceUrl, sourceUrl);
   assert.equal(updated.brand, 'General Motors');
@@ -90,16 +90,16 @@ test('Postgres Feyvi product backfill store selects Feyvi detail URLs and update
     compatibleBrands: ['Chevrolet'],
     compatibleModels: ['ONIX 1.2 MPI'],
     compatibleVehicles: ['Chevrolet - ONIX 1.2 MPI'],
-  });
+  }, existingProduct(), 'unit-test');
 
   assert.equal(rows.length, 1);
   assert.match(calls[0].sql, /feyvi\\\.com\\\.uy\/repuestos/);
   assert.match(calls[0].sql, /LIMIT \$1/);
-  assert.deepEqual(calls[0].params, [5]);
-  assert.match(calls[1].sql, /jsonb_build_object/);
-  assert.match(calls[1].sql, /compatibleVehicles/);
-  assert.equal(calls[1].params[1], 'https://www.feyvi.com.uy/images/detailed/32/26278125g_1.jpg');
-  assert.deepEqual(calls[1].params[6], ['Chevrolet - ONIX 1.2 MPI']);
+  assert.deepEqual(calls[0].params, [5, null]);
+  assert.match(calls[1].sql, /feyvi_apply_patch/);
+  assert.match(calls[1].params[2] as string, /compatibleVehicles/);
+  assert.equal(JSON.parse(calls[1].params[2] as string).imageUrl, 'https://www.feyvi.com.uy/images/detailed/32/26278125g_1.jpg');
+  assert.deepEqual(JSON.parse(calls[1].params[2] as string).compatibleVehicles, ['Chevrolet - ONIX 1.2 MPI']);
 });
 
 class MemoryFeyviStore implements FeyviBackfillStore {
@@ -107,8 +107,9 @@ class MemoryFeyviStore implements FeyviBackfillStore {
 
   constructor(private readonly rows: FeyviBackfillRow[]) {}
 
-  async findCandidates(limit?: number): Promise<FeyviBackfillRow[]> {
-    return typeof limit === 'number' ? this.rows.slice(0, limit) : this.rows;
+  async findCandidates(limit?: number, afterId?: string): Promise<FeyviBackfillRow[]> {
+    const rows = this.rows.filter((row) => !afterId || row.id > afterId);
+    return typeof limit === 'number' ? rows.slice(0, limit) : rows;
   }
 
   async updateProductFields(id: string, product: ProductRecord): Promise<void> {
@@ -128,3 +129,39 @@ function existingProduct(): ProductRecord {
     provider: 'domain',
   };
 }
+
+test('Feyvi rejects HTTP errors, unexpected redirects and incomplete pages without writes', async () => {
+  for (const response of [
+    { finalUrl: sourceUrl, body: fixtureHtml, statusCode: 403 },
+    { finalUrl: 'https://www.feyvi.com.uy/', body: fixtureHtml, statusCode: 200 },
+    { finalUrl: sourceUrl, body: '<h1>Access denied</h1>', statusCode: 200 },
+  ]) {
+    const store = new MemoryFeyviStore([{ id: '1', sourceUrl, product: existingProduct() }]);
+    const result = await runFeyviProductBackfill({ apply: true, store, fetchProductHtml: async () => response });
+    assert.equal(result.errors, 1);
+    assert.equal(store.updated.length, 0);
+  }
+});
+
+test('Feyvi preserves a valid local photo and existing compatibility while recovering price and SKU', async () => {
+  const previous = { ...existingProduct(), price: undefined, sku: undefined, imageUrl: 'https://shop.example/images/owned.jpg', compatibleModels: ['Verified legacy model'] };
+  const store = new MemoryFeyviStore([{ id: '1', sourceUrl, product: previous }]);
+  await runFeyviProductBackfill({ apply: true, store, fetchProductHtml: async () => ({ finalUrl: sourceUrl, body: fixtureHtml }) });
+  assert.equal(store.updated[0].product.price, '71');
+  assert.equal(store.updated[0].product.sku, '26278125GMC');
+  assert.equal(store.updated[0].product.imageUrl, previous.imageUrl);
+  assert.ok(store.updated[0].product.compatibleModels?.includes('Verified legacy model'));
+});
+
+test('Feyvi keyset batching processes each product once and bounded retry recovers HTTP 503', async () => {
+  const store = new MemoryFeyviStore(['1','2','3','4','5'].map(id => ({id,sourceUrl,product:existingProduct()})));
+  let attempts = 0;
+  const summary = await runFeyviProductBackfill({ store, batchSize: 2, retries: 1, fetchProductHtml: async () => {
+    attempts += 1;
+    if (attempts === 1) return {finalUrl:sourceUrl,body:'',statusCode:503};
+    return {finalUrl:sourceUrl,body:fixtureHtml,statusCode:200};
+  }});
+  assert.equal(summary.totalCandidates, 5);
+  assert.equal(summary.errors, 0);
+  assert.equal(attempts, 6);
+});

@@ -23,6 +23,7 @@ export interface HttpRequestInit {
 
 const HTTP_AGENT = new HttpAgent({
   keepAlive: true,
+  proxyEnv: process.env,
   maxSockets: 100,
   maxFreeSockets: 20,
   timeout: 60000,
@@ -30,10 +31,11 @@ const HTTP_AGENT = new HttpAgent({
 
 const HTTPS_AGENT = new HttpsAgent({
   keepAlive: true,
+  proxyEnv: process.env,
   maxSockets: 100,
   maxFreeSockets: 20,
   timeout: 60000,
-  rejectUnauthorized: false,
+  rejectUnauthorized: true,
 });
 
 export async function fetchHtml(url: string, redirects = 5, init: HttpRequestInit = {}): Promise<HttpResponseData> {
@@ -83,7 +85,7 @@ async function requestUrl(target: URL, redirects: number, init: HttpRequestInit)
         method,
         headers,
         agent: target.protocol === 'https:' ? HTTPS_AGENT : HTTP_AGENT,
-        rejectUnauthorized: false,
+        rejectUnauthorized: true,
         signal: timeoutSignal,
       },
       (res) => {
