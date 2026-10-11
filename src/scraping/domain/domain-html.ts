@@ -1,7 +1,7 @@
 import { HTMLElement, parse } from 'node-html-parser';
 import { ProductRecord, ProviderName } from '../interfaces/scraping.types';
 import { DomainRule } from './domain-rules';
-import { cleanText, inferCurrency, isAllowedCatalogUrl, normalizePriceValue, resolveAvailability } from './product-quality';
+import { cleanText, inferCurrency, isAllowedCatalogUrl, normalizePriceValue, parsePriceNumber, resolveAvailability } from './product-quality';
 import { extractItalurCategoryUrls, extractItalurDetail, extractItalurListProducts, extractItalurProductUrls } from './italur';
 
 const GENERIC_PRICE_SELECTORS = ['.price', '[class*="price"]', '[class*="precio"]', '.woocommerce-Price-amount'];
@@ -197,6 +197,12 @@ export function extractProductsFromHtml(html: string, pageUrl: string, provider:
 
   if (rule.id === 'mercadodelrepuesto' && /\/repuesto\/[0-9a-f-]{36}\/?$/i.test(pageUrl)) {
     const product = extractMercadoDelRepuestoDetail(html, root, pageUrl, provider);
+    return product ? [product] : [];
+  }
+
+  // A detail page must not inherit prices or SKUs from recommended products.
+  if (rule.id === 'feyvi' && rule.productUrlPatterns.some((pattern) => pattern.test(pageUrl))) {
+    const product = extractFeyviDetailProduct(root, pageUrl, provider, rule);
     return product ? [product] : [];
   }
 
@@ -858,6 +864,8 @@ function extractListProducts(root: HTMLElement, pageUrl: string, provider: Provi
         ]);
     const rawPrice = rule.id === 'selvir'
       ? extractSelvirListingPriceV2(card, cardText) ?? extractPriceFromNode(card)
+      : rule.id === 'feyvi'
+        ? firstNonEmpty(selectText(card, ['.ty-price']).map(validFeyviPrice))
       : extractPriceFromNode(card);
     if (!productName) {
       return;
@@ -1662,35 +1670,51 @@ function extractFeyviDetailProduct(root: HTMLElement, pageUrl: string, provider:
     return undefined;
   }
 
-  const rawPrice = firstNonEmpty(selectText(root, [...(rule.detailSelectors?.price ?? []), ...GENERIC_PRICE_SELECTORS]));
+  const scope = root.querySelector('.ty-product-detail') ?? root.querySelector('main') ?? root;
+  const skuNode = scope.querySelector('.ty-sku-item');
+  const productId = skuNode?.getAttribute('id')?.match(/^sku_update_(\d+)$/)?.[1];
+  const rawPrice = firstNonEmpty([
+    ...(productId ? selectText(scope, [`#sec_discounted_price_${productId}`]) : []),
+    firstAttributeValue(scope, ['meta[itemprop="price"]'], 'content'),
+    ...selectText(scope, ['.ty-product-block__price-actual .ty-price', '.ty-price']),
+  ].map(validFeyviPrice));
   const pageText = cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
   if (/(404|page not found|not found|pagina no encontrada|p[aá]gina no encontrada|no se ha podido encontrar)/i.test(pageText)) {
     return undefined;
   }
 
-  const availabilityText = collectAvailabilityText(root);
-  const availability = resolveDetailAvailability(root, availabilityText, rule);
-  const compatibility = extractCompatibilityFromRoot(root);
-  const imageUrls = extractFeyviImages(root, pageUrl);
-  const brand = extractFeyviBrand(root);
+  const availabilityText = collectAvailabilityText(scope);
+  const availability = resolveDetailAvailability(scope, availabilityText, rule);
+  const compatibility = extractCompatibilityFromRoot(scope);
+  const imageUrls = extractFeyviImages(scope, pageUrl);
+  const brand = extractFeyviBrand(scope);
   const skuText = firstNonEmpty([
-    firstAttributeValue(root, ['meta[itemprop="sku"]'], 'content'),
-    ...selectText(root, rule.detailSelectors?.sku ?? []),
+    firstAttributeValue(scope, ['meta[itemprop="sku"]'], 'content'),
+    skuNode?.querySelector('.ty-control-group__item')?.text,
+    ...selectText(scope, ['.ty-product-block__sku .ty-control-group__item', '.sku']),
+    scope.text.match(/(?:sku|c[oó]digo)\s*[:#]\s*([\w.-]+)/i)?.[1],
   ]);
+  const structuredAvailability = firstAttributeValue(scope, ['link[itemprop="availability"]'], 'href');
+  const priceUnavailable = /consultar precio|precio a consultar/i.test(scope.text);
 
   return {
     productName: title,
     price: normalizePriceValue(rawPrice),
-    currency: inferCurrency(rawPrice),
+    currency: rawPrice ? inferCurrency(rawPrice, firstAttributeValue(scope, ['meta[itemprop="priceCurrency"]'], 'content') ?? 'UYU') : undefined,
     brand,
     sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1] ?? skuText),
-    description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
+    description: firstNonEmpty([
+      firstAttributeValue(scope, ['meta[itemprop="description"]'], 'content'),
+      ...selectText(scope, ['#content_description', '.ty-product-block__description']),
+    ]),
     imageUrl: imageUrls[0],
     imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
     ...compatibility,
     sourceUrl: pageUrl,
     availability:
-      availability === 'in_stock'
+      /\/InStock$/i.test(structuredAvailability ?? '') ? 'in_stock'
+        : /\/OutOfStock$/i.test(structuredAvailability ?? '') ? 'out_of_stock'
+        : availability === 'in_stock'
         ? 'in_stock'
         : availability === 'out_of_stock'
           ? 'out_of_stock'
@@ -1701,7 +1725,17 @@ function extractFeyviDetailProduct(root: HTMLElement, pageUrl: string, provider:
               : undefined,
     extractedAt: new Date().toISOString(),
     provider,
+    qualityWarnings: rawPrice ? undefined : [priceUnavailable ? 'feyvi_price_unavailable' : 'feyvi_price_extraction_failed'],
   };
+}
+
+/** Only a monetary value from a price field is accepted, never a SKU or a count. */
+export function validFeyviPrice(value?: string): string | undefined {
+  const text = cleanText(value);
+  if (!text || !/^(?:(?:UYU|\$U|\$)\s*)?(?:\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?:\s*(?:UYU|IVA inc\.?))?$/i.test(text)) return undefined;
+  const price = normalizePriceValue(text);
+  const amount = parsePriceNumber(price);
+  return amount !== undefined && amount > 0 ? price : undefined;
 }
 
 function extractFeyviBrand(root: HTMLElement): string | undefined {
@@ -1740,7 +1774,7 @@ function extractFeyviImages(root: HTMLElement, pageUrl: string): string[] {
     .map((value) => validFeyviImageUrl(value, pageUrl))
     .filter((value): value is string => Boolean(value));
 
-  const ogImages = attributeValues(root, ['meta[property="og:image"], meta[name="twitter:image"]'], 'content')
+  const ogImages = attributeValues(root, ['meta[property="og:image"], meta[name="twitter:image"], meta[itemprop="image"]'], 'content')
     .map((value) => validFeyviImageUrl(value, pageUrl))
     .filter((value): value is string => Boolean(value));
 
@@ -2240,7 +2274,7 @@ function normalizeGrFrenosLabel(value?: string): string | undefined {
 }
 
 function parseResultCount(value: string): number | undefined {
-  const match = value.match(/(\d[\d.,]*)\s+resultados?/i);
+  const match = value.match(/((?:\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?))\s+resultados?/i);
   if (!match) {
     return undefined;
   }

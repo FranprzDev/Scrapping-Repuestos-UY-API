@@ -372,7 +372,7 @@ test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado
               site: sites[index],
               sourceUrl,
               product: JSON.parse(products[index]) as ProductRecord,
-              searchText: /search_text\s*=\s*EXCLUDED\.search_text/i.test(sql)
+              searchText: /search_text\s*=([\s\S]*?ELSE\s+)?\s*EXCLUDED\.search_text/i.test(sql)
                 ? searchTexts[index]
                 : existing?.searchText ?? searchTexts[index],
             });
@@ -430,7 +430,7 @@ test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado
 
   const found = await service.getFilteredPage({ search: '168662' }, { limit: 20 });
 
-  assert.match(inventoryUpsertSql, /search_text\s*=\s*EXCLUDED\.search_text/i);
+  assert.match(inventoryUpsertSql, /search_text\s*=([\s\S]*?ELSE\s+)?\s*EXCLUDED\.search_text/i);
   assert.deepEqual(result, { created: 0, updated: 1, totalForSite: 1 });
   assert.equal(rows.size, 1);
   assert.equal(found.length, 1);

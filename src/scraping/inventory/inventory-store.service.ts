@@ -4,7 +4,7 @@ import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
 import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
-import { inferVehicleBrands, resolveVehicleBrandFilterId } from '../domain/vehicle-brands';
+import { inferVehicleBrands, resolveVehicleBrandFilterId, VEHICLE_BRANDS } from '../domain/vehicle-brands';
 import { PostgresService } from '../jobs/postgres.service';
 import { ImageRelayService } from '../../image-relay/image-relay.service';
 
@@ -104,10 +104,11 @@ export class InventoryStoreService implements OnModuleInit {
 
     products
       .map((product) => {
-        const vehicleBrands = inferVehicleBrands(product);
+        const vehicleBrands = inventoryVehicleBrands(product);
         const enrichedProduct: ProductRecord = {
           ...product,
-          compatibleBrands: vehicleBrands.map((brand) => brand.label),
+          compatibleBrands: findDomainRule(product.sourceUrl ?? site)?.id === 'feyvi'
+            ? product.compatibleBrands : vehicleBrands.map((brand) => brand.label),
         };
         const sourceUrl = canonicalProductUrl(enrichedProduct.sourceUrl);
         if (!sourceUrl) {
@@ -130,7 +131,7 @@ export class InventoryStoreService implements OnModuleInit {
 
     for (let index = 0; index < payload.length; index += this.upsertChunkSize) {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
-      const upserted = await this.postgresService.query<{ id: string; sourceUrl: string; created: boolean }>(
+      const upserted = await this.postgresService.query<{ id: string; sourceUrl: string; created: boolean; product?: ProductRecord }>(
         `
         INSERT INTO scraping_inventory (id, site, source_url, product, search_text, created_at, updated_at, last_seen_at)
         SELECT item.id, item.site, item.source_url, item.product::jsonb, item.search_text, $1::timestamptz, $1::timestamptz, $1::timestamptz
@@ -138,11 +139,13 @@ export class InventoryStoreService implements OnModuleInit {
         ON CONFLICT (source_url)
         DO UPDATE SET
           site = EXCLUDED.site,
-          product = EXCLUDED.product,
-          search_text = EXCLUDED.search_text,
+          product = CASE WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
+            THEN feyvi_merge_product(scraping_inventory.product, EXCLUDED.product) ELSE EXCLUDED.product END,
+          search_text = CASE WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
+            THEN feyvi_search_text(feyvi_merge_product(scraping_inventory.product, EXCLUDED.product)) ELSE EXCLUDED.search_text END,
           updated_at = EXCLUDED.updated_at,
           last_seen_at = EXCLUDED.last_seen_at
-        RETURNING id, source_url AS "sourceUrl", (xmax = 0) AS created
+        RETURNING id, source_url AS "sourceUrl", (xmax = 0) AS created, product
         `,
         [
           runAt,
@@ -166,12 +169,12 @@ export class InventoryStoreService implements OnModuleInit {
       await this.syncVehicleBrandRelations(
         upserted.rows.map((row) => ({
           id: row.id,
-          vehicleBrands: brandsBySourceUrl.get(row.sourceUrl) ?? [],
+          vehicleBrands: row.product ? inventoryVehicleBrands(row.product) : brandsBySourceUrl.get(row.sourceUrl) ?? [],
         })),
       );
       await Promise.all(upserted.rows.map((row) => {
         const item = chunk.find((candidate) => candidate.sourceUrl === row.sourceUrl);
-        return item ? this.imageRelayService?.enqueueForInventory(row.id, item.site, JSON.parse(item.product) as ProductRecord) : 0;
+        return item ? this.imageRelayService?.enqueueForInventory(row.id, item.site, row.product ?? JSON.parse(item.product) as ProductRecord) : 0;
       }));
     }
 
@@ -528,7 +531,9 @@ export class InventoryStoreService implements OnModuleInit {
 
     const inventoryIds = items.map((item) => item.id);
     await this.postgresService.query(
-      'DELETE FROM scraping_inventory_vehicle_brands WHERE inventory_id = ANY($1::text[])',
+      `DELETE FROM scraping_inventory_vehicle_brands WHERE inventory_id = ANY($1::text[])
+       AND NOT EXISTS (SELECT 1 FROM scraping_inventory i WHERE i.id = inventory_id
+         AND i.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/')`,
       [inventoryIds],
     );
 
@@ -956,4 +961,12 @@ function normalizeOffset(value?: number): number | undefined {
   }
 
   return Math.max(0, Math.trunc(value as number));
+}
+
+function inventoryVehicleBrands(product: ProductRecord): ReturnType<typeof inferVehicleBrands> {
+  if (findDomainRule(product.sourceUrl ?? '')?.id !== 'feyvi') return inferVehicleBrands(product);
+  const declared = new Set((product.compatibleBrands ?? []).map(value => value.toLowerCase()));
+  return VEHICLE_BRANDS.filter(brand => declared.has(brand.label.toLowerCase())).map(brand => ({
+    id: brand.id, label: brand.label, confidence: 'explicit' as const, evidence: brand.label,
+  }));
 }

@@ -216,3 +216,37 @@ test('feyvi descarta categorias con precio aparente como si fueran productos', (
 
   assert.equal(products.length, 0);
 });
+
+test('Feyvi live detail fixtures preserve observed prices and original SKUs', () => {
+  const urls = JSON.parse(readFileSync('src/scraping/domain/fixtures/feyvi/live-details.json', 'utf8')) as Array<{url: string; file: string}>;
+  const expected = [['681', '55565098GMC'], ['71', '26278125GMC'], ['7,263', '22917172GMC'], ['194', '93397877GMC'], ['94', '96657229GMC']];
+  urls.forEach((fixture, index) => {
+    const html = readFileSync(`src/scraping/domain/fixtures/feyvi/${fixture.file}`, 'utf8');
+    const products = extractProductsFromHtml(html, fixture.url, 'domain', findDomainRule(fixture.url)!);
+    assert.equal(products.length, 1);
+    assert.equal(products[0].price, expected[index][0]);
+    assert.equal(products[0].sku, expected[index][1]);
+    assert.equal(products[0].currency, 'UYU');
+    assert.match(products[0].imageUrl!, /\/detailed\//);
+  });
+});
+
+test('Feyvi ignores old prices, product IDs and recommendation JSON-LD', () => {
+  const url = 'https://www.feyvi.com.uy/repuestos/a/b/product/';
+  const html = `<script type="application/ld+json">{"@type":"Product","name":"Other product","offers":{"price":8}}</script>
+    <main><h1>RULEMAN</h1><div class="ty-sku-item" id="sku_update_123"><span class="ty-control-group__item">55565098GMC</span></div>
+    <span class="ty-price">$ 900</span><span id="sec_discounted_price_123">681</span></main>`;
+  const products = extractProductsFromHtml(html, url, 'domain', findDomainRule(url)!);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].price, '681');
+  assert.equal(products[0].sku, '55565098GMC');
+});
+
+test('Feyvi distinguishes unavailable price from missing price markup and rejects zero/negative/code values', () => {
+  const url = 'https://www.feyvi.com.uy/repuestos/a/b/product/';
+  for (const value of ['Consultar precio', '', '0', '-681', '55565098GMC', '24 productos', '1,2,3', '1..23']) {
+    const [product] = extractProductsFromHtml(`<main><h1>RULEMAN</h1><span class="ty-price">${value}</span><div>Código: 55565098GMC</div></main>`, url, 'domain', findDomainRule(url)!);
+    assert.equal(product.price, undefined, value);
+    assert.ok(product.qualityWarnings?.includes(value === 'Consultar precio' ? 'feyvi_price_unavailable' : 'feyvi_price_extraction_failed'));
+  }
+});
