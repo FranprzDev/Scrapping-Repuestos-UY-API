@@ -35,11 +35,11 @@ export function verifiedDetailPrice(html: string, url: string, expectedSku: stri
   const visibleSku = root.querySelector('#code-product')?.text.trim()
     ?? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim();
   if (visibleSku !== expectedSku.trim()) return undefined;
-  if (/US\\$|USD/i.test(directText)) return undefined;
+  if (/US\$|USD/i.test(directText)) return undefined;
   const normalized = normalizeYokomitsuPrice(directText);
   const basePrice = Number(normalized);
   if (!normalized || !Number.isFinite(basePrice) || basePrice <= 0) return undefined;
-  const amount = /\\+\\s*IVA\\b/i.test(panel.text) ? Math.round(basePrice * 122 + Number.EPSILON) / 100 : basePrice;
+  const amount = /\+\s*IVA\b/i.test(panel.text) ? Math.round(basePrice * 122 + Number.EPSILON) / 100 : basePrice;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return undefined;
   return amount.toFixed(2);
 }
