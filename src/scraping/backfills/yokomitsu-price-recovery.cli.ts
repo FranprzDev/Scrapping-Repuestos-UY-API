@@ -3,7 +3,7 @@ import { Client } from 'pg';
 import { parse } from 'node-html-parser';
 import { YokomitsuCookieJarHttpClient } from '../domain/yokomitsu-http-client';
 import { authenticateYokomitsuHttpSession, isYokomitsuSessionExpiredResponse } from '../domain/yokomitsu-auth';
-import { extractYokomitsuProductDetailFromHtml } from '../domain/yokomitsu';
+import { normalizeYokomitsuPrice } from '../domain/yokomitsu';
 
 type Row = { id: string; source_url: string; sku: string | null; price: string | null };
 type ResultStatus = 'updated' | 'unchanged' | 'unverified' | 'error';
@@ -31,11 +31,15 @@ export function verifiedDetailPrice(html: string, url: string, expectedSku: stri
     .map((node) => node.rawText)
     .join(' ').trim();
   if (!/(?:US\$|\$U|\$|UYU|USD)\s*\d/.test(directText)) return undefined;
-  const parsed = extractYokomitsuProductDetailFromHtml(html, url);
-  const parsedSku = parsed?.sku?.trim();
-  const price = parsed?.price;
-  if (parsedSku !== expectedSku.trim() || parsed?.currency !== 'UYU' || !price) return undefined;
-  const amount = Number(price);
+  // SKU belongs to the detail page, NOT a related-product card.
+  const visibleSku = root.querySelector('#code-product')?.text.trim()
+    ?? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim();
+  if (visibleSku !== expectedSku.trim()) return undefined;
+  if (/US\\$|USD/i.test(directText)) return undefined;
+  const normalized = normalizeYokomitsuPrice(directText);
+  const basePrice = Number(normalized);
+  if (!normalized || !Number.isFinite(basePrice) || basePrice <= 0) return undefined;
+  const amount = /\\+\\s*IVA\\b/i.test(panel.text) ? Math.round(basePrice * 122 + Number.EPSILON) / 100 : basePrice;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return undefined;
   return amount.toFixed(2);
 }
