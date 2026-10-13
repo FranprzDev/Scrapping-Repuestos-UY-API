@@ -7,6 +7,7 @@ import {
   extractCookieNames,
   extractFieldNamesFromBody,
   extractYokomitsuProductDetailFromHtml,
+  extractYokomitsuProductsFromHtml,
   extractYokomitsuProductsFromJson,
   hasReachedYokomitsuPortal,
   hasVisibleYokomitsuCaptchaChallenge,
@@ -362,13 +363,13 @@ test('Yokomitsu extrae productos desde data HTML sin asumir stock por Comprar', 
   assert.equal(products[0].attributes?.vehicleModel, 'Corolla');
   assert.equal(products[0].attributes?.proximaLlegada, '20 dias');
   assert.equal(products[0].attributes?.procedencia, 'JP');
-  assert.equal(products[0].price, '3406');
+  assert.equal(products[0].price, '4155.32');
   assert.equal(products[0].currency, 'UYU');
   assert.equal(products[0].imageUrl, 'https://www.yokomitsuparts.com.uy/v2/img/yokomitsu/yok-001.jpg');
   assert.equal(products[0].availability, 'Stock Cr\u00edtico');
   assert.equal(products[0].attributes?.stockStatus, 'Stock Cr\u00edtico');
   assert.equal(products[0].stock, undefined);
-  assert.equal(products[1].price, '9221');
+  assert.equal(products[1].price, '11249.62');
   assert.equal(products[1].availability, 'out_of_stock');
   assert.equal(products[1].attributes?.stockStatus, 'out_of_stock');
   assert.equal(products[1].stock, undefined);
@@ -433,7 +434,7 @@ test('Yokomitsu detalle no contamina descripcion ni imagenes con assets globales
   assert.equal(product.productName, 'Cremallera direccion Toyota Corolla');
   assert.equal(product.sku, 'YK-DETAIL-1');
   assert.equal(product.brand, 'DemoBrand');
-  assert.equal(product.price, '9221');
+  assert.equal(product.price, '11249.62');
   assert.equal(product.currency, 'UYU');
   assert.equal(product.availability, 'Stock Cr\u00edtico');
   assert.equal(product.description, 'Cremallera hidraulica nueva para aplicacion sanitizada.');
@@ -469,7 +470,7 @@ test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', 
   assert.equal(product.imageUrl, undefined);
   assert.equal(product.imageUrls, undefined);
   assert.equal(product.sku, 'YK-DETAIL-EMPTY');
-  assert.equal(product.price, '3406');
+  assert.equal(product.price, '4155.32');
 });
 
 test('Yokomitsu ficha con varias productsGalleries usa solo galeria real y conserva orden', () => {
@@ -1050,3 +1051,46 @@ async function clientWithSessionCleanup(
     password: 'SANITIZED_PASSWORD',
   }, callback);
 }
+
+
+test('Yokomitsu Geely CK: precio actual con IVA y sin confundir descuento ni precio anterior', () => {
+  const html = '<html><body><article class="producto-detalle" data-codprod="7183011201"><h1>AMORTIGUADOR CK</h1></article>'
+    + '<div id="prices-product"><div class="precio-oferta"><div class="ticket2">-38%</div>'
+    + '<h2>$1.237 <span>$1.989</span></h2></div><span>+IVA</span></div></body></html>';
+  const product = extractYokomitsuProductDetailFromHtml(html, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/ck/40578/item');
+  assert.equal(product?.price, '1509.14');
+  assert.notEqual(product?.price, '38');
+  assert.notEqual(product?.price, '1989');
+});
+
+test('Yokomitsu Grand Vitara: precio regular $682 +IVA', () => {
+  const html = '<html><body><article class="producto-detalle" data-codprod="7174571313"><h1>AMORTIGUADOR VITARA</h1></article>'
+    + '<div id="prices-product"><h3>$682</h3><span>+IVA</span></div></body></html>';
+  const product = extractYokomitsuProductDetailFromHtml(html, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/grand-vitara/52286/item');
+  assert.equal(product?.price, '832.04');
+});
+
+test('Yokomitsu no agrega IVA dos veces ni acepta descuento sin precio', () => {
+  const prefix = '<html><body><article class="producto-detalle" data-codprod="YK-UNO"><h1>AMORTIGUADOR</h1></article><div id="prices-product">';
+  const suffix = '</div></body></html>';
+  const url = 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/ck/40578/item';
+  assert.equal(extractYokomitsuProductDetailFromHtml(prefix + '<h3>$832,04</h3>' + suffix, url)?.price, '832.04');
+  assert.equal(extractYokomitsuProductDetailFromHtml(prefix + '<div class="ticket2">-38%</div><span>+IVA</span>' + suffix, url)?.price, undefined);
+});
+
+test('Yokomitsu listado con +IVA y precio final sin recargo', () => {
+  const html = '<section><article class="producto" data-codprod="YK-IVA">'
+    + '<a href="/v2/producto-detalle/ck/40578/item">Amortiguador CK</a><strong class="precio">$1.237 +IVA</strong></article>'
+    + '<article class="producto" data-codprod="YK-FINAL">'
+    + '<a href="/v2/producto-detalle/grand-vitara/52286/item">Amortiguador Vitara</a><strong class="precio">$832,04</strong></article></section>';
+  const products = extractYokomitsuProductsFromHtml(html, 'https://www.yokomitsuparts.com.uy/v2/', 10);
+  assert.equal(products.find((product) => product.sku === 'YK-IVA')?.price, '1509.14');
+  assert.equal(products.find((product) => product.sku === 'YK-FINAL')?.price, '832.04');
+});
+
+test('Yokomitsu precio de texto generico sin clase precio', () => {
+  const html = '<html><body><article class="producto-detalle" data-codprod="YK-GENERICO">'
+    + '<h1>AMORTIGUADOR</h1><p>Precio: $1.237 +IVA</p></article></body></html>';
+  const product = extractYokomitsuProductDetailFromHtml(html, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/demo/2/item');
+  assert.equal(product?.price, '1509.14');
+});
