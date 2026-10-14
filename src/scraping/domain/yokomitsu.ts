@@ -577,12 +577,15 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, optio
     ? panelPrice
     : firstElementText(card, ['.price', '.precio'])
       ?? text.match(/(?:US\$|\$U|\$|UYU|USD)\s*\d[\d.,]*(?:\s*\+?\s*IVA)?/i)?.[0];
+  // On some detail pages the price panel is a sibling of the product article.
+  // In that case select its unique detail-card SKU, never a related card SKU.
+  const detailCards = options.detail ? priceRoot.querySelectorAll('.producto-detalle[data-codprod]') : [];
+  const expectedDetailSku = sku ?? (detailCards.length === 1
+    ? detailCards[0].getAttribute('data-codprod')?.trim()
+    : undefined);
   const verifiedDetail = options.detail && options.sourceUrl
-    ? verifiedYokomitsuDetailProduct(priceRoot, options.sourceUrl, sku ?? null)
+    ? verifiedYokomitsuDetailProduct(priceRoot, options.sourceUrl, expectedDetailSku ?? null)
     : undefined;
-  if (options.detail && /\/(?:ck|grand-vitara)\/|\/demo\//.test(options.sourceUrl ?? '')) {
-    console.log('TEMP_VERIFY_DEBUG', { sourceUrl: options.sourceUrl, sku, panels: priceRoot.querySelectorAll('#prices-product').length, verifiedDetail });
-  }
   const imageUrls = extractYokomitsuProductImageUrls(card, baseUrl, Boolean(options.detail), options.documentRoot);
   const referencia = labeledValue(card, ['OEM', 'Referencia', 'Ref']);
   const visibleBrand = labeledValue(card, ['Marca']);
