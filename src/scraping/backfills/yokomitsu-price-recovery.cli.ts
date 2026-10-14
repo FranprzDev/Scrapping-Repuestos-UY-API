@@ -32,8 +32,12 @@ export function verifiedDetailProduct(html: string, url: string, expectedSku: st
     .join(' ').trim();
   if (!/(?:US\$|\$U|\$|UYU|USD)\s*\d/.test(directText)) return undefined;
   // SKU belongs to the detail page, NOT a related-product card.
-  const visibleSku = root.querySelector('#code-product')?.text.trim()
-    ?? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim();
+  // When recovering an absent SKU, require the code displayed in the
+  // actual product detail. Never infer it from a related-product card.
+  const detailSku = root.querySelector('.producto-info #code-product')?.text.trim()
+    ?? root.querySelector('#code-product')?.text.trim();
+  const visibleSku = detailSku
+    ?? (expectedSku ? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim() : undefined);
   if (!visibleSku || !/^[A-Za-z0-9][A-Za-z0-9_.-]{2,48}$/.test(visibleSku)) return undefined;
   if (expectedSku?.trim() && visibleSku !== expectedSku.trim()) return undefined;
   if (/US\$|USD/i.test(directText)) return undefined;
