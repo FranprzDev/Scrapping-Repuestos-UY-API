@@ -30,3 +30,4 @@ jobs:
       - run: node --test dist/scraping/domain/yokomitsu.test.js dist/scraping/domain/yokomitsu-full.test.js
 
       - run: node --test dist/scraping/backfills/yokomitsu-price-recovery.test.js
+      - run: node --test dist/scraping/domain/yokomitsu-pricing.test.js
