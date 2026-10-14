@@ -765,6 +765,8 @@ export function mergeYokomitsuProduct(listing: ProductRecord, detail?: ProductRe
   if (!detail) {
     return {
       ...listing,
+      price: undefined,
+      priceVerification: undefined,
       productName: listingProductName ?? fallbackProductName,
       imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       imageUrl: imageUrls[0],
@@ -776,6 +778,9 @@ export function mergeYokomitsuProduct(listing: ProductRecord, detail?: ProductRe
   return {
     ...listing,
     ...detail,
+    // Listing-only prices are never authoritative for persisted costs.
+    price: detail.priceVerification === 'detail' ? detail.price : undefined,
+    priceVerification: detail.priceVerification === 'detail' ? 'detail' : undefined,
     productName: detailProductName ?? listingProductName ?? fallbackProductName,
     sku: detail.sku ?? listing.sku,
     brand: detail.brand ?? listing.brand,
