@@ -580,6 +580,9 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, optio
   const verifiedDetail = options.detail && options.sourceUrl
     ? verifiedYokomitsuDetailProduct(priceRoot, options.sourceUrl, sku ?? null)
     : undefined;
+  if (options.detail && /\/(?:ck|grand-vitara)\/|\/demo\//.test(options.sourceUrl ?? '')) {
+    console.log('TEMP_VERIFY_DEBUG', { sourceUrl: options.sourceUrl, sku, panels: priceRoot.querySelectorAll('#prices-product').length, verifiedDetail });
+  }
   const imageUrls = extractYokomitsuProductImageUrls(card, baseUrl, Boolean(options.detail), options.documentRoot);
   const referencia = labeledValue(card, ['OEM', 'Referencia', 'Ref']);
   const visibleBrand = labeledValue(card, ['Marca']);
