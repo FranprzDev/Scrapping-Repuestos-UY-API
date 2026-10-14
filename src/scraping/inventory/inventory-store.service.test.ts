@@ -534,6 +534,7 @@ test('Yokomitsu upsert protects verified cost and SKU; other providers remain un
   assert.match(unverified.sql, /yokomitsuparts/);
   assert.match(unverified.sql, /scraping_inventory\.product \|\|/);
   assert.match(unverified.sql, /priceVerification/);
+  assert.match(unverified.sql, /CONCAT_WS\(' ', EXCLUDED\.search_text, LOWER\(NULLIF\(BTRIM\(scraping_inventory\.product->>'sku'\)/);
   sent.length = 0;
   await service.upsertSiteProducts('https://www.yokomitsuparts.com.uy/v2/',
     [{ ...base, price: '1509.14', priceVerification: 'detail' }], extractedAt);
