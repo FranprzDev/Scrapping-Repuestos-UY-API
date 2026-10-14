@@ -18,8 +18,8 @@ const isValidUrl = (raw: string): boolean => {
 };
 
 /** Never trust badges, cards, crossed old prices, or a non-detail page. */
-export function verifiedDetailPrice(html: string, url: string, expectedSku: string | null): string | undefined {
-  if (!expectedSku || !isValidUrl(url)) return undefined;
+export function verifiedDetailProduct(html: string, url: string, expectedSku: string | null): { sku: string; price: string } | undefined {
+  if (!isValidUrl(url)) return undefined;
   const root = parse(html);
   const panel = root.querySelector('#prices-product');
   if (!panel) return undefined;
@@ -34,14 +34,19 @@ export function verifiedDetailPrice(html: string, url: string, expectedSku: stri
   // SKU belongs to the detail page, NOT a related-product card.
   const visibleSku = root.querySelector('#code-product')?.text.trim()
     ?? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim();
-  if (visibleSku !== expectedSku.trim()) return undefined;
+  if (!visibleSku || !/^[A-Za-z0-9][A-Za-z0-9_.-]{2,48}$/.test(visibleSku)) return undefined;
+  if (expectedSku?.trim() && visibleSku !== expectedSku.trim()) return undefined;
   if (/US\$|USD/i.test(directText)) return undefined;
   const normalized = normalizeYokomitsuPrice(directText);
   const basePrice = Number(normalized);
   if (!normalized || !Number.isFinite(basePrice) || basePrice <= 0) return undefined;
   const amount = /\+\s*IVA\b/i.test(panel.text) ? Math.round(basePrice * 122 + Number.EPSILON) / 100 : basePrice;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return undefined;
-  return amount.toFixed(2);
+  return { sku: visibleSku, price: amount.toFixed(2) };
+}
+
+export function verifiedDetailPrice(html: string, url: string, expectedSku: string | null): string | undefined {
+  return verifiedDetailProduct(html, url, expectedSku)?.price;
 }
 
 async function main() {
@@ -53,7 +58,7 @@ async function main() {
   let stopRequested = false;
   process.on('SIGINT', () => { stopRequested = true; console.log('SIGINT: stopping after current item'); });
   process.on('SIGTERM', () => { stopRequested = true; console.log('SIGTERM: stopping after current item'); });
-  const summary: Record<string, number> = { scanned: 0, updated: 0, unchanged: 0, unverified: 0, error: 0, skippedPreviouslyCompleted: 0 };
+  const summary: Record<string, number> = { scanned: 0, updated: 0, unchanged: 0, recoveredSku: 0, unverified: 0, error: 0, skippedPreviouslyCompleted: 0 };
   try {
     await db.connect();
     // Prevent concurrent recovery runs against the same database.
@@ -97,8 +102,8 @@ async function main() {
       if (done.has(row.id)) continue;
       let status: ResultStatus = 'unverified', reason: string | null = null, verifiedPrice: string | null = null;
       try {
-        if (!row.sku || !isValidUrl(row.source_url)) {
-          reason = 'missing-sku-or-invalid-detail-url';
+        if (!isValidUrl(row.source_url)) {
+          reason = 'invalid-detail-url';
         } else {
           let response = await client.get(row.source_url, { accept: 'text/html,application/xhtml+xml' });
           if (isYokomitsuSessionExpiredResponse(response)) {
@@ -109,18 +114,43 @@ async function main() {
           if (response.status !== 200) {
             reason = 'http-' + response.status;
           } else {
-            verifiedPrice = verifiedDetailPrice(response.body, row.source_url, row.sku) ?? null;
-            if (!verifiedPrice) reason = 'detail-price-not-verifiable';
-            else if (Number(verifiedPrice) === Number(row.price)) status = 'unchanged';
+            const detail = verifiedDetailProduct(response.body, row.source_url, row.sku);
+            verifiedPrice = detail?.price ?? null;
+            if (!detail) reason = 'detail-sku-or-price-not-verifiable';
             else {
-              const update = await db.query(`
-                UPDATE scraping_inventory
-                SET product = jsonb_set(product, '{price}', to_jsonb($1::text), true), updated_at = NOW()
-                WHERE id = $2 AND source_url = $3 AND product->>'sku' = $4
-                  AND product->>'price' IS NOT DISTINCT FROM $5
-                RETURNING id`, [verifiedPrice, row.id, row.source_url, row.sku, row.price]);
-              if (update.rowCount === 1) status = 'updated';
-              else { status = 'error'; reason = 'concurrent-price-modification'; }
+              const recoveringSku = !row.sku?.trim();
+              // Prevent attaching a supplier SKU already claimed by a different product URL.
+              const collision = recoveringSku
+                ? await db.query<{ id: string }>(`
+                  SELECT id FROM scraping_inventory
+                  WHERE source_url ILIKE '%yokomitsuparts.com.uy%'
+                    AND product->>'sku' = $1
+                    AND id <> $2
+                    AND source_url <> $3 LIMIT 1`, [detail.sku, row.id, row.source_url])
+                : null;
+              if (collision?.rows.length) {
+                reason = 'sku-already-used-by-another-product';
+              } else if (!recoveringSku && Number(detail.price) === Number(row.price)) {
+                status = 'unchanged';
+              } else {
+                const update = await db.query(`
+                  UPDATE scraping_inventory
+                  SET product = jsonb_set(
+                        jsonb_set(product, '{price}', to_jsonb($1::text), true),
+                        '{sku}', to_jsonb($2::text), true
+                      ), updated_at = NOW()
+                  WHERE id = $3 AND source_url = $4
+                    AND NULLIF(trim(product->>'sku'), '') IS NOT DISTINCT FROM $5
+                    AND product->>'price' IS NOT DISTINCT FROM $6
+                  RETURNING id`,
+                  [detail.price, detail.sku, row.id, row.source_url, row.sku?.trim() || null, row.price]);
+                if (update.rowCount === 1) {
+                  status = 'updated';
+                  if (recoveringSku) summary.recoveredSku++;
+                } else {
+                  status = 'error'; reason = 'concurrent-product-modification';
+                }
+              }
             }
           }
         }
