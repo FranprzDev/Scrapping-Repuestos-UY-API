@@ -168,8 +168,13 @@ export class InventoryStoreService implements OnModuleInit {
                     ELSE '{}'::jsonb END
             ELSE EXCLUDED.product
           END,
-          search_text = CASE WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
-            THEN feyvi_search_text(feyvi_merge_product(scraping_inventory.product, EXCLUDED.product)) ELSE EXCLUDED.search_text END,
+          search_text = CASE
+            WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
+              THEN feyvi_search_text(feyvi_merge_product(scraping_inventory.product, EXCLUDED.product))
+            WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?yokomitsuparts\\.com\\.uy/'
+              THEN CONCAT_WS(' ', EXCLUDED.search_text, LOWER(NULLIF(BTRIM(scraping_inventory.product->>'sku'), '')))
+            ELSE EXCLUDED.search_text
+          END,
           updated_at = EXCLUDED.updated_at,
           last_seen_at = EXCLUDED.last_seen_at
         RETURNING id, source_url AS "sourceUrl", (xmax = 0) AS created, product
