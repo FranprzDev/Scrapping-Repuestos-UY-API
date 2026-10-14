@@ -599,3 +599,17 @@ function detailHtml(url: string): string {
     </article>
   `;
 }
+
+test('Yokomitsu full never carries listing-only price into inventory', () => {
+  const listing: ProductRecord = {
+    productName: 'AMORTIGUADOR', sku: '7183011201', price: '38',
+    sourceUrl: 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/ck/40578/x',
+    provider: 'Yokomitsu', extractedAt: '2026-10-14T00:00:00Z',
+  };
+  const merged = mergeYokomitsuProduct(listing);
+  assert.equal(merged.price, undefined);
+  assert.equal(merged.priceVerification, undefined);
+  assert.equal(mergeYokomitsuProduct(listing, { ...listing, price: '1237' }).price, undefined);
+  const verified: ProductRecord = { ...listing, price: '1509.14', priceVerification: 'detail' };
+  assert.equal(mergeYokomitsuProduct(listing, verified).price, '1509.14');
+});

@@ -23,6 +23,8 @@ export interface SiteMetadataRecord {
 export interface ProductRecord {
   productName?: string;
   price?: string;
+  /** Yokomitsu price verified against the supplier detail page. */
+  priceVerification?: 'detail';
   currency?: string;
   brand?: string;
   sku?: string;

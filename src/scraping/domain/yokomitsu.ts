@@ -1,6 +1,8 @@
 import type { ProductRecord } from '../interfaces/scraping.types';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { cleanText } from './product-quality';
+import { normalizeYokomitsuCostPrice, verifiedYokomitsuDetailProduct } from './yokomitsu-pricing';
+export { normalizeYokomitsuPrice } from './yokomitsu-pricing';
 
 export const YOKOMITSU_LOGIN_URL = 'https://www.yokomitsuparts.com.uy/v2/home';
 export const YOKOMITSU_LEGACY_LOGIN_URL = 'https://yokomitsuparts.com.uy/v2/login';
@@ -173,39 +175,6 @@ export interface YokomitsuSearchResponseSummary {
   totalPages?: number;
   textPagination?: string;
   products: ProductRecord[];
-}
-
-export function normalizeYokomitsuPrice(value?: string): string | undefined {
-  const cleaned = cleanText(value);
-  if (!cleaned) return undefined;
-
-  const numeric = cleaned
-    .replace(/(?:US\$|\$U|\$|UYU|USD)/gi, '')
-    .replace(/\s+/g, '')
-    .match(/\d[\d.,]*/)?.[0];
-  if (!numeric) return undefined;
-
-  const decimalComma = numeric.match(/^(.*),(\d{1,2})$/);
-  if (decimalComma) {
-    return `${decimalComma[1].replace(/\./g, '')}.${decimalComma[2]}`;
-  }
-
-  if (/^\d{1,3}(?:\.\d{3})+$/.test(numeric)) {
-    return numeric.replace(/\./g, '');
-  }
-
-  return numeric.replace(',', '.');
-}
-
-/** El costo final incluye IVA solo si el proveedor indica expresamente +IVA. */
-function normalizeYokomitsuCostPrice(rawPrice?: string, plusVat = false): string | undefined {
-  const normalized = normalizeYokomitsuPrice(rawPrice);
-  if (!normalized) return undefined;
-  if (!plusVat && !/\+\s*IVA\b/i.test(rawPrice ?? '')) return normalized;
-  const amount = Number(normalized);
-  return Number.isFinite(amount)
-    ? (Math.round(amount * 122 + Number.EPSILON) / 100).toFixed(2)
-    : undefined;
 }
 
 export function hasVisibleYokomitsuCaptchaChallenge(signals: YokomitsuCaptchaSignal[]): boolean {
@@ -527,7 +496,7 @@ export function extractYokomitsuProductsFromHtml(
 export function extractYokomitsuProductDetailFromHtml(html: string, sourceUrl: string, baseUrl = YOKOMITSU_BASE_URL): ProductRecord | undefined {
   const root = parse(html);
   const detailRoot = selectYokomitsuDetailContainer(root);
-  const product = normalizeYokomitsuHtmlProduct(detailRoot, baseUrl, { detail: true, documentRoot: root })[0];
+  const product = normalizeYokomitsuHtmlProduct(detailRoot, baseUrl, { detail: true, documentRoot: root, sourceUrl })[0];
   if (!product) return undefined;
   return {
     ...product,
@@ -577,7 +546,7 @@ function looksLikeYokomitsuProductElement(element: HTMLElement): boolean {
   return /producto-detalle|cod\.?\s*yokomitsu|c[o\u00f3]digo|sku|oem|precio|\$\s*\d/i.test(`${text} ${hrefs}`);
 }
 
-function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, options: { detail?: boolean; documentRoot?: HTMLElement } = {}): ProductRecord[] {
+function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, options: { detail?: boolean; documentRoot?: HTMLElement; sourceUrl?: string } = {}): ProductRecord[] {
   const text = elementText(card) ?? '';
   const sourceUrl = firstNormalizedAttribute(card, [
     'a[href*="producto-detalle"]',
@@ -608,6 +577,15 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, optio
     ? panelPrice
     : firstElementText(card, ['.price', '.precio'])
       ?? text.match(/(?:US\$|\$U|\$|UYU|USD)\s*\d[\d.,]*(?:\s*\+?\s*IVA)?/i)?.[0];
+  // On some detail pages the price panel is a sibling of the product article.
+  // In that case select its unique detail-card SKU, never a related card SKU.
+  const detailCards = options.detail ? priceRoot.querySelectorAll('.producto-detalle[data-codprod]') : [];
+  const expectedDetailSku = sku ?? (detailCards.length === 1
+    ? detailCards[0].getAttribute('data-codprod')?.trim()
+    : undefined);
+  const verifiedDetail = options.detail && options.sourceUrl
+    ? verifiedYokomitsuDetailProduct(priceRoot, options.sourceUrl, expectedDetailSku ?? null)
+    : undefined;
   const imageUrls = extractYokomitsuProductImageUrls(card, baseUrl, Boolean(options.detail), options.documentRoot);
   const referencia = labeledValue(card, ['OEM', 'Referencia', 'Ref']);
   const visibleBrand = labeledValue(card, ['Marca']);
@@ -626,9 +604,10 @@ function normalizeYokomitsuHtmlProduct(card: HTMLElement, baseUrl: string, optio
   return [{
     productName,
     sourceUrl: sourceUrl ?? baseUrl,
-    sku,
+    sku: verifiedDetail?.sku ?? sku,
     brand: visibleBrand,
-    price: normalizeYokomitsuCostPrice(rawPrice, priceHasVatSurcharge),
+    price: options.detail ? verifiedDetail?.price : normalizeYokomitsuCostPrice(rawPrice, priceHasVatSurcharge),
+    priceVerification: verifiedDetail ? 'detail' : undefined,
     currency: inferYokomitsuCurrency(rawPrice),
     availability,
     description: options.detail ? extractYokomitsuDetailDescription(card) : undefined,
