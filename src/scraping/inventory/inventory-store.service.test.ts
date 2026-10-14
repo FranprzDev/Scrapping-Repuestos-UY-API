@@ -512,3 +512,39 @@ test('onModuleInit rellena marcas relacionales para inventario existente', async
   assert.ok(relationInsert);
   assert.deepEqual(relationInsert.params[1], ['fiat']);
 });
+
+test('Yokomitsu upsert protects verified cost and SKU; other providers remain unchanged', async () => {
+  const sent: Array<{ sql: string; params: unknown[] }> = [];
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      sent.push({ sql, params });
+      if (/INSERT INTO scraping_inventory/i.test(sql)) return { rows: [] } as never;
+      if (/SELECT COUNT/i.test(sql)) return { rows: [{ total: '0' }] } as never;
+      return { rows: [] } as never;
+    },
+  } as never);
+  const sourceUrl = 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/ck/40578/test';
+  const extractedAt = '2026-10-14T00:00:00Z';
+  const base: ProductRecord = { productName: 'AMORTIGUADOR', provider: 'Yokomitsu',
+    sku: '7183011201', price: '38', sourceUrl, extractedAt };
+  await service.upsertSiteProducts('https://www.yokomitsuparts.com.uy/v2/', [base], extractedAt);
+  const unverified = sent.find((x) => /INSERT INTO scraping_inventory/i.test(x.sql));
+  assert.ok(unverified);
+  assert.equal((JSON.parse((unverified.params[4] as string[])[0]) as ProductRecord).price, undefined);
+  assert.match(unverified.sql, /yokomitsuparts/);
+  assert.match(unverified.sql, /scraping_inventory\.product \|\|/);
+  assert.match(unverified.sql, /priceVerification/);
+  sent.length = 0;
+  await service.upsertSiteProducts('https://www.yokomitsuparts.com.uy/v2/',
+    [{ ...base, price: '1509.14', priceVerification: 'detail' }], extractedAt);
+  const verified = sent.find((x) => /INSERT INTO scraping_inventory/i.test(x.sql));
+  assert.ok(verified);
+  assert.equal((JSON.parse((verified.params[4] as string[])[0]) as ProductRecord).price, '1509.14');
+  sent.length = 0;
+  await service.upsertSiteProducts('https://selvir.com.uy',
+    [{ ...base, provider: 'Selvir', sourceUrl: 'https://selvir.com.uy/product/a', price: '38' }], extractedAt);
+  const other = sent.find((x) => /INSERT INTO scraping_inventory/i.test(x.sql));
+  assert.ok(other);
+  assert.equal((JSON.parse((other.params[4] as string[])[0]) as ProductRecord).price, '38');
+  assert.match(other.sql, /feyvi_merge_product/);
+});
