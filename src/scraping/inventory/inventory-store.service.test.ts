@@ -542,7 +542,7 @@ test('Yokomitsu upsert protects verified cost and SKU; other providers remain un
   assert.equal((JSON.parse((verified.params[4] as string[])[0]) as ProductRecord).price, '1509.14');
   sent.length = 0;
   await service.upsertSiteProducts('https://selvir.com.uy',
-    [{ ...base, provider: 'Selvir', sourceUrl: 'https://selvir.com.uy/product/a', price: '38' }], extractedAt);
+    [{ ...base, provider: 'domain', sourceUrl: 'https://selvir.com.uy/product/a', price: '38' }], extractedAt);
   const other = sent.find((x) => /INSERT INTO scraping_inventory/i.test(x.sql));
   assert.ok(other);
   assert.equal((JSON.parse((other.params[4] as string[])[0]) as ProductRecord).price, '38');
