@@ -25,7 +25,9 @@ test('no IVA marker means final price', () => {
 
 test('recovers missing SKU from detail page and verifies final price', () => {
   const html = card('7183011201','<div class="precio-oferta"><div class="ticket2">-38%</div><h2>$1.237 <span>$1.989</span></h2></div><span>+IVA</span>');
-  assert.deepEqual(verifiedDetailProduct(html, ck, null), { sku: '7183011201', price: '1509.14' });
+  assert.equal(verifiedDetailProduct(html, ck, null), undefined);
+  const withDetailCode = html.replace('<div id="prices-product">', '<div class="producto-info"><span id="code-product">7183011201</span><div id="prices-product">');
+  assert.deepEqual(verifiedDetailProduct(withDetailCode, ck, null), { sku: '7183011201', price: '1509.14' });
 });
 test('recovers missing SKU from #code-product in real Yokomitsu layout', () => {
   const html = '<div class="producto-info"><h4>AMORTIGUADOR</h4><span id="code-product">7174571313</span><div id="prices-product"><h3>$682</h3><span>+IVA</span></div></div>';
