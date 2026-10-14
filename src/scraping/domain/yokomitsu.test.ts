@@ -434,7 +434,7 @@ test('Yokomitsu detalle no contamina descripcion ni imagenes con assets globales
   assert.equal(product.productName, 'Cremallera direccion Toyota Corolla');
   assert.equal(product.sku, 'YK-DETAIL-1');
   assert.equal(product.brand, 'DemoBrand');
-  assert.equal(product.price, '11249.62');
+  assert.equal(product.price, undefined); // A generic detail paragraph cannot verify a price.
   assert.equal(product.currency, 'UYU');
   assert.equal(product.availability, 'Stock Cr\u00edtico');
   assert.equal(product.description, 'Cremallera hidraulica nueva para aplicacion sanitizada.');
@@ -470,7 +470,7 @@ test('Yokomitsu detalle descarta descripcion contaminada y assets de interfaz', 
   assert.equal(product.imageUrl, undefined);
   assert.equal(product.imageUrls, undefined);
   assert.equal(product.sku, 'YK-DETAIL-EMPTY');
-  assert.equal(product.price, '4155.32');
+  assert.equal(product.price, undefined); // No trusted #prices-product heading.
 });
 
 test('Yokomitsu ficha con varias productsGalleries usa solo galeria real y conserva orden', () => {
@@ -1092,5 +1092,17 @@ test('Yokomitsu precio de texto generico sin clase precio', () => {
   const html = '<html><body><article class="producto-detalle" data-codprod="YK-GENERICO">'
     + '<h1>AMORTIGUADOR</h1><p>Precio: $1.237 +IVA</p></article></body></html>';
   const product = extractYokomitsuProductDetailFromHtml(html, 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/demo/2/item');
-  assert.equal(product?.price, '1509.14');
+  assert.equal(product?.price, undefined);
+});
+
+test('Yokomitsu detail records a verified price, never generic text', () => {
+  const url = 'https://www.yokomitsuparts.com.uy/v2/producto-detalle/ck/40578/amortiguador';
+  const html = '<article class="producto-detalle" data-codprod="7183011201"><h1>Amortiguador</h1></article>' +
+    '<div id="prices-product"><h3>$1.237</h3><span>+IVA</span></div>';
+  const verified = extractYokomitsuProductDetailFromHtml(html, url);
+  assert.equal(verified?.price, '1509.14');
+  assert.equal(verified?.priceVerification, 'detail');
+  const unverified = extractYokomitsuProductDetailFromHtml(html.replace('prices-product','misc'), url);
+  assert.equal(unverified?.price, undefined);
+  assert.equal(unverified?.priceVerification, undefined);
 });
