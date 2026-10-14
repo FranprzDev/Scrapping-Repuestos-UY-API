@@ -1,52 +1,16 @@
 import 'dotenv/config';
 import { Client } from 'pg';
-import { parse } from 'node-html-parser';
 import { YokomitsuCookieJarHttpClient } from '../domain/yokomitsu-http-client';
 import { authenticateYokomitsuHttpSession, isYokomitsuSessionExpiredResponse } from '../domain/yokomitsu-auth';
-import { normalizeYokomitsuPrice } from '../domain/yokomitsu';
+import { isYokomitsuDetailUrl, verifiedYokomitsuDetailProduct } from '../domain/yokomitsu-pricing';
 
 type Row = { id: string; source_url: string; sku: string | null; price: string | null };
 type ResultStatus = 'updated' | 'unchanged' | 'unverified' | 'error';
 const RUN_ID = 'yokomitsu-prices-20261013';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const isValidUrl = (raw: string): boolean => {
-  try {
-    const u = new URL(raw);
-    return u.protocol === 'https:' && u.hostname.replace(/^www\./, '') === 'yokomitsuparts.com.uy'
-      && u.pathname.includes('/producto-detalle/');
-  } catch { return false; }
-};
-
-/** Never trust badges, cards, crossed old prices, or a non-detail page. */
+/** Shared verification with the daily scraper. */
 export function verifiedDetailProduct(html: string, url: string, expectedSku: string | null): { sku: string; price: string } | undefined {
-  if (!isValidUrl(url)) return undefined;
-  const root = parse(html);
-  const panel = root.querySelector('#prices-product');
-  if (!panel) return undefined;
-  const current = panel.querySelector('.precio-oferta h2') ?? panel.querySelector('h3');
-  if (!current) return undefined;
-  // Require a currency-prefixed, positive price directly in the current-price heading.
-  const directText = current.childNodes
-    .filter((node) => node.nodeType === 3)
-    .map((node) => node.rawText)
-    .join(' ').trim();
-  if (!/(?:US\$|\$U|\$|UYU|USD)\s*\d/.test(directText)) return undefined;
-  // SKU belongs to the detail page, NOT a related-product card.
-  // When recovering an absent SKU, require the code displayed in the
-  // actual product detail. Never infer it from a related-product card.
-  const detailSku = root.querySelector('.producto-info #code-product')?.text.trim()
-    ?? root.querySelector('#code-product')?.text.trim();
-  const visibleSku = detailSku
-    ?? (expectedSku ? root.querySelector('[data-codprod]')?.getAttribute('data-codprod')?.trim() : undefined);
-  if (!visibleSku || !/^[A-Za-z0-9][A-Za-z0-9_.-]{2,48}$/.test(visibleSku)) return undefined;
-  if (expectedSku?.trim() && visibleSku !== expectedSku.trim()) return undefined;
-  if (/US\$|USD/i.test(directText)) return undefined;
-  const normalized = normalizeYokomitsuPrice(directText);
-  const basePrice = Number(normalized);
-  if (!normalized || !Number.isFinite(basePrice) || basePrice <= 0) return undefined;
-  const amount = /\+\s*IVA\b/i.test(panel.text) ? Math.round(basePrice * 122 + Number.EPSILON) / 100 : basePrice;
-  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return undefined;
-  return { sku: visibleSku, price: amount.toFixed(2) };
+  return verifiedYokomitsuDetailProduct(html, url, expectedSku);
 }
 
 export function verifiedDetailPrice(html: string, url: string, expectedSku: string | null): string | undefined {
@@ -106,7 +70,7 @@ async function main() {
       if (done.has(row.id)) continue;
       let status: ResultStatus = 'unverified', reason: string | null = null, verifiedPrice: string | null = null;
       try {
-        if (!isValidUrl(row.source_url)) {
+        if (!isYokomitsuDetailUrl(row.source_url)) {
           reason = 'invalid-detail-url';
         } else {
           let response = await client.get(row.source_url, { accept: 'text/html,application/xhtml+xml' });
