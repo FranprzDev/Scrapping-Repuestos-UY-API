@@ -115,12 +115,22 @@ export class InventoryStoreService implements OnModuleInit {
           return undefined;
         }
 
+        // Only a verified Yokomitsu detail is allowed to change the stored cost.
+        const isYokomitsu = /^https?:\/\/(?:www\.)?yokomitsuparts\.com\.uy\//i.test(sourceUrl);
+        const trustedPrice = enrichedProduct.priceVerification === 'detail'
+          && typeof enrichedProduct.price === 'string'
+          && /^[1-9]\d{0,6}(?:\.\d{1,2})?$/.test(enrichedProduct.price)
+          && Boolean(enrichedProduct.sku?.trim());
+        const safeProduct = isYokomitsu && !trustedPrice
+          ? { ...enrichedProduct, price: undefined, priceVerification: undefined }
+          : enrichedProduct;
+
         return {
           id: `url|${sourceUrl}`,
           site,
           sourceUrl,
-          product: JSON.stringify(enrichedProduct),
-          searchText: buildProductSearchText(enrichedProduct),
+          product: JSON.stringify(safeProduct),
+          searchText: buildProductSearchText(safeProduct),
           vehicleBrands,
         };
       })
@@ -139,8 +149,25 @@ export class InventoryStoreService implements OnModuleInit {
         ON CONFLICT (source_url)
         DO UPDATE SET
           site = EXCLUDED.site,
-          product = CASE WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
-            THEN feyvi_merge_product(scraping_inventory.product, EXCLUDED.product) ELSE EXCLUDED.product END,
+          product = CASE
+            WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
+              THEN feyvi_merge_product(scraping_inventory.product, EXCLUDED.product)
+            WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?yokomitsuparts\\.com\\.uy/'
+              THEN (scraping_inventory.product || (EXCLUDED.product - 'price' - 'priceVerification' - 'sku'))
+                || CASE WHEN NULLIF(BTRIM(scraping_inventory.product->>'sku'), '') IS NULL
+                           OR BTRIM(scraping_inventory.product->>'sku') = BTRIM(EXCLUDED.product->>'sku')
+                  THEN CASE WHEN NULLIF(BTRIM(EXCLUDED.product->>'sku'), '') IS NOT NULL
+                    THEN jsonb_build_object('sku', EXCLUDED.product->'sku') ELSE '{}'::jsonb END
+                  ELSE '{}'::jsonb END
+                || CASE WHEN EXCLUDED.product->>'priceVerification' = 'detail'
+                          AND COALESCE(EXCLUDED.product->>'price', '') ~ '^[1-9][0-9]{0,6}(\\.[0-9]{1,2})?$'
+                          AND NULLIF(BTRIM(EXCLUDED.product->>'sku'), '') IS NOT NULL
+                          AND (NULLIF(BTRIM(scraping_inventory.product->>'sku'), '') IS NULL
+                            OR BTRIM(scraping_inventory.product->>'sku') = BTRIM(EXCLUDED.product->>'sku'))
+                    THEN jsonb_build_object('price', EXCLUDED.product->'price', 'priceVerification', 'detail')
+                    ELSE '{}'::jsonb END
+            ELSE EXCLUDED.product
+          END,
           search_text = CASE WHEN EXCLUDED.source_url ~* '^https?://(www\\.)?feyvi\\.com\\.uy/'
             THEN feyvi_search_text(feyvi_merge_product(scraping_inventory.product, EXCLUDED.product)) ELSE EXCLUDED.search_text END,
           updated_at = EXCLUDED.updated_at,
