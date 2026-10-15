@@ -4,6 +4,8 @@ import { ImageRelayService } from './image-relay.service';
 @Controller('api')
 export class ImageRelayController {
   constructor(private readonly relay: ImageRelayService) {}
+  @Get('image-downloads/status')
+  downloadStatus() { return this.relay.downloadStatus(); }
   private credentials(auth?: string, header?: string) { return { token: auth?.replace(/^Bearer\s+/i, '').trim() || '', workerId: header?.trim() || 'unknown-worker' }; }
   @Post('image-jobs/claim')
   async claim(@Headers('authorization') auth: string, @Headers('x-worker-id') workerId: string, @Body() body: any, @Res() res: any) {

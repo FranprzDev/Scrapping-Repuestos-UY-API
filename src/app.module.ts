@@ -13,6 +13,7 @@ import { ScrapingSchedulerService } from './scraping/scraping.scheduler';
 import { ScrapingService } from './scraping/scraping.service';
 import { ImageRelayController } from './image-relay/image-relay.controller';
 import { ImageRelayService } from './image-relay/image-relay.service';
+import { ImageDownloadWorker } from './image-relay/image-download.worker';
 
 @Module({
   imports: [ScheduleModule.forRoot()],
@@ -29,6 +30,7 @@ import { ImageRelayService } from './image-relay/image-relay.service';
     JobQueueService,
     ScrapingSchedulerService,
     ImageRelayService,
+    ImageDownloadWorker,
   ],
 })
 export class AppModule {}

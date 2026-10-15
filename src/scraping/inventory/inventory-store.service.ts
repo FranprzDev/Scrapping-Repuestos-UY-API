@@ -239,15 +239,19 @@ export class InventoryStoreService implements OnModuleInit {
 
   private async enrichImageAssets(rows: InventoryRow[]): Promise<StoredProduct[]> {
     if (rows.length === 0) return [];
-    const assets = await this.postgresService.query<{ inventory_id: string; asset_id: string }>(
-      'SELECT inventory_id, id AS asset_id FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at, id',
+    const assets = await this.postgresService.query<{ inventory_id: string; asset_id: string; source_url: string }>(
+      'SELECT inventory_id, id AS asset_id, source_url FROM image_assets WHERE inventory_id = ANY($1::text[]) ORDER BY inventory_id, created_at, id',
       [rows.map((row) => row.id)],
     );
     const assetIdsByInventoryId = new Map<string, string[]>();
+    const storedSourcesByInventoryId = new Map<string, Set<string>>();
     for (const asset of assets.rows) {
       const assetIds = assetIdsByInventoryId.get(asset.inventory_id) ?? [];
       assetIds.push(asset.asset_id);
       assetIdsByInventoryId.set(asset.inventory_id, assetIds);
+      const sources = storedSourcesByInventoryId.get(asset.inventory_id) ?? new Set<string>();
+      if (asset.source_url) sources.add(asset.source_url);
+      storedSourcesByInventoryId.set(asset.inventory_id, sources);
     }
 
     const products: StoredProduct[] = [];
@@ -258,7 +262,11 @@ export class InventoryStoreService implements OnModuleInit {
         continue;
       }
 
-      const imageUrls = assetIds.map((assetId) => `/api/image-assets/${assetId}`);
+      const originals = [...new Set([...(row.product.imageUrls ?? []), row.product.imageUrl]
+        .filter((url): url is string => Boolean(url)))];
+      const sources = storedSourcesByInventoryId.get(row.id) ?? new Set<string>();
+      const pending = originals.filter((url) => !sources.has(url) && !url.startsWith('/api/image-assets/'));
+      const imageUrls = [...assetIds.map((assetId) => `/api/image-assets/${assetId}`), ...pending];
 
       products.push(mapInventoryRow({
         ...row,
@@ -267,7 +275,7 @@ export class InventoryStoreService implements OnModuleInit {
           sourceImageUrl: row.product.sourceImageUrl ?? row.product.imageUrl,
           imageUrl: imageUrls[0],
           imageUrls,
-          imageStatus: ImageStatus.Completed,
+          imageStatus: pending.length > 0 ? ImageStatus.Pending : ImageStatus.Completed,
         },
       }));
     }

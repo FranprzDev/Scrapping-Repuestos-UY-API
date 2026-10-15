@@ -165,10 +165,10 @@ test('getFilteredPage expone todas las imagenes relayed de cada producto', async
         } as never;
       }
 
-      assert.match(sql, /SELECT inventory_id, id AS asset_id FROM image_assets/);
+      assert.match(sql, /SELECT inventory_id, id AS asset_id, source_url FROM image_assets/);
       return {
         rows: [
-          { inventory_id: 'inventory-1', asset_id: 'asset-1' },
+          { inventory_id: 'inventory-1', asset_id: 'asset-1', source_url: 'https://example.com/original.jpg' },
           { inventory_id: 'inventory-1', asset_id: 'asset-2' },
         ],
       } as never;
@@ -183,6 +183,23 @@ test('getFilteredPage expone todas las imagenes relayed de cada producto', async
     '/api/image-assets/asset-2',
   ]);
   assert.equal(products[0]?.imageStatus, ImageStatus.Completed);
+});
+
+test('getFilteredPage conserva fotos originales pendientes mientras se guarda la galeria', async () => {
+  const original = 'https://example.com/one.jpg';
+  const pending = 'https://example.com/two.jpg';
+  const service = new InventoryStoreService({
+    async query(sql: string) {
+      if (sql.includes('FROM image_assets')) return { rows: [{ inventory_id: 'i', asset_id: 'a', source_url: original }] } as never;
+      return { rows: [{ id: 'i', site: 'example.com', product: {
+        productName: 'Test', provider: 'domain', extractedAt: '2026-10-15T00:00:00Z',
+        imageUrl: original, imageUrls: [original, pending],
+      }, created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z', last_seen_at: '2026-10-15T00:00:00Z' }] } as never;
+    },
+  } as never);
+  const products = await service.getFilteredPage({}, { limit: 1 });
+  assert.deepEqual(products[0].imageUrls, ['/api/image-assets/a', pending]);
+  assert.equal(products[0].imageStatus, ImageStatus.Pending);
 });
 
 test('getFilteredPage ordena usando la misma normalizacion de precios', async () => {

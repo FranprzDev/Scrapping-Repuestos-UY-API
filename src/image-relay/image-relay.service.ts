@@ -9,7 +9,10 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { PostgresService } from '../scraping/jobs/postgres.service';
+import { isAdmittedHouseUrl } from '../scraping/domain/domain-rules';
 
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/jpeg',
@@ -60,6 +63,15 @@ export class ImageRelayService {
     return process.env.IMAGE_RELAY_ENABLED === 'true';
   }
 
+  async downloadStatus() {
+    const [jobs, assets] = await Promise.all([
+      this.db.query('SELECT site, status, COUNT(*)::int AS total FROM image_jobs GROUP BY site, status ORDER BY site, status'),
+      this.db.query('SELECT COUNT(*)::int AS images, COALESCE(SUM(bytes), 0)::text AS bytes FROM image_assets'),
+    ]);
+    return { enabled: this.enabled(), workerEnabled: process.env.IMAGE_DOWNLOAD_WORKER_ENABLED === 'true',
+      stored: assets.rows[0], jobs: jobs.rows };
+  }
+
   async enqueueForInventory(
     inventoryId: string,
     site: string,
@@ -84,11 +96,22 @@ export class ImageRelayService {
     return imageUrls.length;
   }
 
-  async claim(token: string, workerId: string): Promise<ImageJob | undefined> {
+  async claim(token: string, workerId: string, excludedHosts: string[] = []): Promise<ImageJob | undefined> {
     this.authenticate(token);
 
     const result = await this.db.query<ImageJob>(
       `
+      WITH ready AS MATERIALIZED (
+        SELECT id, created_at FROM image_jobs
+        WHERE status IN ('pending', 'retry_pending') AND next_attempt_at <= NOW()
+          AND split_part(split_part(image_url, '://', 2), '/', 1) <> ALL($3::text[])
+        ORDER BY next_attempt_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+      ), expired AS MATERIALIZED (
+        SELECT id, created_at FROM image_jobs
+        WHERE status = 'processing' AND claimed_at < NOW() - ($2::text || ' milliseconds')::interval
+          AND split_part(split_part(image_url, '://', 2), '/', 1) <> ALL($3::text[])
+        ORDER BY claimed_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+      )
       UPDATE image_jobs
       SET status = 'processing',
           claimed_by = $1,
@@ -101,20 +124,14 @@ export class ImageRelayService {
           upload_content_type = NULL,
           upload_started_at = NULL
       WHERE id = (
-        SELECT id
-        FROM image_jobs
-        WHERE status IN ('pending', 'retry_pending')
-           OR (
-             status = 'processing'
-             AND claimed_at < NOW() - ($2::text || ' milliseconds')::interval
-           )
-        ORDER BY created_at
-        FOR UPDATE SKIP LOCKED
+        SELECT id FROM (
+          SELECT * FROM ready UNION ALL SELECT * FROM expired
+        ) candidates ORDER BY created_at, id
         LIMIT 1
       )
       RETURNING *
       `,
-      [workerId, this.leaseMs],
+      [workerId, this.leaseMs, excludedHosts],
     );
 
     const job = result.rows[0];
@@ -289,10 +306,11 @@ export class ImageRelayService {
     await this.db.query(
       `
       UPDATE image_jobs
-      SET status = $2, last_error = $3, failed_at = NOW(), updated_at = NOW()
+      SET status = $2, last_error = $3, failed_at = NOW(), updated_at = NOW(),
+          next_attempt_at = NOW() + ($4::text || ' milliseconds')::interval
       WHERE id = $1 AND status <> 'completed'
       `,
-      [jobId, status, sanitizeError(error)],
+      [jobId, status, sanitizeError(error), Math.min(3600000, 60000 * 2 ** Math.max(0, job.attempts - 1))],
     );
 
     this.logEvent('image_job_failed', { jobId, workerId, state: status, error: sanitizeError(error) });
@@ -325,26 +343,15 @@ export class ImageRelayService {
     const hash = createHash('sha256');
     const output = createWriteStream(temporaryPath);
 
-    try {
-      for await (const chunk of request as AsyncIterable<Buffer>) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        bytes += buffer.length;
-        if (bytes > this.maxBytes) {
-          throw new PayloadTooLargeException('Imagen demasiado grande');
-        }
-        hash.update(buffer);
-        if (!output.write(buffer)) {
-          await new Promise<void>((resolve) => output.once('drain', resolve));
-        }
-      }
-      await new Promise<void>((resolve, reject) => {
-        output.once('error', reject);
-        output.end(resolve);
-      });
-    } catch (error) {
-      output.destroy();
-      throw error;
-    }
+    const maxBytes = this.maxBytes;
+    await pipeline(Readable.from(request as AsyncIterable<Buffer>), new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        if (bytes > maxBytes) return callback(new PayloadTooLargeException('Imagen demasiado grande'));
+        hash.update(chunk);
+        callback(null, chunk);
+      },
+    }), output);
 
     return { storageKey, bytes, sha256: hash.digest('hex'), contentType };
   }
@@ -417,12 +424,15 @@ export class ImageRelayService {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
     const normalizedSite = site.toLowerCase();
+    if (allowedSites.includes('*')) return isAdmittedHouseUrl(site);
     return allowedSites.some((allowed) => normalizedSite === allowed || normalizedSite.includes(allowed));
   }
 
   private uniqueImageUrls(product: { imageUrl?: string; imageUrls?: string[] }): string[] {
     return [...new Set([...(product.imageUrls ?? []), product.imageUrl]
-      .filter((url): url is string => Boolean(url?.trim())))];
+      .filter((url): url is string => typeof url === 'string')
+      .map((url) => url.trim())
+      .filter((url) => /^https?:\/\//i.test(url) && !url.includes('/api/image-assets/')))];
   }
 
   private normalizeContentType(value?: string): string {
