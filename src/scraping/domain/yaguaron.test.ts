@@ -374,3 +374,14 @@ test('Yaguaron keeps SKU 168662 detail fields while storing 1.701 as 1701', () =
   assert.equal(product.availability, 'in_stock');
   assert.equal(product.sourceUrl, url);
 });
+
+ test("Yaguarón lee la pestaña completa fuera de la ficha y conserva las aplicaciones", () => {
+  const product = extractYaguaronDetail(fixture("detail-150133.html"), "https://www.yaguaron.com.uy/catalogo/rejilla-delantera-del-radiador-negra-onix-lt_150133_150133", "domain");
+  assert.ok(product);
+  assert.equal(product.attributes?.calidad, "ALTERNATIVO");
+  assert.equal(product.attributes?.fabricante, "OTROS ALTERNATIVO");
+  assert.equal(product.attributes?.referencias, "26212166");
+  assert.equal(product.attributes?.aplicacion, "Onix G3 1.0 2020-2025; Onix G3 1.2 2020-2025");
+  assert.deepEqual(product.compatibleModels, ["Onix G3 1.0 2020-2025", "Onix G3 1.2 2020-2025"]);
+  assert.equal(product.description, "Calidad: ALTERNATIVO Fabricante: OTROS ALTERNATIVO Referencia: 26212166 Aplicación: Onix G3 1.0 2020-2025 Onix G3 1.2 2020-2025");
+});

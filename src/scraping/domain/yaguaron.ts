@@ -147,6 +147,20 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
   const detailRoot = findDetailRoot(root);
   const jsonLd = extractJsonLd(root);
   const labels = extractLabelValues(detailRoot);
+  // Fenicio places the full description in a separate tab, outside the main ficha.
+  const descriptionTab = root.querySelector(".blkDetalle .text");
+  const descriptionLines = descriptionTab
+    ? descriptionTab.innerHTML.replace(/<br\s*\/?>(?:\s*)|<\/(?:p|div|li)>/gi, "\n")
+      .split("\n").map((line) => cleanText(parse(line).text)).filter((line): line is string => Boolean(line))
+    : [];
+  for (const line of descriptionLines) {
+    const match = line.match(/^(Calidad|Fabricante|Referencias?)\s*:\s*(.+)$/i);
+    if (match) labels.set(normalizeLabel(match[1]), match[2]);
+  }
+  const applicationIndex = descriptionLines.findIndex((line) => /^Aplicaci[oó]n\s*:/i.test(line));
+  const applications = applicationIndex < 0 ? [] : descriptionLines.slice(applicationIndex)
+    .map((line, index) => index === 0 ? line.replace(/^Aplicaci[oó]n\s*:\s*/i, "") : line)
+    .filter(Boolean);
   const visibleSku = label(labels, ['art', 'articulo']);
   const fallbackSku = skuFromUrl(sourceUrl);
   const embedded = extractEmbeddedYaguaronProduct(root, visibleSku ?? fallbackSku);
@@ -167,7 +181,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
     ?? embeddedCharacteristic(embedded?.carac, ['fabricante'])
     ?? textValue(embedded?.producto, ['marca']);
   const description = cleanDescription(
-    firstText(detailRoot, ['.descripcion', '[itemprop="description"]', '.blkDescripcion', '.detalleProducto .texto'])
+    cleanText(descriptionLines.join(' ')) ?? firstText(detailRoot, ['.descripcion', '[itemprop="description"]', '.blkDescripcion', '.detalleProducto .texto'])
       ?? asText(jsonLd?.description),
   );
   const references = cleanReferences(label(labels, ['referencias', 'referencia', 'nroreferencia', 'nroreferencias', 'numeroreferencia', 'numeroreferencias']))
@@ -181,7 +195,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
   const unavailable = stockState === 'out_of_stock' || /agotado|sin stock|no disponible/i.test(pageText);
   const stock = label(labels, ['stock', 'existencia', 'disponibilidad']) ?? (stockState === 'in_stock' ? 'Disponible' : undefined);
   const category = breadcrumb(root).at(-1) ?? textValue(embedded?.producto, ['categoria']);
-  const compatibility = extractCompatibility(characteristics, labels, embedded?.carac);
+  const compatibility = uniqueStrings([...extractCompatibility(characteristics, labels, embedded?.carac), ...applications]);
   const attributeCharacteristics = extractAttributeCharacteristics(characteristics, embedded?.carac);
 
   return {
@@ -202,6 +216,7 @@ export function extractYaguaronDetail(html: string, pageUrl: string, provider: P
       calidad: quality,
       fabricante: manufacturer,
       referencias: references,
+      aplicacion: applications.length > 0 ? applications.join('; ') : undefined,
       caracteristicas: attributeCharacteristics,
     }),
     extractedAt: new Date().toISOString(),
