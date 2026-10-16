@@ -10,8 +10,9 @@ test('Repuestos Avenida enables its WooCommerce shop', () => {
   assert.ok(site);
   assert.equal(site.enabled, true);
   assert.equal(site.platform, 'woocommerce');
-  assert.equal(site.seedUrls[0], 'https://repuestosavenida.com.uy/tienda/');
+  assert.equal(site.seedUrls[0], 'https://repuestosavenida.com.uy/productos/');
   assert.ok(site.productUrlPatterns.some((rule) => rule.test('https://repuestosavenida.com.uy/producto/farol-hb20/')));
+  assert.ok(site.categoryUrlPatterns.some((rule) => rule.test('https://repuestosavenida.com.uy/productos/')));
 });
 
 test('Repuestos Avenida extracts main and gallery product images before header logos', async () => {
