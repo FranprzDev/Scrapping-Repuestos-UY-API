@@ -525,7 +525,7 @@ export class DomainProvider implements ScrapingProvider {
   private async extractItalurCatalog(urls: string[], sourceUrl: string, maxItems: number, rule: DomainRule) {
     const directProducts = new Set(urls.filter(isItalurProductUrl).map(canonicalizeItalurUrl).filter((value): value is string => Boolean(value)));
     let listings = uniqueStrings(urls.filter(isItalurListingUrl).map(canonicalizeItalurUrl).filter((value): value is string => Boolean(value)));
-    if (listings.length === 0) {
+    if (listings.length === 0 && directProducts.size === 0) {
       const discovered = await this.crawlItalur(sourceUrl);
       listings = discovered.discoveredUrls.filter(isItalurListingUrl);
       discovered.discoveredUrls.filter(isItalurProductUrl).forEach((url) => directProducts.add(url));
@@ -578,12 +578,12 @@ export class DomainProvider implements ScrapingProvider {
   private async extractYaguaronCatalog(urls: string[], sourceUrl: string, maxItems: number, rule: DomainRule) {
     const directProducts = new Set(urls.filter(isYaguaronProductUrl).map(canonicalizeYaguaronProductUrl).filter((value): value is string => Boolean(value)));
     let listings = uniqueStrings(urls.filter((url) => !isYaguaronProductUrl(url)));
-    if (listings.length === 0) {
+    if (listings.length === 0 && directProducts.size === 0) {
       const discovered = await this.crawlYaguaron(sourceUrl);
       listings = discovered.discoveredUrls.filter((url) => !isYaguaronProductUrl(url));
       discovered.discoveredUrls.filter(isYaguaronProductUrl).forEach((url) => directProducts.add(url));
     }
-    if (listings.length === 0) listings = [sourceUrl];
+    if (listings.length === 0 && directProducts.size === 0) listings = [sourceUrl];
 
     const pages: Array<{ url: string; method: string; productCount: number; listingUrl?: string; page?: number; newInListing?: number; uniqueInListing?: number; declaredTotal?: number }> = [];
     for (const listing of listings) {
