@@ -15,6 +15,12 @@ const INVALID_PRODUCT_NAMES = new Set([
   'ver más',
   'comprar',
 'your connection needs to be verified before you can proceed',
+  'ver detalle',
+  'verdetalle',
+  'lista de artículos',
+  'lista de articulos',
+  'kits de artículos',
+  'kits de articulos',
 ]);
 const INVALID_PRODUCT_NAME_PATTERNS = [
   /^ordenar por$/i,
@@ -30,6 +36,9 @@ const INVALID_PRODUCT_NAME_PATTERNS = [
   /^buscar$/i,
   /^ver mas(?: productos)?$/i,
   /^categoria(?:s)?$/i,
+  /^ver\s*detalle$/i,
+  /^lista\s+de\s+art[ií]culos$/i,
+  /^kits?\s+de\s+art[ií]culos$/i,
 ];
 const AUTOMOTIVE_SIGNAL_PATTERN =
   /\b(repuesto|repuestos|autopartes?|automotriz|automotor|veh[ii]culo?s?|auto?s?|coches?|camioneta?s?|moto?s?|carrocer[ii]a|paragolpe|parachoque|faro|farol|optica|luz|espejo|retrovisor|guardabarro|cap[oó]t|parrilla|moldura|emblema|insignia|manija|cerradura|parabrisas|cristal|vidrio|filtro|aceite|lubricaci[oó]n|bomba|inyector|radiador|motor|embrague|freno|disco|pastilla|amortiguador|suspensi[oó]n|buje|rodam|terminal|rotula|homocinet|cardan|correa|bujia|bobina|alternador|arranque|sensor|arn[eé]s|cable|llanta|neumatic|cubierta|escape|silenciador|catalizador|bateria|refrigeraci[oó]n|climatizaci[oó]n|accesorios?|broche|clip|grapa|tornillo|tuerca|abrazadera|soporte|carcasa|tapa|valvula|transmision|cambio|direccion|traccion)\b/i;
@@ -209,7 +218,7 @@ export function qualityWarnings(product: ProductRecord, rule?: DomainRule): stri
 
   const name = cleanText(product.productName);
   const comparableName = name ? normalizeComparableText(name) : undefined;
-  if (name && (INVALID_PRODUCT_NAMES.has(name.toLowerCase()) || INVALID_PRODUCT_NAME_PATTERNS.some((pattern) => pattern.test(name)))) {
+  if (name && isInvalidProductName(name)) {
     warnings.push('invalid_name');
   } else if (comparableName && INVALID_PRODUCT_NAMES.has(comparableName)) {
     warnings.push('invalid_name');
@@ -244,6 +253,15 @@ export function qualityWarnings(product: ProductRecord, rule?: DomainRule): stri
   }
 
   return warnings;
+}
+
+/** Names emitted by catalog pages when a detail/product card was not extracted. */
+export function isInvalidProductName(value?: string): boolean {
+  const name = cleanText(value);
+  if (!name) return false;
+  return INVALID_PRODUCT_NAMES.has(name.toLowerCase())
+    || INVALID_PRODUCT_NAME_PATTERNS.some((pattern) => pattern.test(name))
+    || normalizeComparableText(name) === 'verdetalle';
 }
 
 export function qualityGate(products: ProductRecord[], rule?: DomainRule): ProductRecord[] {
@@ -541,3 +559,4 @@ function parseNormalizedPrice(value: string): number | undefined {
 function normalizeHostname(value: string): string {
   return value.trim().toLowerCase().replace(/^www\./, '');
 }
+

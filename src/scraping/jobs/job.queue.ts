@@ -1,10 +1,11 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ScrapingOperationPayload, ScrapingTask } from '../interfaces/scraping.types';
 import { CatalogScrapeRequestDto } from '../dto/catalog-request.dto';
 import { CatalogScrapingService, type CatalogSiteProgress, type CatalogProductSummary } from '../catalog-scraping.service';
 import { ScrapingService } from '../scraping.service';
 import { PostgresService } from './postgres.service';
+import { ScrapingSchedulerService } from '../scraping.scheduler';
 
 export type JobStatus = 'queued' | 'processing' | 'done' | 'failed';
 
@@ -63,6 +64,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly catalogScrapingService: CatalogScrapingService,
     @Inject(PostgresService)
     private readonly postgresService: PostgresService,
+    @Optional()
+    @Inject(ScrapingSchedulerService)
+    private readonly scrapingSchedulerService?: ScrapingSchedulerService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -199,6 +203,14 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       return this.catalogScrapingService.refreshExistingLinks(site, async (progress) => {
         await this.updateProcessingProgress(jobId, progress);
       });
+    }
+
+    if (task === 'production-catalog-run') {
+      if (!this.scrapingSchedulerService) {
+        throw new Error('production-catalog-run no está disponible');
+      }
+      await this.scrapingSchedulerService.runNow();
+      return { task, status: 'completed' };
     }
 
     const providerOverride = typeof payload.providerOverride === 'string' ? payload.providerOverride : undefined;

@@ -6,6 +6,7 @@ import { CatalogScrapingService } from './catalog-scraping.service';
 import { JobQueueService, type ScrapingJob, type ScrapingJobSummary } from './jobs/job.queue';
 import { type ScrapingOperationPayload } from './interfaces/scraping.types';
 import { ScrapingService } from './scraping.service';
+import { ScrapingSchedulerService } from './scraping.scheduler';
 
 const INVENTORY_HOUSE_OPTIONS = ADMITTED_HOUSES.map((house) => ({
   id: house.id,
@@ -30,6 +31,8 @@ export class ScrapingController {
     private readonly jobQueueService: JobQueueService,
     @Inject(CatalogScrapingService)
     private readonly catalogScrapingService: CatalogScrapingService,
+    @Inject(ScrapingSchedulerService)
+    private readonly scrapingSchedulerService: ScrapingSchedulerService,
   ) {}
 
   @Get('health')
@@ -136,6 +139,22 @@ export class ScrapingController {
     const job = await this.jobQueueService.enqueue('refresh-existing-links', { site: site.trim() });
     return {
       message: 'Refresh de links existentes encolado',
+      jobId: job.id,
+      status: job.status,
+    };
+  }
+
+  @Post('scraping/production/run')
+  @HttpCode(202)
+  async runProductionCatalog(@Headers('x-inventory-refresh-token') token?: string) {
+    const expectedToken = process.env.INVENTORY_REFRESH_TOKEN;
+    if (process.env.NODE_ENV === 'production' && (!expectedToken || token !== expectedToken)) {
+      throw new UnauthorizedException('Token de refresh invalido');
+    }
+
+    const job = await this.jobQueueService.enqueue('production-catalog-run', {});
+    return {
+      message: 'Scraping completo de producción encolado',
       jobId: job.id,
       status: job.status,
     };

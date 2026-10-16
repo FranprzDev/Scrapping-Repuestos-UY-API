@@ -1,4 +1,4 @@
-export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run' | 'refresh-existing-links';
+export type ScrapingTask = 'scrape' | 'crawl' | 'extract' | 'catalog-run' | 'refresh-existing-links' | 'production-catalog-run';
 
 export enum ImageStatus {
   Pending = 'pending',
@@ -62,3 +62,4 @@ export interface ScrapingProvider {
   readonly name: ProviderName;
   run(task: ScrapingTask, payload: ScrapingOperationPayload): Promise<ProviderResult>;
 }
+

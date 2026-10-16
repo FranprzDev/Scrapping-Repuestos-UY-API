@@ -3,7 +3,7 @@ import { ImageStatus, ProductRecord } from '../interfaces/scraping.types';
 import { ADMITTED_HOUSES, findDomainRule } from '../domain/domain-rules';
 import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain/domain-html';
 import { fetchHtml } from '../domain/http-client';
-import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
+import { isInvalidProductName, mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId, VEHICLE_BRANDS } from '../domain/vehicle-brands';
 import { extractYaguaronDetail } from '../domain/yaguaron';
 import { PostgresService } from '../jobs/postgres.service';
@@ -121,6 +121,9 @@ export class InventoryStoreService implements OnModuleInit {
 
     products
       .map((product) => {
+        if (isInvalidProductName(product.productName)) {
+          return undefined;
+        }
         const vehicleBrands = inventoryVehicleBrands(product);
         const enrichedProduct: ProductRecord = {
           ...product,
@@ -566,8 +569,9 @@ export class InventoryStoreService implements OnModuleInit {
     const normalizedLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
     const siteFilter = site?.trim() ? 'WHERE normalized_site = $1' : '';
     const totalSiteFilter = site?.trim()
-      ? `WHERE regexp_replace(split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1), '^www\\.', '') = $1`
-      : '';
+      ? `WHERE regexp_replace(split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1), '^www\\.', '') = $1
+           AND COALESCE(product->>'catalogQuality', '') <> 'placeholder'`
+      : `WHERE COALESCE(product->>'catalogQuality', '') <> 'placeholder'`;
     const params = site?.trim() ? [normalizeSiteHost(site)] : [];
     const base = `
       WITH base AS (
@@ -586,6 +590,7 @@ export class InventoryStoreService implements OnModuleInit {
           NULLIF(regexp_replace(lower(COALESCE(product->>'availability', '')), '[^[:alnum:]]', '', 'g'), '') AS availability_key,
           NULLIF(regexp_replace(lower(COALESCE(product->>'imageUrl', '')), '[^[:alnum:]]', '', 'g'), '') AS image_key
         FROM scraping_inventory
+        WHERE COALESCE(product->>'catalogQuality', '') <> 'placeholder'
       )
     `;
     const groupQuery = (keyExpression: string, where: string) => `
@@ -963,7 +968,7 @@ function buildInventoryCountQuery(filters: InventoryQueryFilters) {
 }
 
 function buildInventoryConditions(filters: InventoryQueryFilters) {
-  const conditions: string[] = [];
+  const conditions: string[] = ["COALESCE(product->>'catalogQuality', '') <> 'placeholder'"];
   const params: unknown[] = [];
 
   if (filters.site?.trim()) {

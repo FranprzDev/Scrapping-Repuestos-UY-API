@@ -44,7 +44,11 @@ export class ScrapingSchedulerService implements OnModuleInit {
     await this.runProductionCatalogScrape('cron');
   }
 
-  private async runProductionCatalogScrape(trigger: 'startup' | 'cron') {
+  async runNow() {
+    await this.runProductionCatalogScrape('manual');
+  }
+
+  private async runProductionCatalogScrape(trigger: 'startup' | 'cron' | 'manual') {
     if (this.isRunning) {
       this.logger.warn(`production-catalog-scrape skipped trigger=${trigger}: previous run still in progress`);
       return;
