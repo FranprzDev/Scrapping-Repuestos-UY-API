@@ -263,3 +263,4 @@ test('el progreso fallido no aborta el job', async () => {
   assert.equal(completed, true);
   assert.ok(progressQueries.length > 0);
 });
+

@@ -430,3 +430,4 @@ function buildJobSummary(result: unknown): ScrapingJobSummary | undefined {
     progress: sites.length > 0 ? { sites } : undefined,
   };
 }
+
