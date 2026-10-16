@@ -610,6 +610,7 @@ function formatHouseLabel(id: string): string {
     familcar: 'Familcar',
     larrique: 'Larrique',
     yaguaron: 'Yaguarón',
+    repuestosavenida: 'Repuestos Avenida',
     italur: 'Italur',
     mirvic: 'Mirvic',
   };
