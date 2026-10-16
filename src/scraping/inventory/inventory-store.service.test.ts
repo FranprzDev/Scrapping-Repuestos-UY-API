@@ -11,7 +11,7 @@ test('getStats agrupa por host base y no por url completa', async () => {
     async query(sql: string) {
       queries.push(sql);
 
-      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory$/i.test(sql.trim())) {
+      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory(?: WHERE dedup_canonical_id IS NULL)?$/i.test(sql.trim())) {
         return { rows: [{ total: '5' }] } as never;
       }
 
@@ -382,6 +382,47 @@ test('upsertSiteProducts persiste compatibleBrands y sincroniza relaciones', asy
   const relationInsert = queries.find((query) => /INSERT INTO scraping_inventory_vehicle_brands/i.test(query.sql));
   assert.ok(relationInsert);
   assert.deepEqual(relationInsert.params[1], ['citroen', 'peugeot']);
+});
+
+test('upsertSiteProducts descarta clones numerados de Autopartes Gil dentro del mismo lote', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/INSERT INTO scraping_inventory/i.test(sql)) {
+        const sourceUrls = params[3] as string[];
+        return {
+          rows: sourceUrls.map((sourceUrl, index) => ({
+            id: `url|${sourceUrl}`,
+            sourceUrl,
+            created: index === 0,
+          })),
+        } as never;
+      }
+      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory/i.test(sql)) {
+        return { rows: [{ total: '1' }] } as never;
+      }
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  const base = 'https://autopartesgil.com/producto/motor-limpia-delantero-renault-megane-53548402/';
+  const suffix = 'https://autopartesgil.com/producto/motor-limpia-delantero-renault-megane-53548402-10/';
+  const product = (sourceUrl: string): ProductRecord => ({
+    productName: 'Motor de limpiaparabrisas delantero Renault Megane 53548402',
+    price: '5500',
+    availability: 'in_stock',
+    imageUrl: 'https://autopartesgil.com/logo.webp',
+    sourceUrl,
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  });
+
+  await service.upsertSiteProducts('https://autopartesgil.com/', [product(suffix), product(base)], new Date().toISOString());
+
+  const inventoryInsert = queries.find((query) => /INSERT INTO scraping_inventory/i.test(query.sql));
+  assert.ok(inventoryInsert);
+  assert.deepEqual(inventoryInsert.params[3], [base.slice(0, -1)]);
 });
 
 test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado sin duplicar', async () => {

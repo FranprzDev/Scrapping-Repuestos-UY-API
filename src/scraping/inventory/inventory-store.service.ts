@@ -33,6 +33,15 @@ type CompatibilityRefreshRow = {
   product: ProductRecord;
 };
 
+type InventoryUpsertItem = {
+  id: string;
+  site: string;
+  sourceUrl: string;
+  product: string;
+  searchText: string;
+  vehicleBrands: ReturnType<typeof inferVehicleBrands>;
+};
+
 export interface InventoryQueryFilters {
   site?: string;
   search?: string;
@@ -110,14 +119,7 @@ export class InventoryStoreService implements OnModuleInit {
     let created = 0;
     let updated = 0;
 
-    const payloadBySourceUrl = new Map<string, {
-      id: string;
-      site: string;
-      sourceUrl: string;
-      product: string;
-      searchText: string;
-      vehicleBrands: ReturnType<typeof inferVehicleBrands>;
-    }>();
+    const payloadBySourceUrl = new Map<string, InventoryUpsertItem>();
 
     products
       .map((product) => {
@@ -157,7 +159,7 @@ export class InventoryStoreService implements OnModuleInit {
       .filter((item): item is { id: string; site: string; sourceUrl: string; product: string; searchText: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> } => Boolean(item))
       .forEach((item) => payloadBySourceUrl.set(item.sourceUrl, item));
 
-    const payload = Array.from(payloadBySourceUrl.values());
+    const payload = deduplicateAutopartesGilPayload(Array.from(payloadBySourceUrl.values()));
 
     for (let index = 0; index < payload.length; index += this.upsertChunkSize) {
       const chunk = payload.slice(index, index + this.upsertChunkSize);
@@ -303,13 +305,15 @@ export class InventoryStoreService implements OnModuleInit {
   }
 
   async countAll(): Promise<number> {
-    const result = await this.postgresService.query<{ total: string }>('SELECT COUNT(*)::text AS total FROM scraping_inventory');
+    const result = await this.postgresService.query<{ total: string }>(
+      'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE dedup_canonical_id IS NULL',
+    );
     return Number(result.rows[0]?.total ?? 0);
   }
 
   async countBySite(site: string): Promise<number> {
     const result = await this.postgresService.query<{ total: string }>(
-      'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE site = $1',
+      'SELECT COUNT(*)::text AS total FROM scraping_inventory WHERE site = $1 AND dedup_canonical_id IS NULL',
       [site],
     );
     return Number(result.rows[0]?.total ?? 0);
@@ -320,7 +324,8 @@ export class InventoryStoreService implements OnModuleInit {
       `
       SELECT id, source_url, product
       FROM scraping_inventory
-      WHERE source_url IS NOT NULL
+        WHERE source_url IS NOT NULL
+        AND dedup_canonical_id IS NULL
         AND ($1::text IS NULL OR site ILIKE '%' || $1 || '%')
         AND (
           NOT (product ? 'compatibleModels')
@@ -396,7 +401,8 @@ export class InventoryStoreService implements OnModuleInit {
       `
       SELECT id, source_url, product
       FROM scraping_inventory
-      WHERE source_url IS NOT NULL
+        WHERE source_url IS NOT NULL
+        AND dedup_canonical_id IS NULL
         AND site ILIKE '%' || $1 || '%'
       ORDER BY updated_at DESC
       `,
@@ -550,6 +556,7 @@ export class InventoryStoreService implements OnModuleInit {
           ) AS site,
           COUNT(*)::text AS total
         FROM scraping_inventory
+        WHERE dedup_canonical_id IS NULL
         GROUP BY 1
         ORDER BY COUNT(*) DESC, site ASC
       `),
@@ -591,6 +598,7 @@ export class InventoryStoreService implements OnModuleInit {
           NULLIF(regexp_replace(lower(COALESCE(product->>'imageUrl', '')), '[^[:alnum:]]', '', 'g'), '') AS image_key
         FROM scraping_inventory
         WHERE COALESCE(product->>'catalogQuality', '') <> 'placeholder'
+          AND dedup_canonical_id IS NULL
       )
     `;
     const groupQuery = (keyExpression: string, where: string) => `
@@ -610,7 +618,7 @@ export class InventoryStoreService implements OnModuleInit {
 
     const queryParams = [...params, normalizedLimit];
     const [total, exactSourceUrl, sku, name, exactProduct] = await Promise.all([
-      this.postgresService.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM scraping_inventory ${totalSiteFilter}`, params),
+      this.postgresService.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM scraping_inventory ${totalSiteFilter} AND dedup_canonical_id IS NULL`, params),
       this.postgresService.query<InventoryDuplicateGroup>(groupQuery('source_url', 'source_url IS NOT NULL'), queryParams),
       this.postgresService.query<InventoryDuplicateGroup>(groupQuery('sku', 'sku IS NOT NULL'), queryParams),
       this.postgresService.query<InventoryDuplicateGroup>(groupQuery('name_key || \'|\' || COALESCE(brand_key, \'\')', 'name_key IS NOT NULL'), queryParams),
@@ -646,6 +654,7 @@ export class InventoryStoreService implements OnModuleInit {
       LEFT JOIN scraping_inventory
         ON scraping_inventory.id = link.inventory_id
       WHERE brand.active = TRUE
+        AND scraping_inventory.dedup_canonical_id IS NULL
         ${whereClause ? `AND ${whereClause.slice('WHERE '.length)}` : ''}
       GROUP BY brand.id, brand.label
       ORDER BY brand.label ASC
@@ -719,7 +728,8 @@ export class InventoryStoreService implements OnModuleInit {
         `
         SELECT inventory.id, inventory.product
         FROM scraping_inventory inventory
-        WHERE NOT EXISTS (
+        WHERE dedup_canonical_id IS NULL
+          AND NOT EXISTS (
           SELECT 1
           FROM scraping_inventory_vehicle_brands vehicle_brand_link
           WHERE vehicle_brand_link.inventory_id = inventory.id
@@ -858,6 +868,76 @@ function mapInventoryRow(row: InventoryRow): StoredProduct {
   };
 }
 
+function deduplicateAutopartesGilPayload(items: InventoryUpsertItem[]): InventoryUpsertItem[] {
+  const output: InventoryUpsertItem[] = [];
+  const cloneItems = new Map<string, InventoryUpsertItem>();
+
+  for (const item of items) {
+    const product = JSON.parse(item.product) as ProductRecord;
+    const key = autopartesGilCloneKey(item.site, item.sourceUrl, product);
+    if (!key) {
+      output.push(item);
+      continue;
+    }
+
+    const previous = cloneItems.get(key);
+    if (!previous || compareAutopartesGilCanonicalUrl(item.sourceUrl, previous.sourceUrl) < 0) {
+      cloneItems.set(key, item);
+    }
+  }
+
+  return [...output, ...cloneItems.values()];
+}
+
+function autopartesGilCloneKey(site: string, sourceUrl: string, product: ProductRecord): string | undefined {
+  if (!isAutopartesGilHost(site) && !isAutopartesGilHost(sourceUrl)) {
+    return undefined;
+  }
+  if (product.sku?.trim()) {
+    return undefined;
+  }
+  if (!product.productName?.trim()) {
+    return undefined;
+  }
+
+  const normalizedUrl = canonicalProductUrl(sourceUrl);
+  if (!normalizedUrl) {
+    return undefined;
+  }
+
+  const cloneBaseUrl = normalizedUrl.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '');
+  const productKey = [
+    comparableDedupValue(product.productName),
+    comparableDedupValue(product.brand),
+    comparableDedupValue(product.price),
+    comparableDedupValue(product.availability),
+    comparableDedupValue(product.imageUrl),
+  ].join('|');
+
+  return `autopartesgil:${cloneBaseUrl}|${productKey}`;
+}
+
+function compareAutopartesGilCanonicalUrl(left: string, right: string): number {
+  const leftIsBase = left.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '') === left;
+  const rightIsBase = right.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '') === right;
+  if (leftIsBase !== rightIsBase) {
+    return leftIsBase ? -1 : 1;
+  }
+  return left.localeCompare(right);
+}
+
+function isAutopartesGilHost(value: string): boolean {
+  return /(?:^|[/:])(?:www\.)?autopartesgil\.com(?:[/:]|$)/i.test(value);
+}
+
+function comparableDedupValue(value?: string): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9.,]/g, '');
+}
+
 function canonicalProductUrl(value?: string): string | undefined {
   if (!value?.trim()) {
     return undefined;
@@ -968,7 +1048,10 @@ function buildInventoryCountQuery(filters: InventoryQueryFilters) {
 }
 
 function buildInventoryConditions(filters: InventoryQueryFilters) {
-  const conditions: string[] = ["COALESCE(product->>'catalogQuality', '') <> 'placeholder'"];
+  const conditions: string[] = [
+    "COALESCE(product->>'catalogQuality', '') <> 'placeholder'",
+    'dedup_canonical_id IS NULL',
+  ];
   const params: unknown[] = [];
 
   if (filters.site?.trim()) {
