@@ -473,6 +473,14 @@ export const DOMAIN_RULES: DomainRule[] = [
     excludeUrlPatterns: [/\/cart/i, /\/carrito/i, /\/checkout/i, /\/mi-cuenta/i, /\/contacto/i, /\/blog/i],
     positiveAvailabilityTexts: ['comprar', 'disponible'],
     negativeAvailabilityTexts: ['agotado', 'sin stock', 'out of stock', 'no disponible'],
+    detailSelectors: {
+      title: ['.columnaDerecha .hdr h1.tit', '.columnaDerecha h1.tit', 'h1.tit', 'h1'],
+      price: ['.columnaDerecha .precios .precio.venta', '.preciosWrapper .precio', '.precio .monto'],
+      description: ['.tabs.blkDetalle .text', '.blkDetalle .text', '.columnaDerecha .desc', '[itemprop="description"]', 'meta[name="description"]'],
+      brand: ['.logoMarca img[alt]', '[itemprop="brand"]'],
+      sku: ['.columnaDerecha .cod', '.cod', '[itemprop="sku"]'],
+      image: ['[itemprop="image"]', '.columnaIzquierda img', '.columnaIzquierda picture img', 'meta[property="og:image"]'],
+    },
   },
   {
     id: 'italur',

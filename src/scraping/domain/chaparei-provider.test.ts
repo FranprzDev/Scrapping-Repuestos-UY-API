@@ -3,6 +3,8 @@ import * as assert from 'node:assert/strict';
 import { DomainProvider } from '../providers/domain.provider';
 import { PlaywrightProvider } from '../providers/playwright.provider';
 import { HttpRequestInit, HttpResponseData } from './http-client';
+import { findDomainRule } from './domain-rules';
+import { extractProductsFromHtml } from './domain-html';
 
 test('Chaparei integra marcas, categorias, reintento AJAX, agotados y detalles sin precio', async () => {
   const calls = new Map<string, number>();
@@ -28,7 +30,7 @@ test('Chaparei integra marcas, categorias, reintento AJAX, agotados y detalles s
     }
 
     if (parsed.pathname === '/productos/' && parsed.searchParams.get('c') === '44') {
-      return htmlResponse(url, chapareiCard(productTwo, 'ESPEJO EXT. IZQ. ELECTRICO', 'TOYOTA COROLLA', '$U 8.900', false));
+      return htmlResponse(url, chapareiCard(productTwo, 'ESPEJO EXT. IZQ. ELECTRICO', 'TOYOTA COROLLA', '$U 8.900', false, true));
     }
 
     if (parsed.pathname.endsWith('/cargar_pagina_dinamica.php')) {
@@ -87,6 +89,21 @@ test('Chaparei integra marcas, categorias, reintento AJAX, agotados y detalles s
     url.includes('cargar_pagina_dinamica.php') && url.includes('m=171') && url.includes('nro_pag=2')));
 });
 
+test('Chaparei ignora el placeholder oculto “Agotado” en tarjetas con stock', () => {
+  const sourceUrl = 'https://www.chaparei.com/catalogo/accesorios-y-paragolpes/careta-inferior-c-moldura-cromada-g3401390/';
+  const rule = findDomainRule(sourceUrl);
+  assert.ok(rule);
+
+  const products = extractProductsFromHtml(
+    chapareiCard(sourceUrl, 'CARETA INFERIOR C/MOLDURA CROMADA', 'CHEVROLET CRUZE SEDAN 2010-12', '$U 2.164', false, true),
+    'https://www.chaparei.com/productos/?c=44',
+    'domain',
+    rule,
+  );
+
+  assert.equal(products[0]?.availability, 'in_stock');
+});
+
 class TestDomainProvider extends DomainProvider {
   constructor(playwright: PlaywrightProvider, private readonly mockFetch: (url: string) => Promise<HttpResponseData>) {
     super(playwright);
@@ -113,6 +130,7 @@ function chapareiCard(
   compatibility: string,
   price?: string,
   outOfStock = false,
+  includeHiddenOutOfStockPlaceholder = false,
 ): string {
   return `
     <article class="prod_item${outOfStock ? ' prod_sin_stock' : ''}">
@@ -120,6 +138,8 @@ function chapareiCard(
       <h2><a href="${sourceUrl}"><span itemprop="name">${name}</span></a></h2>
       <h2 class="copete_ficha">${compatibility}</h2>
       ${price ? `<span itemprop="price">${price}</span>` : ''}
+      ${outOfStock ? '' : '<div class="enstock"><span>En stock</span></div>'}
+      ${includeHiddenOutOfStockPlaceholder ? '<div style="display:none" id="producto_agotado" class="agotado"><span>Agotado</span></div>' : ''}
       <button>${outOfStock ? 'Consultar' : 'Comprar'}</button>
     </article>
   `;

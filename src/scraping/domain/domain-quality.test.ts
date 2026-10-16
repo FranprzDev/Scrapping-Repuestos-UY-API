@@ -98,7 +98,7 @@ test('usa foto_grande de Acesur como imagen principal y conserva foto_chica', ()
   ]);
 });
 
-test('preserva productos agotados en cards tipo Chaparei', () => {
+test('ignora el placeholder agotado oculto en cards tipo Chaparei', () => {
   const rule = findDomainRule('https://www.chaparei.com/productos/?m=171');
   assert.ok(rule);
 
@@ -134,7 +134,7 @@ test('preserva productos agotados en cards tipo Chaparei', () => {
 
   const products = qualityGate(extractProductsFromHtml(html, 'https://www.chaparei.com/productos/?m=171', 'domain', rule), rule);
   assert.equal(products.length, 1);
-  assert.equal(products[0].availability, 'out_of_stock');
+  assert.equal(products[0].availability, 'in_stock');
   assert.equal(products[0].sku, 'F0104160');
 });
 

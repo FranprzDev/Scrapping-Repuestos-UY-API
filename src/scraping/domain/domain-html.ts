@@ -1100,12 +1100,7 @@ function extractChapareiListProducts(root: HTMLElement, pageUrl: string, provide
       continue;
     }
 
-    const availabilityText = cleanText([
-      firstElementText(article, ['.enstock']),
-      firstElementText(article, ['#producto_agotado']),
-      firstElementText(article, ['.opcionescarrito']),
-      article.text,
-    ].filter(Boolean).join(' '));
+    const availabilityText = visibleText(article);
 
     products.push({
       productName,
@@ -1139,12 +1134,43 @@ function isChapareiOutOfStockCard(article: HTMLElement): boolean {
   }
 
   const stockText = cleanText([
-    firstElementText(article, ['.stock_agotado']),
-    firstElementText(article, ['.agotado']),
-    firstElementText(article, ['#producto_agotado']),
+    ...queryAll(article, '.stock_agotado, .agotado, #producto_agotado')
+      .filter((element) => !isHiddenElement(element, article))
+      .map((element) => element.text),
   ].filter(Boolean).join(' '));
 
   return Boolean(stockText && /agotado|sin stock|out of stock|no disponible/i.test(stockText));
+}
+
+function visibleText(element: HTMLElement): string | undefined {
+  if (isHiddenElement(element)) {
+    return undefined;
+  }
+
+  const clone = parse(element.outerHTML);
+  queryAll(clone, '*').filter((child) => isHiddenElement(child, clone)).forEach((child) => child.remove());
+  return cleanText(clone.text);
+}
+
+function isHiddenElement(element: HTMLElement, boundary?: HTMLElement): boolean {
+  let current: HTMLElement | null = element;
+  while (current) {
+    const style = String(current.getAttribute('style') ?? '').toLowerCase();
+    const className = String(current.getAttribute('class') ?? '').toLowerCase();
+    if (
+      current.hasAttribute('hidden')
+      || /(?:^|;)\s*display\s*:\s*none\b/.test(style)
+      || /(?:^|;)\s*visibility\s*:\s*hidden\b/.test(style)
+      || /\b(?:hidden|d-none)\b/.test(className)
+    ) {
+      return true;
+    }
+    if (current === boundary) {
+      break;
+    }
+    current = current.parentNode as HTMLElement | null;
+  }
+  return false;
 }
 
 function extractSelvirListingName(anchor: HTMLElement, card: HTMLElement, cardText: string): string | undefined {
@@ -1640,7 +1666,7 @@ if (
     price: normalizePriceValue(rawPrice),
     currency: inferCurrency(rawPrice),
     brand: extractBrandFromText(brandText),
-    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1]),
+    sku: cleanText(skuText?.match(/(?:sku|c[oó]d(?:igo)?\.?)\s*[:#-]?\s*([\w.-]+)/i)?.[1]) ?? cleanText(skuText),
     description: firstNonEmpty(selectText(root, rule.detailSelectors?.description ?? ['meta[name="description"]', 'main p'])),
     imageUrl:
       imageUrls[0]
@@ -2300,8 +2326,9 @@ function collectAvailabilityText(root: HTMLElement): string {
     }
 
     const clone = parse(section.outerHTML);
-    clone.querySelectorAll('[style*="display:none"], [hidden], script, style').forEach((element) => element.remove());
-    const text = cleanText(clone.text);
+    queryAll(clone, '*').filter((element) => isHiddenElement(element, clone) || ['script', 'style'].includes(element.tagName.toLowerCase()))
+      .forEach((element) => element.remove());
+    const text = isHiddenElement(section) ? undefined : cleanText(clone.text);
     if (text) {
       return text;
     }
@@ -2313,11 +2340,9 @@ function collectAvailabilityText(root: HTMLElement): string {
 function resolveDetailAvailability(root: HTMLElement, availabilityText: string, rule: DomainRule): 'in_stock' | 'out_of_stock' | 'unknown' {
   const hiddenOutOfStock = root.querySelector('#producto_agotado');
   if (hiddenOutOfStock) {
-    const style = String(hiddenOutOfStock.getAttribute('style') ?? '').toLowerCase();
-    const hidden = style.includes('display:none');
     const agotadoText = cleanText(hiddenOutOfStock.text) ?? '';
 
-    if (agotadoText && !hidden) {
+    if (agotadoText && !isHiddenElement(hiddenOutOfStock, root)) {
       return 'out_of_stock';
     }
   }

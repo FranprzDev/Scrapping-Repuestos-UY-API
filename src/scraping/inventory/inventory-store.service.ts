@@ -5,6 +5,7 @@ import { extractCompatibilityFromHtml, extractProductsFromHtml } from '../domain
 import { fetchHtml } from '../domain/http-client';
 import { mergeCompatibleBrands, parsePriceNumber } from '../domain/product-quality';
 import { inferVehicleBrands, resolveVehicleBrandFilterId, VEHICLE_BRANDS } from '../domain/vehicle-brands';
+import { extractYaguaronDetail } from '../domain/yaguaron';
 import { PostgresService } from '../jobs/postgres.service';
 import { ImageRelayService } from '../../image-relay/image-relay.service';
 
@@ -396,18 +397,34 @@ export class InventoryStoreService implements OnModuleInit {
 
     let refreshed = 0;
     let failed = 0;
+    const yaguaronRefresh = isYaguaronSite(normalizedSite);
+    const batchSize = yaguaronRefresh
+      ? readPositiveEnvNumber('SCRAPING_YAGUARON_REFRESH_CONCURRENCY', 1)
+      : 4;
+    const retryAttempts = yaguaronRefresh
+      ? readPositiveEnvNumber('SCRAPING_YAGUARON_REFRESH_RETRIES', 3)
+      : 1;
+    const retryDelayMs = yaguaronRefresh
+      ? readPositiveEnvNumber('SCRAPING_YAGUARON_REFRESH_RETRY_DELAY_MS', 1000)
+      : 0;
+    const batchDelayMs = yaguaronRefresh
+      ? readPositiveEnvNumber('SCRAPING_YAGUARON_REFRESH_DELAY_MS', 250)
+      : 0;
+    const errorCounts = new Map<string, number>();
     const relationItems: Array<{ id: string; vehicleBrands: ReturnType<typeof inferVehicleBrands> }> = [];
 
-    for (let index = 0; index < pending.rows.length; index += 4) {
-      const batch = pending.rows.slice(index, index + 4);
+    for (let index = 0; index < pending.rows.length; index += batchSize) {
+      const batch = pending.rows.slice(index, index + batchSize);
       const results = await Promise.all(batch.map(async (row) => {
         try {
-          const response = await fetchHtml(row.source_url);
+          const response = await fetchRefreshHtml(row.source_url, retryAttempts, retryDelayMs);
           const rule = findDomainRule(row.source_url);
-          const detail = rule
-            ? extractProductsFromHtml(response.body, response.finalUrl, 'domain', rule)
-                .find((item) => canonicalProductUrl(item.sourceUrl) === canonicalProductUrl(row.source_url))
-            : undefined;
+          const detail = rule?.id === 'yaguaron'
+            ? extractYaguaronDetail(response.body, response.finalUrl, 'domain')
+            : rule
+              ? extractProductsFromHtml(response.body, response.finalUrl, 'domain', rule)
+                  .find((item) => canonicalProductUrl(item.sourceUrl) === canonicalProductUrl(row.source_url))
+              : undefined;
           const compatibility = extractCompatibilityFromHtml(response.body);
           const product: ProductRecord = {
             ...row.product,
@@ -422,7 +439,9 @@ export class InventoryStoreService implements OnModuleInit {
             || Boolean(compatibility.compatibleModels?.length)
             || Boolean(compatibility.compatibleVersions?.length);
           return changed ? { row, product, vehicleBrands: inferVehicleBrands(product) } : undefined;
-        } catch {
+        } catch (error) {
+          const errorCode = refreshErrorCode(error);
+          errorCounts.set(errorCode, (errorCounts.get(errorCode) ?? 0) + 1);
           return null;
         }
       }));
@@ -457,8 +476,12 @@ export class InventoryStoreService implements OnModuleInit {
         pagesUsedForExtract: pending.rows.length,
         rawProducts: index + batch.length,
         normalizedProducts: refreshed,
-        message: `Procesados ${index + batch.length} de ${pending.rows.length}`,
+        message: `Procesados ${index + batch.length} de ${pending.rows.length}${formatRefreshErrorSummary(errorCounts)}`,
       });
+
+      if (batchDelayMs > 0 && index + batch.length < pending.rows.length) {
+        await waitForRefreshDelay(batchDelayMs);
+      }
     }
 
     if (relationItems.length > 0) {
@@ -474,7 +497,9 @@ export class InventoryStoreService implements OnModuleInit {
       pagesUsedForExtract: pending.rows.length,
       rawProducts: pending.rows.length,
       normalizedProducts: refreshed,
-      message: failed > 0 ? `Finalizado con ${failed} errores` : 'Finalizado',
+      message: failed > 0
+        ? `Finalizado con ${failed} errores${formatRefreshErrorSummary(errorCounts)}`
+        : 'Finalizado',
     });
 
     return { site: normalizedSite, scanned: pending.rows.length, refreshed, failed };
@@ -654,6 +679,89 @@ export class InventoryStoreService implements OnModuleInit {
       await this.syncVehicleBrandRelations(items);
     }
   }
+}
+
+function isYaguaronSite(site: string): boolean {
+  const normalized = site.trim().toLowerCase();
+  return normalized.includes('yaguaron') || normalized.includes('yaguarón');
+}
+
+function readPositiveEnvNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+async function fetchRefreshHtml(url: string, attempts: number, retryDelayMs: number) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchHtml(url);
+      if (response.statusCode === 429 || response.statusCode >= 500) {
+        const error = new Error(`HTTP ${response.statusCode}`) as Error & { code?: string };
+        error.code = `HTTP_${response.statusCode}`;
+        throw error;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) {
+        await waitForRefreshDelay(retryDelayMs * 2 ** attempt);
+      }
+    }
+  }
+
+  throw lastError ?? new Error('refresh_request_failed');
+}
+
+function refreshErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') {
+    return 'unknown';
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    name?: unknown;
+    message?: unknown;
+    cause?: { code?: unknown; name?: unknown };
+  };
+  if (typeof candidate.code === 'string' && candidate.code.trim()) {
+    return candidate.code;
+  }
+  if (typeof candidate.cause?.code === 'string' && candidate.cause.code.trim()) {
+    return candidate.cause.code;
+  }
+  if (typeof candidate.name === 'string' && candidate.name.trim()) {
+    return candidate.name;
+  }
+  if (typeof candidate.cause?.name === 'string' && candidate.cause.name.trim()) {
+    return candidate.cause.name;
+  }
+  if (typeof candidate.message === 'string' && candidate.message.trim()) {
+    return candidate.message.slice(0, 80);
+  }
+  return 'unknown';
+}
+
+function formatRefreshErrorSummary(errorCounts: Map<string, number>): string {
+  if (errorCounts.size === 0) {
+    return '';
+  }
+
+  const summary = Array.from(errorCounts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([code, count]) => `${code}:${count}`)
+    .join(', ');
+  return `; fallos ${summary}`;
+}
+
+async function waitForRefreshDelay(delayMs: number): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
 function mapInventoryRow(row: InventoryRow): StoredProduct {
