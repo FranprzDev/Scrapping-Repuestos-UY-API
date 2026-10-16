@@ -1,17 +1,16 @@
-﻿import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { CatalogScrapingService } from './catalog-scraping.service';
+import { DOMAIN_RULES } from './domain/domain-rules';
 import { InventoryStoreService } from './inventory/inventory-store.service';
 import type { ProductRecord } from './interfaces/scraping.types';
-import { getCatalogSite } from './sites/catalog-sites';
+import { listEnabledCatalogSites } from './sites/catalog-sites';
 import { runCatalogPipeline } from './sites/catalog-pipeline';
 import { runYokomitsuFullCatalog } from './domain/yokomitsu-full';
 import { YokomitsuCookieJarHttpClient } from './domain/yokomitsu-http-client';
 
-const DEFAULT_PRODUCTION_SITE_IDS = [
-  'repuestosavenida',
-  'autopartesgil',
-  'autopartesmagallanes',
-];
+const DEFAULT_PRODUCTION_SITE_IDS = ['all'];
+const DEFAULT_SCRAPE_CRON = '0 0 3 * * 0';
 
 @Injectable()
 export class ScrapingSchedulerService implements OnModuleInit {
@@ -21,6 +20,8 @@ export class ScrapingSchedulerService implements OnModuleInit {
   constructor(
     @Inject(InventoryStoreService)
     private readonly inventoryStoreService: InventoryStoreService,
+    @Inject(CatalogScrapingService)
+    private readonly catalogScrapingService: CatalogScrapingService,
   ) {}
 
   onModuleInit() {
@@ -30,11 +31,11 @@ export class ScrapingSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron(process.env.SCRAPE_CRON ?? '0 0 3 * * *', {
-    name: 'daily-catalog-scrape',
+  @Cron(process.env.SCRAPE_CRON ?? DEFAULT_SCRAPE_CRON, {
+    name: 'weekly-catalog-scrape',
     timeZone: process.env.SCRAPE_TIMEZONE ?? 'America/Argentina/Buenos_Aires',
   })
-  async runDailyCatalogScrape() {
+  async runWeeklyCatalogScrape() {
     const enabled = (process.env.AUTO_SCRAPE_ENABLED ?? 'false').toLowerCase() === 'true';
     if (!enabled) {
       return;
@@ -53,28 +54,16 @@ export class ScrapingSchedulerService implements OnModuleInit {
     const startedAt = Date.now();
     const runAt = new Date().toISOString();
     const siteIds = parseProductionSiteIds(process.env.PRODUCTION_CATALOG_SITE_IDS);
+    const runAll = siteIds.includes('all');
     const maxPages = positiveIntegerOrUndefined(process.env.PRODUCTION_CATALOG_MAX_PAGES);
     const maxProducts = positiveIntegerOrUndefined(process.env.PRODUCTION_CATALOG_MAX_PRODUCTS);
     this.logger.log(`production-catalog-scrape started trigger=${trigger} sites=${siteIds.join(',')}`);
 
     try {
-      for (const siteId of siteIds) {
-      if (siteId === 'yokomitsu') {
-        try {
-          await this.runYokomitsuProduction(runAt);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(`production-catalog-site failed site=yokomitsu message=${message}`);
-        }
-        continue;
-      }
+      const configuredSites = listEnabledCatalogSites()
+        .filter((site) => runAll || siteIds.includes(site.id));
 
-      const site = getCatalogSite(siteId);
-        if (!site?.enabled) {
-          this.logger.warn(`production-catalog-scrape skipped unknown_or_disabled_site=${siteId}`);
-          continue;
-        }
-
+      for (const site of configuredSites) {
         try {
           const report = await runCatalogPipeline({
             site,
@@ -90,11 +79,57 @@ export class ScrapingSchedulerService implements OnModuleInit {
             },
           });
           this.logger.log(
-            `production-catalog-site completed site=${site.id} products=${report.productsValid} prices=${report.prices} images=${report.images} errors=${report.errors}`,
+            `production-catalog-site completed site=${site.id} products=${report.productsValid} prices=${report.prices} images=${report.images} duplicates=${report.duplicates} errors=${report.errors}`,
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error(`production-catalog-site failed site=${site.id} message=${message}`);
+        }
+      }
+
+      const configuredHosts = new Set(configuredSites.map((site) => normalizeHost(site.hostname)));
+      const domainFallbackUrls = DOMAIN_RULES
+        .filter((rule) => rule.seedUrls?.length)
+        .filter((rule) => runAll || siteIds.includes(rule.id))
+        .filter((rule) => !configuredHosts.has(normalizeHost(rule.hostnames[0] ?? rule.id)))
+        .flatMap((rule) => rule.seedUrls ?? []);
+
+      if (domainFallbackUrls.length > 0) {
+        try {
+          const result = await this.catalogScrapingService.scrapeCatalogWithPrices({
+            urls: domainFallbackUrls,
+            maxPagesPerSite: maxPages,
+            maxProductsPerSite: maxProducts,
+            siteConcurrency: positiveIntegerOrUndefined(process.env.PRODUCTION_DOMAIN_SITE_CONCURRENCY) ?? 1,
+          });
+          this.logger.log(
+            `production-domain-sites completed sites=${result.sitesProcessed} inventorySize=${result.inventorySize}`,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`production-domain-sites failed message=${message}`);
+        }
+      }
+
+      if (runAll || siteIds.includes('yokomitsu')) {
+        try {
+          await this.runYokomitsuProduction(runAt);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`production-catalog-site failed site=yokomitsu message=${message}`);
+        }
+      }
+
+      if (!runAll) {
+        const knownIds = new Set([
+          ...configuredSites.map((site) => site.id),
+          ...DOMAIN_RULES.map((rule) => rule.id),
+          'yokomitsu',
+        ]);
+        for (const siteId of siteIds) {
+          if (!knownIds.has(siteId)) {
+            this.logger.warn(`production-catalog-scrape skipped unknown_or_disabled_site=${siteId}`);
+          }
         }
       }
 
@@ -103,6 +138,7 @@ export class ScrapingSchedulerService implements OnModuleInit {
       this.isRunning = false;
     }
   }
+
   private async runYokomitsuProduction(runAt: string): Promise<void> {
     const username = process.env.YOKOMITSU_USERNAME?.trim();
     const password = process.env.YOKOMITSU_PASSWORD;
@@ -169,7 +205,7 @@ export class ScrapingSchedulerService implements OnModuleInit {
 function parseProductionSiteIds(raw: string | undefined): string[] {
   const values = (raw ?? DEFAULT_PRODUCTION_SITE_IDS.join(','))
     .split(',')
-    .map((value) => value.trim())
+    .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
   return Array.from(new Set(values));
 }
@@ -182,7 +218,11 @@ function positiveIntegerOrUndefined(raw: string | undefined): number | undefined
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
-
-
-
+function normalizeHost(value: string): string {
+  try {
+    return new URL(value.includes('://') ? value : `https://${value}`).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return value.trim().toLowerCase().replace(/^www\./, '').split('/')[0];
+  }
+}
 

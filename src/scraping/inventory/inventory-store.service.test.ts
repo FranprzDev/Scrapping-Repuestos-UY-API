@@ -35,6 +35,30 @@ test('getStats agrupa por host base y no por url completa', async () => {
   assert.ok(queries.some((sql) => sql.includes("replace(replace(lower(site), 'https://', ''), 'http://', '')")));
 });
 
+test('getDuplicateSummary agrupa URL, SKU y huella por proveedor con límite', async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory/i.test(sql)) {
+        return { rows: [{ total: '12' }] } as never;
+      }
+      return {
+        rows: [{ site: 'chaparei.com', key: 'sku-1', count: 2, ids: ['a', 'b'], sourceUrls: ['https://chaparei.com/a', 'https://chaparei.com/b'] }],
+      } as never;
+    },
+  } as never);
+
+  const summary = await service.getDuplicateSummary('Chaparei', 7);
+
+  assert.equal(summary.totalProducts, 12);
+  assert.equal(summary.skuGroups[0]?.count, 2);
+  assert.equal(calls.length, 5);
+  assert.ok(calls.every((call) => call.params.at(-1) === 7 || call.sql.includes('COUNT(*)')));
+  assert.ok(calls.some((call) => call.sql.includes('source_url')));
+  assert.ok(calls.some((call) => call.sql.includes('name_key')));
+});
+
 test('getFilteredPage limita el resultado a 200 y aplica offset', async () => {
   let capturedSql = '';
   let capturedParams: unknown[] = [];
@@ -566,3 +590,4 @@ test('Yokomitsu upsert protects verified cost and SKU; other providers remain un
   assert.equal((JSON.parse((other.params[4] as string[])[0]) as ProductRecord).price, '38');
   assert.match(other.sql, /feyvi_merge_product/);
 });
+

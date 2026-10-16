@@ -58,6 +58,22 @@ export interface InventoryStats {
   }>;
 }
 
+export interface InventoryDuplicateGroup {
+  site: string;
+  key: string;
+  count: number;
+  ids: string[];
+  sourceUrls: string[];
+}
+
+export interface InventoryDuplicateSummary {
+  totalProducts: number;
+  exactSourceUrlGroups: InventoryDuplicateGroup[];
+  skuGroups: InventoryDuplicateGroup[];
+  nameGroups: InventoryDuplicateGroup[];
+  exactProductGroups: InventoryDuplicateGroup[];
+}
+
 export interface VehicleBrandInventoryStats {
   id: string;
   label: string;
@@ -543,6 +559,65 @@ export class InventoryStoreService implements OnModuleInit {
         siteLabel: siteLabels.get(normalizeStatsSiteKey(row.site)) ?? normalizeStatsSiteKey(row.site),
         total: Number(row.total ?? 0),
       })),
+    };
+  }
+
+  async getDuplicateSummary(site?: string, limit = 100): Promise<InventoryDuplicateSummary> {
+    const normalizedLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
+    const siteFilter = site?.trim() ? 'WHERE normalized_site = $1' : '';
+    const totalSiteFilter = site?.trim()
+      ? `WHERE regexp_replace(split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1), '^www\\.', '') = $1`
+      : '';
+    const params = site?.trim() ? [normalizeSiteHost(site)] : [];
+    const base = `
+      WITH base AS (
+        SELECT
+          id,
+          source_url,
+          regexp_replace(
+            split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1),
+            '^www\\.',
+            ''
+          ) AS normalized_site,
+          NULLIF(lower(BTRIM(product->>'sku')), '') AS sku,
+          NULLIF(regexp_replace(lower(COALESCE(product->>'productName', '')), '[^[:alnum:]]', '', 'g'), '') AS name_key,
+          NULLIF(regexp_replace(lower(COALESCE(product->>'brand', '')), '[^[:alnum:]]', '', 'g'), '') AS brand_key,
+          NULLIF(regexp_replace(lower(COALESCE(product->>'price', '')), '[^[:alnum:],.]', '', 'g'), '') AS price_key,
+          NULLIF(regexp_replace(lower(COALESCE(product->>'availability', '')), '[^[:alnum:]]', '', 'g'), '') AS availability_key,
+          NULLIF(regexp_replace(lower(COALESCE(product->>'imageUrl', '')), '[^[:alnum:]]', '', 'g'), '') AS image_key
+        FROM scraping_inventory
+      )
+    `;
+    const groupQuery = (keyExpression: string, where: string) => `
+      ${base}
+      SELECT normalized_site AS site,
+             ${keyExpression} AS key,
+             COUNT(*)::int AS count,
+             ARRAY_AGG(id ORDER BY id) AS ids,
+             ARRAY_AGG(source_url ORDER BY source_url) AS "sourceUrls"
+      FROM base
+      ${siteFilter ? `${siteFilter} AND ${where}` : `WHERE ${where}`}
+      GROUP BY normalized_site, ${keyExpression}
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC, normalized_site ASC, key ASC
+      LIMIT $${params.length + 1}
+    `;
+
+    const queryParams = [...params, normalizedLimit];
+    const [total, exactSourceUrl, sku, name, exactProduct] = await Promise.all([
+      this.postgresService.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM scraping_inventory ${totalSiteFilter}`, params),
+      this.postgresService.query<InventoryDuplicateGroup>(groupQuery('source_url', 'source_url IS NOT NULL'), queryParams),
+      this.postgresService.query<InventoryDuplicateGroup>(groupQuery('sku', 'sku IS NOT NULL'), queryParams),
+      this.postgresService.query<InventoryDuplicateGroup>(groupQuery('name_key || \'|\' || COALESCE(brand_key, \'\')', 'name_key IS NOT NULL'), queryParams),
+      this.postgresService.query<InventoryDuplicateGroup>(groupQuery('name_key || \'|\' || COALESCE(brand_key, \'\') || \'|\' || COALESCE(price_key, \'\') || \'|\' || COALESCE(availability_key, \'\') || \'|\' || COALESCE(image_key, \'\')', 'name_key IS NOT NULL'), queryParams),
+    ]);
+
+    return {
+      totalProducts: Number(total.rows[0]?.total ?? 0),
+      exactSourceUrlGroups: exactSourceUrl.rows,
+      skuGroups: sku.rows,
+      nameGroups: name.rows,
+      exactProductGroups: exactProduct.rows,
     };
   }
 
@@ -1118,3 +1193,4 @@ function inventoryVehicleBrands(product: ProductRecord): ReturnType<typeof infer
     id: brand.id, label: brand.label, confidence: 'explicit' as const, evidence: brand.label,
   }));
 }
+

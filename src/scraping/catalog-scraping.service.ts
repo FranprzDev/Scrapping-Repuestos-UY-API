@@ -6,7 +6,7 @@ import { type CatalogJobProgress, type CatalogJobProgressReporter, type CatalogJ
 import { findDomainRule, isAdmittedHouseUrl } from './domain/domain-rules';
 import { countQualityWarnings, isAllowedCatalogUrl, mergeCompatibleBrands, qualityGate } from './domain/product-quality';
 import { InventoryStoreService } from './inventory/inventory-store.service';
-import { type ExistingLinksRefreshReporter, type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
+import { type ExistingLinksRefreshReporter, type InventoryDuplicateSummary, type InventoryQueryFilters, type InventoryQueryPagination } from './inventory/inventory-store.service';
 import { PostgresService } from './jobs/postgres.service';
 import { ScrapingService } from './scraping.service';
 import { randomUUID } from 'node:crypto';
@@ -309,6 +309,10 @@ export class CatalogScrapingService {
 
   async getStats() {
     return this.inventoryStoreService.getStats();
+  }
+
+  async getDuplicateSummary(site?: string, limit?: number): Promise<InventoryDuplicateSummary> {
+    return this.inventoryStoreService.getDuplicateSummary(site, limit);
   }
 
   async getVehicleBrandStats(filters: InventoryQueryFilters = {}) {
@@ -975,3 +979,4 @@ function clampOffset(value?: number): number {
 function normalizeHostname(value: string): string {
   return value.trim().toLowerCase().replace(/^www\./, '');
 }
+

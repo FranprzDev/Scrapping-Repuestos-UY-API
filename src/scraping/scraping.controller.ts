@@ -213,6 +213,15 @@ export class ScrapingController {
     });
   }
 
+  @Get('scraping/inventory/duplicates')
+  getInventoryDuplicates(@Query('site') site?: string, @Query('limit') limit?: string) {
+    const parsedLimit = Number(limit);
+    return this.catalogScrapingService.getDuplicateSummary(
+      site,
+      Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    );
+  }
+
   @Get('scraping/runs')
   listRuns(@Query('limit') limit?: string) {
     const parsed = Number(limit);
@@ -1364,3 +1373,4 @@ function renderStatsPage(): string {
   </body>
 </html>`;
 }
+
