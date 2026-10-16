@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { extractProductsFromHtml } from '../domain/domain-html';
+import { findDomainRule } from '../domain/domain-rules';
 import { getCatalogSite } from './catalog-sites';
 import { WooCommerceAdapter } from './adapters/woocommerce.adapter';
 
@@ -103,6 +105,27 @@ test('Repuestos Avenida leaves image empty when only logo assets are available',
 
   assert.equal(product.imageUrl, undefined);
   assert.equal(product.imageUrls, undefined);
+});
+
+test('Repuestos Avenida refresh extracts the active storefront price', () => {
+  const productUrl = 'https://repuestosavenida.com.uy/producto/kit-tubo-cano-enfriador-de-aceite-de-motor-para-chevrolet-cruze-sonic-y-tracker';
+  const html = `
+    <article class="storefront-product" data-product-id="22423" data-stock-status="in_stock">
+      <h1 class="storefront-product-title">Kit Tubo/Caño Enfriador de Aceite de Motor para Chevrolet Cruze, Sonic y Tracker</h1>
+      <div class="storefront-product-price" data-role="price"><span>$7.157,00</span></div>
+      <div class="storefront-product-price-tiers" data-role="price-tiers" hidden></div>
+      <button type="submit">Comprar</button>
+    </article>
+  `;
+  const rule = findDomainRule(productUrl);
+
+  assert.ok(rule);
+  const [product] = extractProductsFromHtml(html, productUrl, 'domain', rule);
+
+  assert.equal(product.productName, 'Kit Tubo/Caño Enfriador de Aceite de Motor para Chevrolet Cruze, Sonic y Tracker');
+  assert.equal(product.price, '7.157,00');
+  assert.equal(product.currency, 'UYU');
+  assert.equal(product.availability, 'in_stock');
 });
 
 test('Repuestos Avenida change does not alter generic WooCommerce image extraction for other domains', async () => {
