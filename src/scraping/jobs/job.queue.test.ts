@@ -264,3 +264,38 @@ test('el progreso fallido no aborta el job', async () => {
   assert.ok(progressQueries.length > 0);
 });
 
+test('reclama trabajos nuevos y recupera trabajos processing huérfanos en una sola operación atómica', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const postgresService = {
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/WITH candidate AS MATERIALIZED/i.test(sql)) {
+        return {
+          rows: [{
+            id: 'job-stale',
+            task: 'catalog-run',
+            payload: { urls: [] },
+            status: 'processing',
+            provider: null,
+            result: null,
+            error: null,
+            created_at: '2026-10-15T00:00:00.000Z',
+            updated_at: '2026-10-16T00:00:00.000Z',
+          }],
+        } as never;
+      }
+      return { rows: [] } as never;
+    },
+  };
+
+  const service = new JobQueueService({} as never, {} as never, postgresService as never);
+  const claimed = await (service as any).claimNextQueuedJob();
+
+  assert.equal(claimed.id, 'job-stale');
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /status = 'queued'/i);
+  assert.match(queries[0].sql, /status = 'processing'/i);
+  assert.match(queries[0].sql, /FOR UPDATE SKIP LOCKED/i);
+  assert.deepEqual(queries[0].params, [900000]);
+});
+

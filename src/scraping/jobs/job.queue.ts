@@ -50,6 +50,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly pollIntervalMs = clampNumber(process.env.JOB_POLL_INTERVAL_MS, 200, 10000, 1000);
   private readonly progressQueryTimeoutMs = clampNumber(process.env.JOB_PROGRESS_QUERY_TIMEOUT_MS, 250, 10000, 2000);
   private readonly heartbeatIntervalMs = clampNumber(process.env.JOB_HEARTBEAT_INTERVAL_MS, 1000, 30000, 5000);
+  private readonly staleProcessingMs = clampNumber(process.env.JOB_STALE_PROCESSING_MS, 60000, 86400000, 900000);
   private activeWorkers = 0;
   private timer: NodeJS.Timeout | undefined;
   private shuttingDown = false;
@@ -274,43 +275,33 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async claimNextQueuedJob(): Promise<ScrapingJob | undefined> {
-    await this.postgresService.query('BEGIN');
-    try {
-      const selected = await this.postgresService.query<ScrapingJobRow>(
-        `
-        SELECT id, task, payload, status, provider, result, error, created_at, updated_at
+    const claimed = await this.postgresService.query<ScrapingJobRow>(
+      `
+      WITH candidate AS MATERIALIZED (
+        SELECT id
         FROM scraping_jobs
         WHERE status = 'queued'
-        ORDER BY created_at ASC
+           OR (status = 'processing'
+               AND updated_at < NOW() - ($1::text || ' milliseconds')::interval)
+        ORDER BY CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
+                 created_at ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
-        `,
-      );
+      )
+      UPDATE scraping_jobs job
+      SET status = 'processing',
+          error = NULL,
+          updated_at = NOW()
+      FROM candidate
+      WHERE job.id = candidate.id
+      RETURNING job.id, job.task, job.payload, job.status, job.provider,
+                job.result, job.error, job.created_at, job.updated_at
+      `,
+      [this.staleProcessingMs],
+    );
 
-      if (selected.rows.length === 0) {
-        await this.postgresService.query('COMMIT');
-        return undefined;
-      }
-
-      const [selectedRow] = selected.rows;
-      const updated = await this.postgresService.query<ScrapingJobRow>(
-        `
-        UPDATE scraping_jobs
-        SET status = 'processing',
-            updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, task, payload, status, provider, result, error, created_at, updated_at
-        `,
-        [selectedRow.id],
-      );
-
-      await this.postgresService.query('COMMIT');
-      const [updatedRow] = updated.rows;
-      return mapRowToJob(updatedRow);
-    } catch (error) {
-      await this.postgresService.query('ROLLBACK');
-      throw error;
-    }
+    const [row] = claimed.rows;
+    return row ? mapRowToJob(row) : undefined;
   }
 }
 
