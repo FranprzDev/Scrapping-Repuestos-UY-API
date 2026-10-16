@@ -226,6 +226,78 @@ test('Taxitor refresca discovery aunque ya existan links cacheados', async () =>
   assert.equal(crawlCalls, 1);
 });
 
+test('Yaguarón procesa una ficha directa sin reemplazarla por un producto relacionado', async () => {
+  const productUrl = 'https://www.yaguaron.com.uy/catalogo/kit-de-filtros-y-aceite-cruze_123543_123543';
+  const calls: string[] = [];
+  let extractUrls: string[] = [];
+  let savedProducts: Array<{ productName?: string; price?: string; sourceUrl?: string }> = [];
+
+  const service = new CatalogScrapingService(
+    {
+      async runTask(task: string, payload: { urls?: string[] }) {
+        calls.push(task);
+        if (task === 'crawl') {
+          throw new Error('No debe hacer crawl para una ficha directa');
+        }
+
+        extractUrls = payload.urls ?? [];
+        return {
+          provider: 'domain',
+          requestedAt: '2026-06-06T00:00:01.000Z',
+          raw: { products: [] },
+          normalizedProducts: [{
+            productName: 'KIT DE FILTROS Y ACEITE - CRUZE',
+            price: '5690',
+            sourceUrl: productUrl,
+            provider: 'domain',
+          }],
+        };
+      },
+    } as never,
+    {
+      async getBySite() {
+        return [];
+      },
+      async getAll() {
+        return [];
+      },
+      async upsertSiteProducts() {
+        return { created: 1, updated: 0, totalForSite: 1 };
+      },
+      async countAll() {
+        return 1;
+      },
+      async countBySite() {
+        return 1;
+      },
+    } as never,
+    {
+      async saveSiteCatalog(_site: string, products: Array<{ productName?: string; price?: string; sourceUrl?: string }>) {
+        savedProducts = products;
+        return { outputPath: '', total: products.length, imagesSaved: 0, products };
+      },
+    } as never,
+    {
+      async ensureCatalogTables() {},
+      async query() {
+        return { rows: [] };
+      },
+    } as never,
+  );
+
+  await service.scrapeCatalogWithPrices({
+    urls: [productUrl],
+    maxPagesPerSite: 1,
+    maxProductsPerSite: 1,
+    siteConcurrency: 1,
+  });
+
+  assert.deepEqual(calls, ['extract']);
+  assert.deepEqual(extractUrls, [productUrl]);
+  assert.equal(savedProducts[0]?.sourceUrl, productUrl);
+  assert.equal(savedProducts[0]?.price, '5690');
+});
+
 test('no recorta las urls descubiertas por maxProductsPerSite', async () => {
   let extractPayloadUrls: string[] = [];
 

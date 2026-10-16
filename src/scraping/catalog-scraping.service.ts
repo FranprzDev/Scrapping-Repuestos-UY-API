@@ -97,18 +97,32 @@ export class CatalogScrapingService {
           stage: 'crawling',
           timeWorkingMs: Date.now() - siteStartedAt,
           quantityScrapped: 0,
-          pagesUsedForExtract: 0,
+          pagesUsedForExtract: isDirectCatalogProductUrl(url) ? 1 : 0,
           rawProducts: 0,
           normalizedProducts: 0,
         });
-        const crawlPayload: ScrapingOperationPayload = {
-          url,
-          limit: maxPagesPerSite,
-          formats: ['links', 'products'],
-          onlyMainContent: true,
-        };
+        if (isDirectCatalogProductUrl(url)) {
+          crawled = {
+            provider: 'direct-url',
+            requestedAt: runAt,
+            raw: {
+              seedUrl: url,
+              pages: [{ url, depth: 0, productCount: 1 }],
+              discoveredUrls: [url],
+              discoveryMethod: 'direct-product-url',
+            },
+            normalizedProducts: [],
+          };
+        } else {
+          const crawlPayload: ScrapingOperationPayload = {
+            url,
+            limit: maxPagesPerSite,
+            formats: ['links', 'products'],
+            onlyMainContent: true,
+          };
 
-        crawled = await this.scrapingService.runTask('crawl', crawlPayload);
+          crawled = await this.scrapingService.runTask('crawl', crawlPayload);
+        }
         const crawlRaw: unknown = crawled.raw;
         crawlProvider = crawled.provider;
         crawlRequestedAt = crawled.requestedAt;
@@ -116,7 +130,9 @@ export class CatalogScrapingService {
         const crawlRule = findDomainRule(url);
 
         const targetUrls =
-          crawlRule?.id === 'mercadodelrepuesto'
+          isDirectCatalogProductUrl(url)
+            ? [url]
+            : crawlRule?.id === 'mercadodelrepuesto'
             ? discoveredTargetUrls.slice(0, maxProductsPerSite)
             : discoveredTargetUrls;
 
@@ -575,6 +591,14 @@ function isExpandedCatalogSite(siteUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isDirectCatalogProductUrl(siteUrl: string): boolean {
+  const rule = findDomainRule(siteUrl);
+  return Boolean(
+    (rule?.id === 'yaguaron' || rule?.id === 'italur')
+    && rule.productUrlPatterns.some((pattern) => pattern.test(siteUrl)),
+  );
 }
 
 function isSelvirSite(siteUrl: string): boolean {
