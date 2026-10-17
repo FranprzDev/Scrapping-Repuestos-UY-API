@@ -68,6 +68,7 @@ export const NEW_CATALOG_SITES = [
   'https://www.familcar.com/',
   'https://larrique.com.uy/repuestos-autopartes/1',
   'https://www.yaguaron.com.uy/',
+  'https://repuestosavenida.com.uy/productos/',
   'https://www.italur.com/',
   'https://mirvic.com.uy/',
   'https://diegoradiadores.com.uy/tienda/',
@@ -121,3 +122,4 @@ export class PurgeSiteDataRequestDto {
   @IsUrl()
   site!: string;
 }
+
