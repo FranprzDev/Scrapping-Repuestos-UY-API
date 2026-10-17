@@ -9,14 +9,10 @@ const CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/g
 export async function downloadImage(url: string, referer: string, signal: AbortSignal, maxBytes: number, fetcher: typeof fetch = fetch) {
   const target = new URL(url);
   if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('Invalid image URL');
-  const response = await fetcher(url, { signal, headers: {
-    'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0)',
-    accept: 'image/avif,image/webp,image/*', referer,
-  } });
+  const response = await fetchImageResponse(url, referer, signal, fetcher);
   try {
     if (!response.ok) throw new Error(`Image HTTP ${response.status}`);
-    const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (!CONTENT_TYPES.has(contentType)) throw new Error('Unsupported image content type');
+    const declaredContentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
     if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('Image exceeds byte limit');
     if (!response.body) throw new Error('Empty image response');
     const chunks: Buffer[] = [];
@@ -27,8 +23,39 @@ export async function downloadImage(url: string, referer: string, signal: AbortS
       chunks.push(Buffer.from(chunk));
     }
     if (!bytes) throw new Error('Empty image response');
+    const contentType = CONTENT_TYPES.has(declaredContentType)
+      ? declaredContentType
+      : sniffImageContentType(Buffer.concat(chunks)) ?? '';
+    if (!CONTENT_TYPES.has(contentType)) throw new Error('Unsupported image content type');
     return { chunks, contentType };
   } finally { if (response.body && !response.body.locked) await response.body.cancel().catch(() => {}); }
+}
+
+async function fetchImageResponse(url: string, referer: string, signal: AbortSignal, fetcher: typeof fetch): Promise<Response> {
+  const headers = {
+    'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0)',
+    accept: 'image/avif,image/webp,image/*',
+    ...(referer ? { referer } : {}),
+  };
+  const response = await fetcher(url, { signal, headers });
+  if (response.status !== 403 || !referer) return response;
+  if (response.body && !response.body.locked) await response.body.cancel().catch(() => {});
+  return fetcher(url, {
+    signal,
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; RepuestosUYBot/1.0)',
+      accept: 'image/avif,image/webp,image/*',
+    },
+  });
+}
+
+export function sniffImageContentType(bytes: Buffer): string | undefined {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (bytes.length >= 6 && (bytes.subarray(0, 6).toString('ascii') === 'GIF87a' || bytes.subarray(0, 6).toString('ascii') === 'GIF89a')) return 'image/gif';
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp' && /avif|avis/i.test(bytes.subarray(8, 32).toString('ascii'))) return 'image/avif';
+  return undefined;
 }
 
 @Injectable()
@@ -112,3 +139,4 @@ function positiveInt(value: string | undefined, fallback: number) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
+

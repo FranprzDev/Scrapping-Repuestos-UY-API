@@ -84,6 +84,34 @@ export function cleanText(value?: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+/**
+ * Repuestos Avenida occasionally publishes an instructional template as the
+ * product description. Keeping it in the catalog makes the description look
+ * like product data and pollutes search text, so it is removed at the quality
+ * boundary before a product is persisted.
+ */
+export function sanitizeDescriptionForRule(
+  value: string | undefined,
+  rule?: Pick<DomainRule, 'id'>,
+): { value?: string; removedTemplate: boolean } {
+  const description = cleanText(value);
+  if (!description || rule?.id !== 'repuestosavenida') {
+    return { value: description, removedTemplate: false };
+  }
+
+  const looksLikeInstructionalTemplate = [
+    /aqu[ií]\s+va\s+una\s+descripci[oó]n\s+t[eé]cnica\s+del\s+producto/i,
+    /puedes\s+usar\s+este\s+formato\s+como\s+plantilla/i,
+    /si\s+quieres,?\s+te\s+la\s+dejo\s+en\s+formato\s+plantilla/i,
+    /opciones\s+para\s+comprar\s*:/i,
+    /si\s+necesitas\s+ayuda\s+adicional/i,
+  ].filter((pattern) => pattern.test(description)).length;
+
+  return looksLikeInstructionalTemplate >= 2
+    ? { value: undefined, removedTemplate: true }
+    : { value: description, removedTemplate: false };
+}
+
 export function normalizePriceValue(value?: string): string | undefined {
   const cleaned = cleanText(value);
   if (!cleaned) {
@@ -267,7 +295,18 @@ export function isInvalidProductName(value?: string): boolean {
 export function qualityGate(products: ProductRecord[], rule?: DomainRule): ProductRecord[] {
   return dedupeProducts(
     products
-      .map((product) => ({ ...product, qualityWarnings: qualityWarnings(product, rule) }))
+      .map((product) => {
+        const sanitized = sanitizeDescriptionForRule(product.description, rule);
+        const normalizedProduct = sanitized.value === product.description
+          ? product
+          : { ...product, description: sanitized.value };
+        const warnings = qualityWarnings(normalizedProduct, rule);
+        if (sanitized.removedTemplate) {
+          warnings.push('template_description');
+        }
+
+        return { ...normalizedProduct, qualityWarnings: Array.from(new Set(warnings)) };
+      })
       .filter((product) => {
         const warnings = product.qualityWarnings ?? [];
         // Out-of-stock products remain useful catalog entries for every scraper.
@@ -559,4 +598,5 @@ function parseNormalizedPrice(value: string): number | undefined {
 function normalizeHostname(value: string): string {
   return value.trim().toLowerCase().replace(/^www\./, '');
 }
+
 

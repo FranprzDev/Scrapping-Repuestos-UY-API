@@ -1,4 +1,4 @@
-﻿import { test } from 'node:test';
+import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import { findDomainRule } from './domain-rules';
@@ -12,7 +12,7 @@ import {
   extractProductsFromHtml,
   isGrFrenosChallengeHtml,
 } from './domain-html';
-import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, mergeCompatibleBrands, parsePriceNumber, qualityGate } from './product-quality';
+import { countQualityWarnings, dedupeProducts, isAllowedCatalogUrl, isSellableProduct, mergeCompatibleBrands, parsePriceNumber, qualityGate, sanitizeDescriptionForRule } from './product-quality';
 import {
   applyChapareiContextBrand,
   applyGrFrenosContextBrand,
@@ -548,6 +548,39 @@ test('preserva un detalle Chaparei sin precio y extrae el SKU explicito', () => 
   assert.equal(products[0].price, undefined);
   assert.equal(products[0].sku, 'K0801480');
   assert.ok(products[0].qualityWarnings?.includes('missing_price'));
+});
+
+test('descarta la descripcion plantilla de Repuestos Avenida sin perder el producto', () => {
+  const rule = findDomainRule('https://repuestosavenida.com.uy/producto/retrovisor-honda-fit/');
+  assert.ok(rule);
+
+  const description = 'Descripción técnica del producto. Puedes usar este formato como plantilla. Si quieres, te la dejo en formato plantilla. Opciones para comprar: consulta al vendedor. Si necesitas ayuda adicional, escríbenos.';
+  const sanitized = sanitizeDescriptionForRule(description, rule);
+  assert.equal(sanitized.value, undefined);
+  assert.equal(sanitized.removedTemplate, true);
+
+  const products = qualityGate([{
+    productName: 'RETROVISOR HONDA FIT',
+    price: '8146',
+    description,
+    sourceUrl: 'https://repuestosavenida.com.uy/producto/retrovisor-honda-fit/',
+    availability: 'in_stock',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  }], rule);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].description, undefined);
+  assert.ok(products[0].qualityWarnings?.includes('template_description'));
+});
+
+test('conserva una descripcion real de Repuestos Avenida', () => {
+  const rule = findDomainRule('https://repuestosavenida.com.uy/producto/retrovisor-honda-fit/');
+  assert.ok(rule);
+
+  const sanitized = sanitizeDescriptionForRule('Retrovisor izquierdo manual para Honda Fit, compatible con modelos 2009 a 2014.', rule);
+  assert.equal(sanitized.value, 'Retrovisor izquierdo manual para Honda Fit, compatible con modelos 2009 a 2014.');
+  assert.equal(sanitized.removedTemplate, false);
 });
 
 test('preserva agotados en las casas configuradas para catalogo completo', () => {
@@ -2532,3 +2565,4 @@ test('Acesur permite seleccionar rubros y reporta progreso acumulado', async () 
   assert.equal(products.length, 1);
   assert.deepEqual(progress, [{ category: 'MOTOR', page: 1, productsAccumulated: 2 }]);
 });
+

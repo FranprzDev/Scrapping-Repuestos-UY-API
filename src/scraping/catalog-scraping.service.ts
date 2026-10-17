@@ -418,6 +418,61 @@ export class CatalogScrapingService {
     };
   }
 
+  async getMonitorSnapshot() {
+    const [stats, runs, duplicates, freshness] = await Promise.all([
+      this.getStats(),
+      this.listRuns(1),
+      this.inventoryStoreService.getDuplicateSummary(undefined, 20),
+      this.postgresService.query<{
+        site: string;
+        products: string;
+        last_seen_at: string | null;
+        stale_products: string;
+      }>(`
+        SELECT
+          regexp_replace(
+            split_part(replace(replace(lower(site), 'https://', ''), 'http://', ''), '/', 1),
+            '^www\\.', ''
+          ) AS site,
+          COUNT(*) FILTER (WHERE dedup_canonical_id IS NULL)::text AS products,
+          MAX(last_seen_at) AS last_seen_at,
+          COUNT(*) FILTER (
+            WHERE dedup_canonical_id IS NULL
+              AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '8 days')
+          )::text AS stale_products
+        FROM scraping_inventory
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `),
+    ]);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      scheduler: {
+        enabled: process.env.AUTO_SCRAPE_ENABLED === 'true',
+        cron: process.env.SCRAPE_CRON ?? '0 0 3 * * 0',
+        timezone: process.env.SCRAPE_TIMEZONE ?? 'America/Montevideo',
+        sites: process.env.PRODUCTION_CATALOG_SITE_IDS ?? 'all',
+      },
+      inventory: stats,
+      latestRun: runs.runs[0] ?? null,
+      providers: freshness.rows.map((row) => ({
+        site: row.site,
+        products: Number(row.products ?? 0),
+        lastSeenAt: row.last_seen_at,
+        staleProducts: Number(row.stale_products ?? 0),
+      })),
+      duplicates: {
+        totalProducts: duplicates.totalProducts,
+        exactSourceUrlGroups: duplicates.exactSourceUrlGroups.length,
+        skuGroups: duplicates.skuGroups.length,
+        nameGroups: duplicates.nameGroups.length,
+        exactProductGroups: duplicates.exactProductGroups.length,
+        topSkuGroups: duplicates.skuGroups.slice(0, 10),
+      },
+    };
+  }
+
   async getRunById(runId: string) {
     const run = await this.postgresService.query<{
       id: string;
@@ -1003,4 +1058,5 @@ function clampOffset(value?: number): number {
 function normalizeHostname(value: string): string {
   return value.trim().toLowerCase().replace(/^www\./, '');
 }
+
 

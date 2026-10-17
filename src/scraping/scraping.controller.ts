@@ -248,6 +248,11 @@ export class ScrapingController {
     return this.catalogScrapingService.listRuns(normalized);
   }
 
+  @Get('scraping/monitor')
+  monitor() {
+    return this.catalogScrapingService.getMonitorSnapshot();
+  }
+
   @Get('scraping/runs/:runId')
   async getRunById(@Param('runId') runId: string) {
     const run = await this.catalogScrapingService.getRunById(runId);
@@ -1392,4 +1397,5 @@ function renderStatsPage(): string {
   </body>
 </html>`;
 }
+
 
