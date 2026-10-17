@@ -425,6 +425,41 @@ test('upsertSiteProducts descarta clones numerados de Autopartes Gil dentro del 
   assert.deepEqual(inventoryInsert.params[3], [base.slice(0, -1)]);
 });
 
+test('upsertSiteProducts descarta aliases numericos encadenados de Autopartes Gil', async () => {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const service = new InventoryStoreService({
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/INSERT INTO scraping_inventory/i.test(sql)) {
+        const sourceUrls = params[3] as string[];
+        return { rows: sourceUrls.map((sourceUrl) => ({ id: `url|${sourceUrl}`, sourceUrl, created: true })) } as never;
+      }
+      if (/SELECT COUNT\(\*\)::text AS total FROM scraping_inventory/i.test(sql)) {
+        return { rows: [{ total: '1' }] } as never;
+      }
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  const base = 'https://autopartesgil.com/producto/centralita-abs-mercedes-3/';
+  const alias = 'https://autopartesgil.com/producto/centralita-abs-mercedes-3-2/';
+  const product = (sourceUrl: string): ProductRecord => ({
+    productName: 'Centralita ABS Mercedes',
+    price: '12000',
+    availability: 'in_stock',
+    imageUrl: 'https://autopartesgil.com/logo.webp',
+    sourceUrl,
+    extractedAt: new Date().toISOString(),
+    provider: 'domain',
+  });
+
+  await service.upsertSiteProducts('https://autopartesgil.com/', [product(alias), product(base)], new Date().toISOString());
+
+  const inventoryInsert = queries.find((query) => /INSERT INTO scraping_inventory/i.test(query.sql));
+  assert.ok(inventoryInsert);
+  assert.deepEqual(inventoryInsert.params[3], [base.slice(0, -1)]);
+});
+
 test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado sin duplicar', async () => {
   const rows = new Map<string, {
     id: string;

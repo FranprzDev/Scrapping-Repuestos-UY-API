@@ -870,7 +870,7 @@ function mapInventoryRow(row: InventoryRow): StoredProduct {
 
 function deduplicateAutopartesGilPayload(items: InventoryUpsertItem[]): InventoryUpsertItem[] {
   const output: InventoryUpsertItem[] = [];
-  const cloneItems = new Map<string, InventoryUpsertItem>();
+  const cloneGroups = new Map<string, InventoryUpsertItem[]>();
 
   for (const item of items) {
     const product = JSON.parse(item.product) as ProductRecord;
@@ -880,13 +880,23 @@ function deduplicateAutopartesGilPayload(items: InventoryUpsertItem[]): Inventor
       continue;
     }
 
-    const previous = cloneItems.get(key);
-    if (!previous || compareAutopartesGilCanonicalUrl(item.sourceUrl, previous.sourceUrl) < 0) {
-      cloneItems.set(key, item);
+    const group = cloneGroups.get(key) ?? [];
+    group.push(item);
+    cloneGroups.set(key, group);
+  }
+
+  for (const group of cloneGroups.values()) {
+    for (const item of group) {
+      const hasCanonicalPrefix = group.some(
+        (candidate) => candidate !== item && isAutopartesGilNumericAlias(item.sourceUrl, candidate.sourceUrl),
+      );
+      if (!hasCanonicalPrefix) {
+        output.push(item);
+      }
     }
   }
 
-  return [...output, ...cloneItems.values()];
+  return output;
 }
 
 function autopartesGilCloneKey(site: string, sourceUrl: string, product: ProductRecord): string | undefined {
@@ -900,12 +910,6 @@ function autopartesGilCloneKey(site: string, sourceUrl: string, product: Product
     return undefined;
   }
 
-  const normalizedUrl = canonicalProductUrl(sourceUrl);
-  if (!normalizedUrl) {
-    return undefined;
-  }
-
-  const cloneBaseUrl = normalizedUrl.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '');
   const productKey = [
     comparableDedupValue(product.productName),
     comparableDedupValue(product.brand),
@@ -914,16 +918,18 @@ function autopartesGilCloneKey(site: string, sourceUrl: string, product: Product
     comparableDedupValue(product.imageUrl),
   ].join('|');
 
-  return `autopartesgil:${cloneBaseUrl}|${productKey}`;
+  return `autopartesgil:${productKey}`;
 }
 
-function compareAutopartesGilCanonicalUrl(left: string, right: string): number {
-  const leftIsBase = left.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '') === left;
-  const rightIsBase = right.replace(/-(?:[2-9]|1[0-9]|2[0-9]|30)$/, '') === right;
-  if (leftIsBase !== rightIsBase) {
-    return leftIsBase ? -1 : 1;
+function isAutopartesGilNumericAlias(candidateUrl: string, canonicalUrl: string): boolean {
+  const candidate = canonicalProductUrl(candidateUrl);
+  const canonical = canonicalProductUrl(canonicalUrl);
+  if (!candidate || !canonical || !candidate.startsWith(`${canonical}-`)) {
+    return false;
   }
-  return left.localeCompare(right);
+
+  const suffix = candidate.slice(canonical.length + 1);
+  return suffix.split('-').every((part) => /^\d+$/.test(part));
 }
 
 function isAutopartesGilHost(value: string): boolean {
