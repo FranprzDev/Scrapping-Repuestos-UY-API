@@ -3,6 +3,7 @@ import test from 'node:test';
 import { extractProductsFromHtml } from '../domain/domain-html';
 import { findDomainRule } from '../domain/domain-rules';
 import { getCatalogSite } from './catalog-sites';
+import { DEFAULT_CATALOG_SITES } from '../dto/catalog-request.dto';
 import { WooCommerceAdapter } from './adapters/woocommerce.adapter';
 
 test('Repuestos Avenida enables its WooCommerce shop', () => {
@@ -13,6 +14,10 @@ test('Repuestos Avenida enables its WooCommerce shop', () => {
   assert.equal(site.seedUrls[0], 'https://repuestosavenida.com.uy/productos/');
   assert.ok(site.productUrlPatterns.some((rule) => rule.test('https://repuestosavenida.com.uy/producto/farol-hb20/')));
   assert.ok(site.categoryUrlPatterns.some((rule) => rule.test('https://repuestosavenida.com.uy/productos/')));
+});
+
+test('Repuestos Avenida is included in the default catalog refresh', () => {
+  assert.equal(DEFAULT_CATALOG_SITES.includes('https://repuestosavenida.com.uy/productos/'), true);
 });
 
 test('Repuestos Avenida extracts main and gallery product images before header logos', async () => {
@@ -183,3 +188,4 @@ async function extractRepuestosAvenidaProducts(html: string, productUrl: string)
   assert.equal(result.products.length, 1);
   return result.products;
 }
+
