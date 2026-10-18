@@ -73,6 +73,23 @@ test('interpreta las variantes de no_comprable de la API de Acesur', () => {
   ]);
 });
 
+
+test('Acesur no convierte stock vacío en agotado', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [
+      { codigo: 'VACIO', descripcion_corta: 'Stock vacío', stock: '' },
+      { codigo: 'FALTANTE', descripcion_corta: 'Stock faltante' },
+      { codigo: 'CERO', descripcion_corta: 'Stock cero', stock: '0.00' },
+    ],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.deepEqual(result.products.map((product) => product.availability), [
+    'unknown', 'unknown', 'out_of_stock',
+  ]);
+  assert.equal(result.products[0].stock, undefined);
+  assert.equal(result.products[1].stock, undefined);
+});
+
 test('guarda la ficha de Acesur como sourceUrl al parsear un producto', () => {
   const result = parseAcesurApi(JSON.stringify({
     productos: [{ codigo: '14.1015', descripcion_corta: 'Producto demo', stock: '1' }],
