@@ -90,6 +90,20 @@ test('Acesur no convierte stock vacío en agotado', () => {
   assert.equal(result.products[1].stock, undefined);
 });
 
+
+test('Acesur considera comprable un stock cero con no_comprable N', () => {
+  const result = parseAcesurApi(JSON.stringify({
+    productos: [
+      { codigo: 'COMPRABLE', descripcion_corta: 'Se puede comprar', stock: '0.00', no_comprable: 'N' },
+      { codigo: 'NO_COMPRABLE', descripcion_corta: 'No se puede comprar', stock: '0.00', no_comprable: 'S' },
+    ],
+  }), 'https://acesur.uy/escritorio/ofertas/INTERNET', 'domain');
+
+  assert.deepEqual(result.products.map((product) => product.availability), [
+    'in_stock', 'out_of_stock',
+  ]);
+});
+
 test('guarda la ficha de Acesur como sourceUrl al parsear un producto', () => {
   const result = parseAcesurApi(JSON.stringify({
     productos: [{ codigo: '14.1015', descripcion_corta: 'Producto demo', stock: '1' }],
