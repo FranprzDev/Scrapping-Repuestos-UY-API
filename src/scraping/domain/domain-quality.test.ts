@@ -90,6 +90,43 @@ test('Acesur no convierte stock vacío en agotado', () => {
   assert.equal(result.products[1].stock, undefined);
 });
 
+test('la disponibilidad explícita prevalece sobre un stock numérico cero', () => {
+  const rule = findDomainRule('https://acesur.uy/detalle-producto/?articulo=14.1015');
+  assert.ok(rule);
+
+  const base = {
+    productName: 'PRODUCTO DISPONIBLE',
+    price: '1.000',
+    sourceUrl: 'https://acesur.uy/detalle-producto/?articulo=14.1015',
+    extractedAt: new Date().toISOString(),
+    provider: 'domain' as const,
+  };
+
+  assert.equal(isSellableProduct({ ...base, availability: 'in_stock', stock: '0.00' }, rule), true);
+  assert.equal(isSellableProduct({ ...base, availability: 'out_of_stock', stock: '5.00' }, rule), false);
+});
+
+test('ignora el popup oculto de solicitud de stock de Larrique', () => {
+  const detailUrl = 'https://larrique.com.uy/p/105-a-correas-industriales/16253/16253';
+  const rule = findDomainRule(detailUrl);
+  assert.ok(rule);
+
+  const products = qualityGate(extractProductsFromHtml(`
+    <main>
+      <h1>105 A CORREAS INDUSTRIALES</h1>
+      <div class="price">$ 1.250</div>
+      <div id="buyButton" class="purchaseButton addToCart">Agregar al carrito</div>
+      <div id="stockRequestFixedContainer" style="display: none">
+        Producto sin stock. Lo sentimos, no tenemos stock.
+      </div>
+    </main>
+  `, detailUrl, 'domain', rule), rule);
+
+  assert.equal(products.length, 1);
+  assert.equal(products[0].availability, 'in_stock');
+  assert.equal(products[0].qualityWarnings?.includes('not_sellable'), false);
+});
+
 
 test('Acesur considera comprable un stock cero con no_comprable N', () => {
   const result = parseAcesurApi(JSON.stringify({
