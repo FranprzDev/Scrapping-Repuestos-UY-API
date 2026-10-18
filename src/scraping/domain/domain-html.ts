@@ -1159,9 +1159,11 @@ function isHiddenElement(element: HTMLElement, boundary?: HTMLElement): boolean 
     const className = String(current.getAttribute('class') ?? '').toLowerCase();
     if (
       current.hasAttribute('hidden')
+      || current.getAttribute('aria-hidden') === 'true'
       || /(?:^|;)\s*display\s*:\s*none\b/.test(style)
       || /(?:^|;)\s*visibility\s*:\s*hidden\b/.test(style)
-      || /\b(?:hidden|d-none)\b/.test(className)
+      || /\b(?:hidden|d-none|visually-hidden|sr-only|screen-reader-text)\b/.test(className)
+      || /stock\s*request|request\s*stock|solicitud.*stock/.test(`${current.getAttribute('id') ?? ''} ${className}`)
     ) {
       return true;
     }
@@ -1339,9 +1341,9 @@ function extractChapareiDetailProduct(root: HTMLElement, pageUrl: string, provid
         ? 'in_stock'
         : availability === 'out_of_stock'
           ? 'out_of_stock'
-          : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'in_stock'
+          : resolveAvailability(availabilityText, rule) === 'in_stock'
             ? 'in_stock'
-            : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'out_of_stock'
+            : resolveAvailability(availabilityText, rule) === 'out_of_stock'
               ? 'out_of_stock'
               : undefined,
     extractedAt: new Date().toISOString(),
@@ -1528,9 +1530,9 @@ function extractSelvirDetailProduct(root: HTMLElement, pageUrl: string, provider
         ? 'in_stock'
         : availability === 'out_of_stock'
           ? 'out_of_stock'
-          : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'in_stock'
+          : resolveAvailability(availabilityText, rule) === 'in_stock'
             ? 'in_stock'
-            : resolveAvailability([availabilityText, pageText].filter(Boolean).join(' '), rule) === 'out_of_stock'
+            : resolveAvailability(availabilityText, rule) === 'out_of_stock'
               ? 'out_of_stock'
               : undefined,
     extractedAt: new Date().toISOString(),
@@ -1680,9 +1682,9 @@ if (
         ? 'in_stock'
         : availability === 'out_of_stock'
           ? 'out_of_stock'
-          : resolveAvailability(pageText, rule) === 'in_stock'
+          : resolveAvailability(availabilityText, rule) === 'in_stock'
             ? 'in_stock'
-            : resolveAvailability(pageText, rule) === 'out_of_stock'
+            : resolveAvailability(availabilityText, rule) === 'out_of_stock'
               ? 'out_of_stock'
               : undefined,
     extractedAt: new Date().toISOString(),
@@ -1744,9 +1746,9 @@ function extractFeyviDetailProduct(root: HTMLElement, pageUrl: string, provider:
         ? 'in_stock'
         : availability === 'out_of_stock'
           ? 'out_of_stock'
-          : resolveAvailability(pageText, rule) === 'in_stock'
+          : resolveAvailability(availabilityText, rule) === 'in_stock'
             ? 'in_stock'
-            : resolveAvailability(pageText, rule) === 'out_of_stock'
+            : resolveAvailability(availabilityText, rule) === 'out_of_stock'
               ? 'out_of_stock'
               : undefined,
     extractedAt: new Date().toISOString(),
@@ -2334,7 +2336,10 @@ function collectAvailabilityText(root: HTMLElement): string {
     }
   }
 
-  return cleanText(firstElementText(root, ['body']) ?? root.text) ?? '';
+  const clone = parse(root.toString());
+  queryAll(clone, '*').filter((element) => isHiddenElement(element, clone) || ['script', 'style'].includes(element.tagName.toLowerCase()))
+    .forEach((element) => element.remove());
+  return cleanText(clone.text) ?? '';
 }
 
 function resolveDetailAvailability(root: HTMLElement, availabilityText: string, rule: DomainRule): 'in_stock' | 'out_of_stock' | 'unknown' {
@@ -2347,7 +2352,10 @@ function resolveDetailAvailability(root: HTMLElement, availabilityText: string, 
     }
   }
 
-  const buyCta = queryAll(root, 'button, a')
+  const visibleRoot = parse(root.toString());
+  queryAll(visibleRoot, '*').filter((element) => isHiddenElement(element, visibleRoot) || ['script', 'style'].includes(element.tagName.toLowerCase()))
+    .forEach((element) => element.remove());
+  const buyCta = queryAll(visibleRoot, 'button, a')
     .map((element) => cleanText(element.text) ?? '')
     .join(' ');
 
