@@ -1341,7 +1341,7 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
             ? 'out_of_stock'
             : stockValue === undefined || Number.isNaN(stockValue)
               ? 'unknown'
-              : stockValue > 0
+              : stockValue > 0 || noComprable === 'N'
                 ? 'in_stock'
                 : 'out_of_stock',
         stock: stock || undefined,
