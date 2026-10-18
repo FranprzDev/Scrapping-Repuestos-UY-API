@@ -1318,7 +1318,8 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
   const totalRecords = Number((Array.isArray(parsed) ? undefined : parsed.cantidad_registros) ?? 0);
     const products = items.reduce<ProductRecord[]>((accumulator, item) => {
       const stock = String(item.stock ?? '').trim();
-      const stockValue = Number(stock.replace(',', '.'));
+      // Un stock vacío significa que Acesur no informó el dato; no debe convertirse en cero.
+      const stockValue = stock ? Number(stock.replace(',', '.')) : undefined;
       const noComprable = String(item.no_comprable ?? '').trim().toUpperCase();
       const explicitlyUnavailable = ['S', 'SI', '1', 'TRUE'].includes(noComprable);
       const rawPrice = String(item.precio ?? item.precio_anterior_con_iva ?? '').trim();
@@ -1338,12 +1339,12 @@ export function parseAcesurApi(body: string, sourceUrl: string, provider: 'domai
         availability:
           explicitlyUnavailable
             ? 'out_of_stock'
-            : Number.isNaN(stockValue)
+            : stockValue === undefined || Number.isNaN(stockValue)
               ? 'unknown'
               : stockValue > 0
                 ? 'in_stock'
                 : 'out_of_stock',
-        stock,
+        stock: stock || undefined,
         sourceUrl: buildAcesurProductUrl(sku) ?? sourceUrl,
         imageUrl: imageUrls[0],
         imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
