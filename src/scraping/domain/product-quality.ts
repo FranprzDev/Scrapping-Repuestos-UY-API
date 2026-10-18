@@ -213,13 +213,6 @@ export function isSellableProduct(product: ProductRecord, rule?: DomainRule): bo
     return false;
   }
 
-  if (product.stock) {
-    const stockValue = Number(product.stock.replace(',', '.'));
-    if (!Number.isNaN(stockValue)) {
-      return stockValue > 0;
-    }
-  }
-
   const availability = (product.availability ?? '').toLowerCase();
   if (availability.includes('out_of_stock')) {
     return false;
@@ -227,6 +220,13 @@ export function isSellableProduct(product: ProductRecord, rule?: DomainRule): bo
 
   if (availability.includes('in_stock')) {
     return true;
+  }
+
+  if (product.stock) {
+    const stockValue = Number(product.stock.replace(',', '.'));
+    if (!Number.isNaN(stockValue)) {
+      return stockValue > 0;
+    }
   }
 
   return resolveAvailability([product.availability, product.description, product.productName].filter(Boolean).join(' '), rule) === 'in_stock';
