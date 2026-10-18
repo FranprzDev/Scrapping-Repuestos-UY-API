@@ -1163,7 +1163,6 @@ function isHiddenElement(element: HTMLElement, boundary?: HTMLElement): boolean 
       || /(?:^|;)\s*display\s*:\s*none\b/.test(style)
       || /(?:^|;)\s*visibility\s*:\s*hidden\b/.test(style)
       || /\b(?:hidden|d-none|visually-hidden|sr-only|screen-reader-text)\b/.test(className)
-      || /stock\s*request|request\s*stock|solicitud.*stock/.test(`${current.getAttribute('id') ?? ''} ${className}`)
     ) {
       return true;
     }
