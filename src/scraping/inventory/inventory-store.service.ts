@@ -970,10 +970,15 @@ function normalizeStatsSiteKey(value: string): string {
 }
 
 function buildInventoryQuery(filters: InventoryQueryFilters, pagination: InventoryQueryPagination = {}) {
-  const { whereClause, params } = buildInventoryConditions(filters);
+  const { whereClause, params, search } = buildInventoryConditions(filters);
   const limit = normalizeLimit(pagination.limit);
   const offset = normalizeOffset(pagination.offset);
-  const orderBy = buildOrderByClause(filters.priceOrder, Boolean(normalizeSnapshotBefore(filters.snapshotBefore)));
+  const relevanceSql = search ? buildSearchRelevanceSql(search) : undefined;
+  const orderBy = buildOrderByClause(
+    filters.priceOrder,
+    Boolean(normalizeSnapshotBefore(filters.snapshotBefore)),
+    Boolean(search),
+  );
   const orderedByPrice = isPriceOrder(filters.priceOrder);
 
   if (limit !== undefined) {
@@ -996,6 +1001,7 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
           updated_at,
           last_seen_at,
           ${normalizedPriceSqlExpression()} AS price_sort
+          ${relevanceSql ? `, ${relevanceSql} AS search_relevance` : ''}
         FROM scraping_inventory
         ${whereClause}
       )
@@ -1007,6 +1013,7 @@ function buildInventoryQuery(filters: InventoryQueryFilters, pagination: Invento
     `
       : `
       SELECT id, site, product, created_at, updated_at, last_seen_at
+        ${relevanceSql ? `, ${relevanceSql} AS search_relevance` : ''}
       FROM scraping_inventory
       ${whereClause}
       ORDER BY ${orderBy}
@@ -1059,6 +1066,7 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
     'dedup_canonical_id IS NULL',
   ];
   const params: unknown[] = [];
+  let search: InventorySearchContext | undefined;
 
   if (filters.site?.trim()) {
     const matchedHosts = resolveInventorySiteHosts(filters.site.trim());
@@ -1070,14 +1078,25 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
     }
   }
 
-  const search = filters.search?.trim();
-  if (search) {
-    const tokens = normalizeSearchTokens(search);
+  const rawSearch = filters.search?.trim();
+  if (rawSearch) {
+    const tokens = normalizeSearchTokens(rawSearch);
     if (tokens.length) {
+      const tokenParamIndexes: number[] = [];
       for (const token of tokens) {
-        params.push(`%${token.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
+        params.push(`%${escapeLikePattern(token)}%`);
+        tokenParamIndexes.push(params.length);
         conditions.push(`search_text LIKE $${params.length} ESCAPE '\\'`);
       }
+      const coreSearch = normalizedSearchSqlExpression("CONCAT_WS(' ', product->>'productName', product->>'sku', product->>'reference', product->>'brand', product->>'category', product->>'compatibleVehicles', product->>'compatibleModels', product->>'compatibleVersions', product->>'compatibleBrands', product->'attributes')");
+      conditions.push(`(${tokenParamIndexes.map((parameterIndex) => `${coreSearch} LIKE $${parameterIndex}`).join(' AND ')})`);
+      params.push(`%${escapeLikePattern(tokens.join(' '))}%`);
+      search = {
+        tokenParamIndexes,
+        phraseParamIndex: params.length,
+      };
+    } else {
+      conditions.push('FALSE');
     }
   }
 
@@ -1124,7 +1143,16 @@ function buildInventoryConditions(filters: InventoryQueryFilters) {
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  return { whereClause, params };
+  return { whereClause, params, search };
+}
+
+type InventorySearchContext = {
+  tokenParamIndexes: number[];
+  phraseParamIndex: number;
+};
+
+function escapeLikePattern(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
 }
 
 function normalizeSnapshotBefore(value?: string): string | undefined {
@@ -1196,21 +1224,52 @@ function normalizeSiteAlias(value: string): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-function buildOrderByClause(priceOrder?: string, stableSnapshot = false): string {
+function buildSearchRelevanceSql(search: InventorySearchContext): string {
+  const title = normalizedSearchSqlExpression("product->>'productName'");
+  const reference = normalizedSearchSqlExpression("CONCAT_WS(' ', product->>'sku', product->>'reference', product->'attributes')");
+  const brand = normalizedSearchSqlExpression("product->>'brand'");
+  const category = normalizedSearchSqlExpression("product->>'category'");
+  const compatibility = normalizedSearchSqlExpression("CONCAT_WS(' ', product->>'compatibleVehicles', product->>'compatibleModels', product->>'compatibleVersions', product->>'compatibleBrands')");
+  const scores = [
+    `CASE WHEN ${title} LIKE $${search.phraseParamIndex} THEN 1000 ELSE 0 END`,
+    `CASE WHEN ${reference} LIKE $${search.phraseParamIndex} THEN 900 ELSE 0 END`,
+    `CASE WHEN search_text LIKE $${search.phraseParamIndex} THEN 300 ELSE 0 END`,
+    ...search.tokenParamIndexes.map((parameterIndex) => `CASE
+      WHEN ${title} LIKE $${parameterIndex} THEN 140
+      WHEN ${reference} LIKE $${parameterIndex} THEN 120
+      WHEN ${compatibility} LIKE $${parameterIndex} THEN 100
+      WHEN ${brand} LIKE $${parameterIndex} THEN 80
+      WHEN ${category} LIKE $${parameterIndex} THEN 50
+      WHEN search_text LIKE $${parameterIndex} THEN 10
+      ELSE 0
+    END`),
+  ];
+
+  return `(${scores.join(' + ')})`;
+}
+
+function normalizedSearchSqlExpression(expression: string): string {
+  return `regexp_replace(unaccent(lower(COALESCE(${expression}, ''))), '[^a-z0-9]+', ' ', 'g')`;
+}
+
+function buildOrderByClause(priceOrder?: string, stableSnapshot = false, hasSearch = false): string {
   const normalized = priceOrder?.trim().toLowerCase();
+  const relevance = hasSearch ? 'search_relevance DESC, ' : '';
   if (normalized === 'asc') {
     return stableSnapshot
-      ? `price_sort ASC NULLS LAST, created_at DESC, id ASC`
-      : `price_sort ASC NULLS LAST, updated_at DESC, id ASC`;
+      ? `price_sort ASC NULLS LAST, ${relevance}created_at DESC, id ASC`
+      : `price_sort ASC NULLS LAST, ${relevance}updated_at DESC, id ASC`;
   }
 
   if (normalized === 'desc') {
     return stableSnapshot
-      ? `price_sort DESC NULLS LAST, created_at DESC, id ASC`
-      : `price_sort DESC NULLS LAST, updated_at DESC, id ASC`;
+      ? `price_sort DESC NULLS LAST, ${relevance}created_at DESC, id ASC`
+      : `price_sort DESC NULLS LAST, ${relevance}updated_at DESC, id ASC`;
   }
 
-  return stableSnapshot ? `created_at DESC, id ASC` : `updated_at DESC, id ASC`;
+  return stableSnapshot
+    ? `${relevance}created_at DESC, id ASC`
+    : `${relevance}updated_at DESC, id ASC`;
 }
 
 function isPriceOrder(priceOrder?: string): boolean {
@@ -1219,17 +1278,28 @@ function isPriceOrder(priceOrder?: string): boolean {
 }
 
 function normalizeSearchTokens(search: string): string[] {
+  const aliases: Record<string, string> = {
+    fiar: 'fiat',
+    chevrole: 'chevrolet',
+    chevrolete: 'chevrolet',
+    volkswag: 'volkswagen',
+    wolkswagen: 'volkswagen',
+  };
+  const stopwords = new Set(['a', 'al', 'con', 'de', 'del', 'el', 'en', 'la', 'las', 'los', 'para', 'por', 'un', 'una', 'y']);
+
   return search
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim()
     .split(/\s+/)
     .map((token) =>
       token
         .replace(/[^a-z0-9]+/g, ' ')
-        .replace(/([a-z])\1+/g, '$1')
         .trim(),
     )
-    .filter((token) => token.length >= 2);
+    .map((token) => aliases[token] ?? token)
+    .filter((token) => token.length >= 2 && !stopwords.has(token));
 }
 
 function buildProductSearchText(product: ProductRecord): string {
@@ -1247,9 +1317,10 @@ function buildProductSearchText(product: ProductRecord): string {
   ]
     .filter(Boolean)
     .join(' ')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/([a-z])\1+/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -1287,4 +1358,5 @@ function inventoryVehicleBrands(product: ProductRecord): ReturnType<typeof infer
     id: brand.id, label: brand.label, confidence: 'explicit' as const, evidence: brand.label,
   }));
 }
+
 

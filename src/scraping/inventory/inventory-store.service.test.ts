@@ -134,7 +134,30 @@ test('getFilteredPage busca sobre el texto materializado', async () => {
   await service.getFilteredPage({ search: 'Volkswagen Gol' }, { limit: 20 });
 
   assert.ok(capturedSql.includes('search_text LIKE'));
-  assert.ok(!capturedSql.includes('regexp_replace('));
+  assert.ok(capturedSql.includes('search_relevance DESC'));
+  assert.ok(capturedSql.includes('unaccent('));
+  assert.ok(capturedSql.includes('regexp_replace('));
+  assert.ok(capturedSql.includes("product->>'compatibleModels'"));
+});
+
+test('getFilteredPage normaliza acentos, palabras vacias y errores frecuentes', async () => {
+  let capturedParams: unknown[] = [];
+  const service = new InventoryStoreService({
+    async query(_sql: string, params?: unknown[]) {
+      capturedParams = params ?? [];
+      return { rows: [] } as never;
+    },
+  } as never);
+
+  await service.getFilteredPage({ search: 'Radiador FIÁR Uno de' }, { limit: 20 });
+
+  assert.deepEqual(capturedParams, [
+    '%radiador%',
+    '%fiat%',
+    '%uno%',
+    '%radiador fiat uno%',
+    20,
+  ]);
 });
 
 test('getFilteredPage devuelve el precio como numero normalizado', async () => {
@@ -507,7 +530,7 @@ test('upsertSiteProducts actualiza search_text para encontrar un SKU incorporado
         } as never;
       }
 
-      if (/SELECT id, site, product, created_at, updated_at, last_seen_at\s+FROM scraping_inventory/i.test(sql)) {
+      if (/SELECT id, site, product, created_at, updated_at, last_seen_at/i.test(sql)) {
         const searchToken = (params.find((param) => typeof param === 'string' && param.includes('168662')) as string | undefined)
           ?.replaceAll('%', '');
         const matches = Array.from(rows.values())
@@ -666,4 +689,5 @@ test('Yokomitsu upsert protects verified cost and SKU; other providers remain un
   assert.equal((JSON.parse((other.params[4] as string[])[0]) as ProductRecord).price, '38');
   assert.match(other.sql, /feyvi_merge_product/);
 });
+
 
